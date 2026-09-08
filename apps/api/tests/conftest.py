@@ -221,9 +221,10 @@ def org(db, _platform_seed):
 
     # Start the code allocator above the codes fixtures assign by hand, so a
     # fixture-created manager never collides with an auto-allocated new hire.
-    OrgSettings.objects.create(
-        name="Test Clinic", employee_code_prefix="EMP", employee_code_next=5000
-    )
+    settings_row = OrgSettings.for_org(session_organization())
+    settings_row.employee_code_prefix = "EMP"
+    settings_row.employee_code_next = 5000
+    settings_row.save(update_fields=["employee_code_prefix", "employee_code_next"])
 
     departments = {
         kind: Department.objects.create(

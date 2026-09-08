@@ -60,10 +60,14 @@ class Command(BaseCommand):
             raise CommandError("Run `manage.py seed_workflows` first.")
 
         # --- organisation ------------------------------------------------
-        OrgSettings.objects.get_or_create(
-            pk=OrgSettings.objects.first().pk if OrgSettings.objects.exists() else None,
-            defaults={"name": "Demo Health Dev"},
-        ) if OrgSettings.objects.exists() else OrgSettings.objects.create(name="Demo Health Dev")
+        from apps.organization.models import Organization, OrgStatus
+
+        organization = Organization.objects.first()
+        if organization is None:
+            organization = Organization.objects.create(
+                name="Demo Health Dev", slug="demo-health-dev", status=OrgStatus.ACTIVE
+            )
+        OrgSettings.for_org(organization)
 
         # `state` is not decoration: Professional Tax is a state levy, and a
         # location without one has no PT jurisdiction, so payroll would silently

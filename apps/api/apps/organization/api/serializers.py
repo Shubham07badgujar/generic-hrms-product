@@ -112,16 +112,48 @@ class PermissionCellSerializer(serializers.Serializer):
 
 
 class OrgSettingsSerializer(serializers.ModelSerializer):
+    """
+    The Organisation → Settings form.
+
+    Company identity (name, legal name, currency, timezone, logo) moved to
+    `Organization`; the statutory and operational particulars stayed on
+    `OrgSettings`. They are presented as ONE payload deliberately -- the split
+    is a modelling decision about where a hot counter and a jurisdiction's
+    registration numbers belong, and there is no reason to make an
+    administrator learn about it or to break the frontend's contract over it.
+    """
+
+    name = serializers.CharField(source="organization.name")
+    legal_name = serializers.CharField(
+        source="organization.legal_name", required=False, allow_blank=True
+    )
+    currency = serializers.CharField(source="organization.currency", required=False)
+    timezone = serializers.CharField(source="organization.timezone", required=False)
+    logo = serializers.ImageField(
+        source="organization.logo", write_only=True, required=False, allow_null=True
+    )
+
     #: Booleans, not URLs: the images feed generated letters and are never
     #: served to the browser from here.
     has_logo = serializers.SerializerMethodField()
     has_signature = serializers.SerializerMethodField()
 
     def get_has_logo(self, row) -> bool:
-        return bool(row.logo)
+        return bool(row.organization.logo)
 
     def get_has_signature(self, row) -> bool:
         return bool(row.signature)
+
+    def update(self, instance, validated_data):
+        """Split the flat payload back across the two rows it spans."""
+        organization_fields = validated_data.pop("organization", {})
+        if organization_fields:
+            for field, value in organization_fields.items():
+                setattr(instance.organization, field, value)
+            instance.organization.save(
+                update_fields=[*organization_fields, "updated_at"]
+            )
+        return super().update(instance, validated_data)
 
     class Meta:
         model = OrgSettings
@@ -132,6 +164,5 @@ class OrgSettingsSerializer(serializers.ModelSerializer):
             "logo", "signature", "has_logo", "has_signature",
         ]
         extra_kwargs = {
-            "logo": {"write_only": True, "required": False},
             "signature": {"write_only": True, "required": False},
         }

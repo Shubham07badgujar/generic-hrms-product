@@ -37,10 +37,10 @@ MONTHS = [
 
 
 def _organisation_name() -> str:
-    from apps.organization.models import OrgSettings
+    from apps.organization.models import current_organization
 
-    settings_row = OrgSettings.objects.first()
-    return settings_row.name if settings_row else "Organisation"
+    organization = current_organization()
+    return organization.name if organization else "Organisation"
 
 
 # ---------------------------------------------------------------------------
@@ -113,14 +113,17 @@ def payslip_pdf(payslip) -> bytes:
     run = payslip.payroll_run
     employee = payslip.employee
     organisation = _org()
-    org_name = organisation.name if organisation else "Organisation"
-    legal_name = organisation.legal_name if organisation and organisation.legal_name else org_name
+    # Identity lives on Organization; the signatory and statutory particulars
+    # stay on the settings row this returns.
+    company = organisation.organization if organisation else None
+    org_name = company.name if company else "Organisation"
+    legal_name = company.legal_name if company and company.legal_name else org_name
     period = f"{MONTHS[run.period_month]} {run.period_year}"
     if run.run_type != "regular":
         period += f" — {run.get_run_type_display()}"
 
     # ---- letterhead: logo left, names right, title band under a green rule
-    logo = _scaled_image(organisation.logo if organisation else None,
+    logo = _scaled_image(company.logo if company else None,
                          max_width=52 * mm, max_height=17 * mm)
     head_right = [Paragraph(legal_name, org_line)]
     if legal_name != org_name:

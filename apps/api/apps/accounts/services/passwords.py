@@ -97,42 +97,56 @@ def _revoke_all_refresh_tokens(user) -> None:
         BlacklistedToken.objects.get_or_create(token=token)
 
 
-def _company_name() -> str:
+def _organization_of(user):
     """
-    The organisation's own name, as HR maintains it.
+    The organization a principal belongs to, or None.
 
-    OrgSettings is the record HR edits; the setting is only a fallback for a
-    deployment that has not filled it in yet. Reading the setting first would
-    mean the email said something different from every letter and payslip.
+    Mail is addressed on behalf of a specific company, so it has to be resolved
+    from the recipient rather than read from a settings row -- there is no
+    longer a single company to read. Swallows failure for the same reason the
+    callers below do: an account exists whether or not its welcome mail can
+    name the company, and failing the send would be the worse outcome.
     """
     try:
-        from apps.organization.models import OrgSettings
+        from apps.organization.models import MembershipStatus, OrganizationMembership
 
-        settings_row = OrgSettings.objects.first()
-        if settings_row and settings_row.name:
-            return settings_row.name
+        membership = (
+            OrganizationMembership.objects.filter(
+                user_id=getattr(user, "pk", None),
+                status=MembershipStatus.ACTIVE,
+                is_active=True,
+            )
+            .select_related("organization")
+            .first()
+        )
+        return membership.organization if membership else None
     except Exception:  # noqa: BLE001 — a missing table must not stop the mail
-        logger.warning("accounts.org_name_unavailable", exc_info=True)
+        logger.warning("accounts.org_lookup_failed", exc_info=True)
+        return None
+
+
+def _company_name(organization) -> str:
+    """
+    The organisation's own name, as its administrator maintains it.
+
+    The env setting is only a fallback for a principal whose organization
+    cannot be resolved. Preferring the setting would mean the email said
+    something different from every letter and payslip.
+    """
+    if organization is not None and organization.name:
+        return organization.name
     return settings.ORG_DISPLAY_NAME
 
 
-def _legal_name() -> str:
+def _legal_name(organization) -> str:
     """
     The registered entity, for the signature block.
 
     A real legal name in the footer is one of the plainest signals that a
     message comes from a business rather than a bulk sender, and it costs
-    nothing. Empty when HR has not recorded one.
+    nothing. Empty when the company has not recorded one.
     """
-    try:
-        from apps.organization.models import OrgSettings
-
-        row = OrgSettings.objects.first()
-        if row and getattr(row, "legal_name", ""):
-            return row.legal_name
-    except Exception:  # noqa: BLE001 - never stop the mail over a footer
-        logger.warning("accounts.org_legal_name_unavailable", exc_info=True)
-    return ""
+    return getattr(organization, "legal_name", "") or ""
 
 
 def _position_of(employee, role) -> str:
@@ -225,8 +239,9 @@ def send_account_created_email(
     and failing the creation would be the worse outcome. The caller surfaces
     the result so nobody is told credentials went out when they did not.
     """
-    company = _company_name()
-    legal_name = _legal_name()
+    organization = _organization_of(user)
+    company = _company_name(organization)
+    legal_name = _legal_name(organization)
     login_url = f"{settings.FRONTEND_URL.rstrip('/')}/login"
     hr_contact = settings.HR_CONTACT_EMAIL
     name = (getattr(employee, "full_name", "") or user.get_full_name() or user.email).strip()

@@ -87,10 +87,31 @@ def kind_for_decision(stage, decision: str) -> str | None:
 # ---------------------------------------------------------------- context
 
 
-def _company_name() -> str:
+def _organization_for(application):
+    """
+    The company this correspondence comes from.
+
+    Resolved from the acting organization context, because the recruitment
+    tables do not carry the column yet. Once they do this becomes relational --
+    application -> job_opening -> organization -- and this indirection exists so
+    that is a change to one function rather than to every template context.
+
+    Returns None when nothing is bound (a Celery send, today), and the caller
+    falls back to the deployment's display name rather than guessing at a
+    company. Naming the wrong one in a candidate's inbox would be worse than
+    naming none.
+    """
+    from apps.organization.models import Organization
+    from core.middleware import get_current_org_id
+
+    org_id = get_current_org_id()
+    return Organization.objects.filter(pk=org_id).first() if org_id else None
+
+
+def _company_name(organization=None) -> str:
     from apps.accounts.services.passwords import _company_name as company
 
-    return company()
+    return company(organization)
 
 
 def _reference(application: Application) -> str:
@@ -109,7 +130,7 @@ def base_context(application: Application) -> dict:
         "applied_on": timezone.localtime(application.applied_at).strftime("%d %b %Y"),
         "current_status": _status_label(application),
         "current_stage": getattr(stage, "name", ""),
-        "company_name": _company_name(),
+        "company_name": _company_name(_organization_for(application)),
         "hr_contact_email": settings.HR_CONTACT_EMAIL,
         "next_step": "",
     }

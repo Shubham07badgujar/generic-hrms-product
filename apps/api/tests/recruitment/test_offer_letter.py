@@ -81,8 +81,10 @@ def test_send_freezes_the_letter_and_attaches_it(draft_offer, staff, django_capt
     org.signatory_name = "Hema Rao"
     org.signatory_designation = "HR Head"
     org.signature.save("sig.png", ContentFile(TINY_PNG), save=False)
-    org.logo.save("logo.png", ContentFile(TINY_PNG), save=False)
     org.save()
+    # The logo is company identity, so it lives on Organization now; the
+    # signatory and their signature are operational and stayed on settings.
+    org.organization.logo.save("logo.png", ContentFile(TINY_PNG), save=True)
 
     with django_capture_on_commit_callbacks(execute=True):
         send_offer(offer=draft_offer, actor=staff["hr_head"].user)

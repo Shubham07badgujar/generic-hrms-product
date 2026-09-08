@@ -42,9 +42,10 @@ MUTED = colors.HexColor("#5a5a5a")
 
 
 def _org():
-    from apps.organization.models import OrgSettings
+    """This organization's settings row. Identity fields live on `.organization`."""
+    from apps.organization.models import current_org_settings
 
-    return OrgSettings.objects.first()
+    return current_org_settings()
 
 
 def _branch_strip() -> str:
@@ -150,8 +151,8 @@ def offer_letter_pdf(offer) -> tuple[bytes, str]:
     candidate = application.candidate
     job = application.job_opening
 
-    org_name = org.name if org else "Organisation"
-    legal_name = (org.legal_name if org and org.legal_name else org_name)
+    org_name = org.organization.name if org else "Organisation"
+    legal_name = (org.organization.legal_name if org and org.organization.legal_name else org_name)
     letter_date = timezone.localdate(offer.sent_at) if offer.sent_at else timezone.localdate()
 
     buffer = io.BytesIO()
@@ -190,7 +191,7 @@ def offer_letter_pdf(offer) -> tuple[bytes, str]:
     story: list = []
 
     # ---- letterhead
-    logo = _scaled_image(org.logo if org else None, max_width=60 * mm, max_height=19 * mm)
+    logo = _scaled_image(org.organization.logo if org else None, max_width=60 * mm, max_height=19 * mm)
     head_right = [Paragraph(org_name, org_line)]
     if legal_name != org_name:
         head_right.append(Paragraph(legal_name, small))

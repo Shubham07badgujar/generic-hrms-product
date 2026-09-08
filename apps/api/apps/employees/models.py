@@ -341,19 +341,35 @@ class EmployeeExperience(BaseModel):
     description = models.TextField(blank=True)
 
 
-def next_employee_code() -> str:
+def next_employee_code(organization) -> str:
     """
-    Allocate the next sequential employee code.
+    Allocate the next sequential employee code for ONE organization.
 
-    Uses SELECT FOR UPDATE on the settings singleton so two concurrent
-    creations cannot claim the same code — a real risk during a bulk import.
+    Uses SELECT FOR UPDATE on that organization's settings row so two
+    concurrent creations cannot claim the same code — a real risk during a bulk
+    import.
+
+    The organization is passed EXPLICITLY rather than read from the acting
+    context. The previous version locked
+    `OrgSettings.objects.select_for_update().first()`, which with more than one
+    tenant would lock an arbitrary company's row and hand out ITS next code: a
+    silent cross-tenant write in the middle of a hire, and one that would have
+    surfaced as two companies' employee numbering mysteriously interleaving.
+    Requiring an argument makes that impossible to express.
     """
     from apps.organization.models import OrgSettings
 
-    settings_row = OrgSettings.objects.select_for_update().first()
-    if settings_row is None:
-        settings_row = OrgSettings.objects.create(name="Organization")
-        settings_row = OrgSettings.objects.select_for_update().get(pk=settings_row.pk)
+    org_id = getattr(organization, "pk", organization)
+    if org_id is None:
+        raise ValueError(
+            "next_employee_code() needs an organization: employee numbering is "
+            "per-company, and there is no sensible default."
+        )
+
+    # Ensure the row exists before locking it — SELECT FOR UPDATE cannot lock
+    # a row that is not there, and a first hire is exactly when it may not be.
+    OrgSettings.for_org(org_id)
+    settings_row = OrgSettings.objects.select_for_update().get(organization_id=org_id)
 
     # Six digits by convention: EMP000101, EMP000102, … (prefix and next
     # number are org settings)

@@ -53,9 +53,9 @@ def build_context(employee: Employee, extra: dict | None = None) -> dict:
     make it possible to leak pay into a letter type that should not carry it.
     Templates needing CTC receive it explicitly through `extra`.
     """
-    from apps.organization.models import OrgSettings
+    from apps.organization.models import current_org_settings
 
-    org = OrgSettings.objects.first()
+    org = current_org_settings()
     today = timezone.localdate()
 
     context = {
@@ -75,7 +75,7 @@ def build_context(employee: Employee, extra: dict | None = None) -> dict:
             employee.confirmation_date.strftime("%d %B %Y") if employee.confirmation_date else ""
         ),
         "today": today.strftime("%d %B %Y"),
-        "organization_name": org.name if org else "the organisation",
+        "organization_name": org.organization.name if org else "the organisation",
         "signatory_name": org.signatory_name if org else "",
         "signatory_designation": org.signatory_designation if org else "",
     }

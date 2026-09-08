@@ -32,6 +32,35 @@ def test_command_creates_an_admin_with_no_usable_password(roles):
     assert user.user_roles.filter(role__code="admin", is_active=True).exists()
 
 
+def test_the_bootstrapped_admin_can_actually_administer(roles):
+    """
+    The assertion every other test in this file stopped one step short of.
+
+    They all check that the account EXISTS -- the right password state, the
+    right role row, the right audit record. None checked that it WORKS, and for
+    a while it did not: the founding Admin was created with no organization
+    membership, so `resolve_context()` returned DENY_ALL and the account could
+    reach nothing at all. Twelve green tests, and an administrator who could
+    not administer.
+
+    Existence is not the property that matters here. Authority is.
+    """
+    from apps.accounts.services.bootstrap import create_admin
+    from core.access import Action, Resource, Scope
+    from core.access.context import resolve_context
+
+    user = create_admin(email="founder@example.test", first_name="Asha")
+
+    ctx = resolve_context(user)
+
+    assert ctx.organization_id is not None, (
+        "The founding Admin has no organization, so every query they make "
+        "resolves to nothing."
+    )
+    assert ctx.scope_for(Resource.EMPLOYEE, Action.VIEW) == Scope.ALL
+    assert ctx.scope_for(Resource.ROLE, Action.EDIT) == Scope.ALL
+
+
 def test_bootstrap_is_one_shot(roles):
     from apps.accounts.services.bootstrap import BootstrapError, create_admin
 

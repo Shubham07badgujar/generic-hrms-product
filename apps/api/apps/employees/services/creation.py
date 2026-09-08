@@ -198,18 +198,21 @@ def create_employee(
     user.must_change_password = True
     user.save(update_fields=["must_change_password"])
 
-    # The new login belongs to the organization its creator acts in. This row
-    # is the ONLY thing `resolve_context()` reads to decide a principal's
-    # tenant, so an account created without one resolves to DENY_ALL and can
-    # sign in to nothing -- which is the correct failure direction, but a
-    # baffling one to debug. Created inside the same transaction as the User
+    # Everything this hire creates belongs to the organization its creator
+    # acts in. Resolved once, from the actor's own context, and then passed
+    # explicitly -- never re-read per use, so the employee, their login and
+    # their employee code cannot end up in different companies.
+    organization_id = get_context(actor).organization_id
+
+    # This membership is the ONLY thing `resolve_context()` reads to decide a
+    # principal's tenant, so an account created without one resolves to
+    # DENY_ALL and can sign in to nothing -- the correct failure direction, but
+    # a baffling one to debug. Created inside the same transaction as the User
     # and the role grant, so a principal is never half-provisioned.
-    OrganizationMembership.objects.create(
-        organization_id=get_context(actor).organization_id, user=user
-    )
+    OrganizationMembership.objects.create(organization_id=organization_id, user=user)
 
     employee = Employee(
-        employee_code=employee_code or next_employee_code(),
+        employee_code=employee_code or next_employee_code(organization_id),
         user=user,
         first_name=first_name,
         middle_name=middle_name,

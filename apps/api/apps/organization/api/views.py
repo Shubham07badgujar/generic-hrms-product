@@ -35,7 +35,9 @@ from apps.organization.models import (
     Designation,
     EmployeeLevel,
     Location,
+    Organization,
     OrgSettings,
+    OrgStatus,
     Team,
 )
 from core.access import Resource, require
@@ -130,19 +132,61 @@ class OrgBrandingView(APIView):
     authentication_classes: list = []
     permission_classes: list = []
 
+    #: Statuses whose identity may be shown to an anonymous caller. A suspended
+    #: or archived organization is indistinguishable from one that never
+    #: existed -- see the 404 below.
+    PUBLIC_STATUSES = frozenset(
+        {OrgStatus.PENDING_SETUP, OrgStatus.TRIAL, OrgStatus.ACTIVE}
+    )
+
+    def _resolve(self, request):
+        """
+        Which organization is being asked about, with no principal to ask.
+
+        Order matters, and the LAST step matters most:
+
+          1. an explicit ?org=<slug>
+          2. exactly one organization in the database — which keeps a
+             single-organization self-hosted deployment behaving as it always
+             did, with no slug and no configuration
+          3. nothing
+
+        There is deliberately no "otherwise use the first one". Serving one
+        customer's name and logo on another customer's login page is a
+        cross-tenant identity leak, and it is the same fail-open shape as the
+        incident this whole design exists to prevent: when the answer is
+        unknown, the honest result is no answer.
+        """
+        slug = (request.query_params.get("org") or "").strip()
+        public = Organization.objects.filter(status__in=self.PUBLIC_STATUSES)
+        if slug:
+            return public.filter(slug=slug).first()
+        if Organization.objects.count() == 1:
+            return public.first()
+        return None
+
     def get(self, request):
-        row = OrgSettings.objects.first()
-        if row is None:
-            return Response({"name": "HRMS", "legal_name": "", "logo": None})
+        organization = self._resolve(request)
+        if organization is None:
+            # Identical for "no such organization" and "suspended", so this
+            # endpoint cannot be used to enumerate customers or to learn which
+            # of them have stopped paying.
+            return Response(status=404)
+
         logo = None
-        if row.logo:
+        if organization.logo:
             try:
-                logo = request.build_absolute_uri(row.logo.url)
+                logo = request.build_absolute_uri(organization.logo.url)
             except ValueError:
+                # MEDIA_URL is None in production: files are served through
+                # authenticated views, never as URLs. The branding logo is the
+                # one image that legitimately has no authenticated viewer, so
+                # it has never rendered there. Left as None rather than papered
+                # over -- serving it needs its own deliberate route.
                 logo = None
         return Response({
-            "name": row.name or "HRMS",
-            "legal_name": row.legal_name or "",
+            "name": organization.name or "HRMS",
+            "legal_name": organization.legal_name or "",
             "logo": logo,
         })
 
@@ -164,10 +208,10 @@ class OrgSettingsView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def _row(self):
-        row = OrgSettings.objects.first()
-        if row is None:
-            row = OrgSettings.objects.create(name="Organisation")
-        return row
+        """This caller's organization settings, created on first access."""
+        from core.access.context import get_context
+
+        return OrgSettings.for_org(get_context(self.request).organization_id)
 
     def get(self, request):
         require(request.user, Resource.ORG_SETTINGS, Action.VIEW)
@@ -176,9 +220,18 @@ class OrgSettingsView(APIView):
     def patch(self, request):
         require(request.user, Resource.ORG_SETTINGS, Action.EDIT)
         row = self._row()
-        watched = ["name", "legal_name", "signatory_name", "signatory_designation"]
-        before = {name: getattr(row, name) for name in watched}
-        before["has_logo"], before["has_signature"] = bool(row.logo), bool(row.signature)
+        # Identity is read through `.organization`; the operational fields are
+        # on the settings row itself. Audited together because they are edited
+        # together on one screen.
+        watched = {
+            "name": lambda r: r.organization.name,
+            "legal_name": lambda r: r.organization.legal_name,
+            "signatory_name": lambda r: r.signatory_name,
+            "signatory_designation": lambda r: r.signatory_designation,
+        }
+        before = {name: read(row) for name, read in watched.items()}
+        before["has_logo"] = bool(row.organization.logo)
+        before["has_signature"] = bool(row.signature)
         serializer = OrgSettingsSerializer(row, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         updated = serializer.save()
@@ -190,8 +243,8 @@ class OrgSettingsView(APIView):
             resource=Resource.ORG_SETTINGS,
             before=before,
             after={
-                **{name: getattr(updated, name) for name in watched},
-                "has_logo": bool(updated.logo),
+                **{name: read(updated) for name, read in watched.items()},
+                "has_logo": bool(updated.organization.logo),
                 "has_signature": bool(updated.signature),
             },
         )

@@ -186,10 +186,30 @@ class OrganizationMembership(BaseModel):
 
 
 class OrgSettings(BaseModel):
-    """The organization itself. Exactly one row."""
+    """
+    One organization's operational particulars. Exactly one row PER
+    organization.
 
-    name = models.CharField(max_length=200)
-    legal_name = models.CharField(max_length=250, blank=True)
+    Kept separate from `Organization` rather than folded into it, for three
+    reasons that all cut the same way.
+
+    `employee_code_next` is a hot counter: `next_employee_code()` takes a
+    SELECT FOR UPDATE row lock on it for every hire. `Organization` is the row
+    every table in the product points at and every request reads, so putting a
+    per-hire write lock on it would be contention to undo later.
+
+    The statutory registrations below are India-specific. This is a generic
+    HRMS product; the tenant table has to stay jurisdiction-agnostic, and this
+    is where a second compliance profile would eventually go.
+
+    And identity belongs on the tenant. Name, legal name, logo, currency and
+    timezone moved to `Organization` -- there is one answer to "who is this
+    company", and it is not on a settings row.
+    """
+
+    organization = models.OneToOneField(
+        Organization, on_delete=models.CASCADE, related_name="settings"
+    )
 
     gstin = models.CharField(max_length=15, blank=True)
     pan = models.CharField(max_length=10, blank=True)
@@ -199,15 +219,10 @@ class OrgSettings(BaseModel):
     esi_number = models.CharField(max_length=30, blank=True)
 
     financial_year_start_month = models.PositiveSmallIntegerField(default=4)
-    currency = models.CharField(max_length=3, default="INR")
-    timezone = models.CharField(max_length=64, default="Asia/Kolkata")
 
     employee_code_prefix = models.CharField(max_length=8, default="EMP")
     employee_code_next = models.PositiveIntegerField(default=1)
 
-    logo = models.ImageField(
-        upload_to="org/", max_length=STORED_PATH_MAX, null=True, blank=True
-    )
     signatory_name = models.CharField(max_length=150, blank=True)
     signatory_designation = models.CharField(max_length=150, blank=True)
     #: The signatory's scanned signature, stamped onto generated letters
@@ -222,23 +237,49 @@ class OrgSettings(BaseModel):
         verbose_name_plural = "organization settings"
 
     def __str__(self) -> str:
-        return self.name
+        return f"Settings for {self.organization}"
 
     @classmethod
-    def get(cls) -> "OrgSettings":
-        """The singleton, created on first access."""
-        obj = cls.objects.first()
-        if obj is None:
-            obj = cls.objects.create(name="Organization")
+    def for_org(cls, organization) -> OrgSettings:
+        """
+        This organization's settings, created on first access.
+
+        Replaces the old `get()` singleton accessor. The rename is deliberate
+        rather than cosmetic: `get()` compiled fine in a multi-tenant world and
+        would have quietly returned an arbitrary company's row. Requiring an
+        argument turns every one of those call sites into a compile-time
+        question about WHICH organization is meant.
+        """
+        obj, _ = cls.objects.get_or_create(
+            organization_id=getattr(organization, "pk", organization)
+        )
         return obj
 
-    def save(self, *args, **kwargs):
-        if not self.pk and OrgSettings.objects.exists():
-            raise ValidationError(
-                "Organization settings already exist. This system serves a single "
-                "organization; edit the existing row rather than adding another."
-            )
-        super().save(*args, **kwargs)
+
+def current_organization():
+    """
+    The organization the running code is acting on behalf of, or None.
+
+    TRANSITIONAL. Documents and correspondence belong to a specific company,
+    but the HR tables do not carry the organization column yet, so there is no
+    relational path from an Employee or a PayrollRun to its owner. Until there
+    is, this reads the acting context -- which is bound for the whole of any
+    authenticated request.
+
+    Returns None rather than guessing when nothing is bound, and every caller
+    falls back to a NEUTRAL label. Naming the wrong company on a payslip or an
+    offer letter is considerably worse than naming none.
+    """
+    from core.middleware import get_current_org_id
+
+    org_id = get_current_org_id()
+    return Organization.objects.filter(pk=org_id).first() if org_id else None
+
+
+def current_org_settings():
+    """This organization's `OrgSettings`, or None when no organization is bound."""
+    organization = current_organization()
+    return OrgSettings.for_org(organization) if organization is not None else None
 
 
 class Location(BaseModel):

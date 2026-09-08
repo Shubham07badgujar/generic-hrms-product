@@ -178,19 +178,44 @@ class Command(BaseCommand):
         from apps.employees.models import Employee
         from apps.employees.services.creation import create_employee
         from apps.organization.models import (
-            Department, Designation, EmployeeLevel, Location, OrgSettings,
+            Department, Designation, EmployeeLevel, Location, Organization,
+            OrganizationMembership, OrgSettings,
         )
 
         # --- organisation ------------------------------------------------
-        org, _ = OrgSettings.objects.get_or_create(
-            pk=OrgSettings.objects.first().pk if OrgSettings.objects.exists() else None,
-            defaults={
-                "name": self.company,
-                "legal_name": self.legal_name,
-                "employee_code_prefix": "EMP",
-                "employee_code_next": 1001,
-            },
-        )
+        # The demo company IS the admin's organization, not a second one beside
+        # it. Every employee below is created through `create_employee` with the
+        # admin as actor, and that service places the new hire in the ACTOR's
+        # organization -- so seeding a separate one here would put the company's
+        # name on one row and all of its people in another.
+        actor_org = Organization.objects.filter(
+            memberships__user__user_roles__role__code="admin",
+            memberships__is_active=True,
+        ).first()
+        organization = actor_org or Organization.objects.first()
+        if organization is None:
+            raise CommandError(
+                "No organization exists. Run bootstrap_admin first — it creates "
+                "the founding Admin and the organization they administer."
+            )
+
+        from django.utils.text import slugify
+
+        organization.name = self.company
+        organization.legal_name = self.legal_name
+        # The slug is the public branding key -- it is how the login page finds
+        # this company before anyone signs in -- so it has to name the company,
+        # not whatever placeholder bootstrap used.
+        candidate = slugify(self.company)[:63] or organization.slug
+        if not Organization.objects.exclude(pk=organization.pk).filter(slug=candidate).exists():
+            organization.slug = candidate
+        organization.save(update_fields=["name", "legal_name", "slug", "updated_at"])
+
+        org = OrgSettings.for_org(organization)
+        if org.employee_code_next < 1001:
+            org.employee_code_prefix = "EMP"
+            org.employee_code_next = 1001
+            org.save(update_fields=["employee_code_prefix", "employee_code_next"])
 
         # `state` is not cosmetic: Professional Tax is a state levy, and a
         # location without one means PT silently computes to nothing.
@@ -253,6 +278,16 @@ class Command(BaseCommand):
                 user.set_password(password)
                 user.save(update_fields=["password"])
             UserRole.objects.get_or_create(user=user, role=role, defaults={"assigned_by": actor})
+            # These two are the only accounts this command builds WITHOUT going
+            # through `create_employee`, because admin and ceo are system
+            # principals with no Employee record -- so they are also the only
+            # ones that do not get their membership from that service. Without
+            # it they resolve to DENY_ALL, and this command's promise of "one
+            # working account per role" would be false for exactly the two
+            # roles that can reach everything.
+            OrganizationMembership.objects.get_or_create(
+                organization=organization, user=user
+            )
             credentials.append({
                 "role": role_code, "name": f"{first} {last}", "email": email,
                 "password": password, "employee": None,
