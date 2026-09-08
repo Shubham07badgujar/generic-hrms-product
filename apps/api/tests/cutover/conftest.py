@@ -14,6 +14,7 @@ import datetime as dt
 import pytest
 
 from core.access.catalog import DepartmentKind, Layer
+from tests.conftest import bind_membership
 
 PASSWORD = "test-password-12345"
 
@@ -93,6 +94,7 @@ def everyone(db, roles, org):
             first_name=role_code.replace("_", " ").title(),
         )
         UserRole.objects.create(user=user, role=roles[role_code])
+        bind_membership(user)
 
         manager = None
         if layer == Layer.MANAGER:
@@ -131,6 +133,7 @@ def everyone(db, roles, org):
             email=f"{role_code}@cutover.test", password=PASSWORD
         )
         UserRole.objects.create(user=user, role=roles[role_code])
+        bind_membership(user)
         users[role_code] = user
 
     users["_employees"] = employees

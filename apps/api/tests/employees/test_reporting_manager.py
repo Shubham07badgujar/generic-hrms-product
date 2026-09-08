@@ -22,6 +22,7 @@ from apps.employees.services.hierarchy import (
     set_reporting_manager,
 )
 from core.access.catalog import DepartmentKind
+from tests.conftest import bind_membership
 
 pytestmark = pytest.mark.django_db
 
@@ -35,6 +36,7 @@ def hr_boss(db, org, roles):
 
     user = User.objects.create_user(email="hrboss@rm.test", password="test-password-12345")
     UserRole.objects.create(user=user, role=roles["hr_head"])
+    bind_membership(user)
     return Employee.objects.create(
         employee_code="EMP07001", first_name="Asha", last_name="Boss", user=user,
         department=org["departments"][DepartmentKind.HR], location=org["location"],
@@ -48,6 +50,7 @@ def med_director(db, org, roles):
 
     user = User.objects.create_user(email="meddir@rm.test", password="test-password-12345")
     UserRole.objects.create(user=user, role=roles["medical_director"])
+    bind_membership(user)
     return Employee.objects.create(
         employee_code="EMP07002", first_name="Vikram", last_name="Rao", user=user,
         department=org["departments"][DepartmentKind.MEDICAL], location=org["location"],
@@ -61,6 +64,7 @@ def staffer(db, org, roles, hr_boss):
 
     user = User.objects.create_user(email="staffer@rm.test", password="test-password-12345")
     UserRole.objects.create(user=user, role=roles["employee"])
+    bind_membership(user)
     return Employee.objects.create(
         employee_code="EMP07003", first_name="Sam", last_name="Junior", user=user,
         department=org["departments"][DepartmentKind.HR], location=org["location"],
@@ -180,6 +184,7 @@ def test_a_peer_loop_is_refused(org, roles, hr_boss):
 
     user = User.objects.create_user(email="peer@rm.test", password="test-password-12345")
     UserRole.objects.create(user=user, role=roles["hr_head"])
+    bind_membership(user)
     peer = Employee.objects.create(
         employee_code="EMP07004", first_name="Peer", last_name="Head", user=user,
         department=org["departments"][DepartmentKind.HR], location=org["location"],
@@ -206,6 +211,7 @@ def test_a_longer_loop_is_refused(org, roles, hr_boss):
             email=f"chain{index}@rm.test", password="test-password-12345"
         )
         UserRole.objects.create(user=user, role=roles["hr_head"])
+        bind_membership(user)
         chain.append(
             Employee.objects.create(
                 employee_code=f"EMP0700{index}", first_name=f"Chain{index}", last_name="Head",
@@ -264,6 +270,7 @@ def test_hr_repoints_a_reporting_line_over_the_api(api, org, roles, hr_boss, sta
 
     hr_user = User.objects.create_user(email="hrhead@rm.test", password="test-password-12345")
     UserRole.objects.create(user=hr_user, role=roles["hr_head"])
+    bind_membership(hr_user)
     Employee.objects.create(
         employee_code="EMP07009", first_name="Hr", last_name="Head", user=hr_user,
         department=org["departments"][DepartmentKind.HR], location=org["location"],
@@ -279,6 +286,7 @@ def test_hr_repoints_a_reporting_line_over_the_api(api, org, roles, hr_boss, sta
         ),
     )
     UserRole.objects.create(user=new_boss.user, role=roles["hr_manager"])
+    bind_membership(new_boss.user)
 
     response = api.patch(
         f"{EMPLOYEES}{staffer.pk}/reporting-manager/",
@@ -296,6 +304,7 @@ def test_the_edit_refuses_a_loop_over_the_api(api, org, roles, hr_boss, staffer,
 
     hr_user = User.objects.create_user(email="hrhead2@rm.test", password="test-password-12345")
     UserRole.objects.create(user=hr_user, role=roles["hr_head"])
+    bind_membership(hr_user)
     Employee.objects.create(
         employee_code="EMP07011", first_name="Hr", last_name="Head2", user=hr_user,
         department=org["departments"][DepartmentKind.HR], location=org["location"],

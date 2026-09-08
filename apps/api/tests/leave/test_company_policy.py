@@ -41,6 +41,7 @@ from apps.leave.seeds import seed_leave
 from apps.leave.services import LeaveError
 from core.access.catalog import DepartmentKind, Layer
 from core.access.engine import AccessDenied
+from tests.conftest import bind_membership
 
 pytestmark = pytest.mark.django_db
 
@@ -66,6 +67,7 @@ def staff(db, roles, org):
             email=f"{role_code}@policy.test", password=PASSWORD, first_name=name
         )
         UserRole.objects.create(user=user, role=roles[role_code])
+        bind_membership(user)
         people[role_code] = Employee.objects.create(
             employee_code=f"EMP{counter[0]:06d}", user=user, first_name=name,
             department=org["departments"][DepartmentKind.MEDICAL],

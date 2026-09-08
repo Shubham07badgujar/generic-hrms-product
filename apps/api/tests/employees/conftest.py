@@ -7,6 +7,7 @@ import datetime as dt
 import pytest
 
 from core.access.catalog import DepartmentKind, Layer
+from tests.conftest import bind_membership
 
 
 @pytest.fixture
@@ -24,6 +25,7 @@ def hr_head(db, roles, org):
         email="hrhead@example.test", password="test-password-12345", first_name="Hema"
     )
     UserRole.objects.create(user=user, role=roles["hr_head"])
+    bind_membership(user)
     Employee.objects.create(
         employee_code="EMP00001",
         user=user,
@@ -47,6 +49,7 @@ def medical_director(db, roles, org):
         email="meddir@example.test", password="test-password-12345", first_name="Dev"
     )
     UserRole.objects.create(user=user, role=roles["medical_director"])
+    bind_membership(user)
     employee = Employee.objects.create(
         employee_code="EMP00002",
         user=user,

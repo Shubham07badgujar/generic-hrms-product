@@ -27,15 +27,24 @@ from apps.recruitment.models import (
     Application,
     Candidate,
     CandidateNotification,
-    CandidateNotificationKind as K,
-    CandidateNotificationStatus as S,
     InterviewStatus,
     JobStatus,
 )
+from apps.recruitment.models import (
+    CandidateNotificationKind as K,
+)
+from apps.recruitment.models import (
+    CandidateNotificationStatus as S,
+)
 from apps.recruitment.services import public_intake
 from apps.recruitment.services.engine import record_decision
-from apps.recruitment.services.interviews import cancel_interview, reschedule_interview, schedule_interview
+from apps.recruitment.services.interviews import (
+    cancel_interview,
+    reschedule_interview,
+    schedule_interview,
+)
 from apps.workflows.models import Decision
+from tests.conftest import bind_membership
 
 pytestmark = pytest.mark.django_db
 
@@ -425,7 +434,6 @@ def test_smtp_failure_is_recorded_audited_and_does_not_undo_the_transition(
     therapist_job, make_application, staff, django_capture_on_commit_callbacks
 ):
     from apps.audit.models import AuditLog
-
     from apps.recruitment.models import InterviewSlotInvite
     from apps.recruitment.services import slots
 
@@ -505,6 +513,7 @@ def test_a_read_only_role_cannot_retry(therapist_job, make_application, staff, r
 
     ceo = User.objects.create_user(email="ceo@example.test", password=PASSWORD)
     UserRole.objects.create(user=ceo, role=roles["ceo"])
+    bind_membership(ceo)
     from apps.recruitment.services import slots
 
     app = make_application(therapist_job)

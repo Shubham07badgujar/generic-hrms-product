@@ -17,6 +17,7 @@ from django.core import mail
 from apps.accounts.services.passwords import reissue_credentials
 from apps.employees.models import Employee
 from core.access.catalog import DepartmentKind
+from tests.conftest import bind_membership
 
 pytestmark = pytest.mark.django_db
 
@@ -30,6 +31,7 @@ def hr_head_user(db, org, roles):
 
     user = User.objects.create_user(email="hrhead@resend.test", password=PASSWORD)
     UserRole.objects.create(user=user, role=roles["hr_head"])
+    bind_membership(user)
     Employee.objects.create(
         employee_code="EMP06000", first_name="Hr", last_name="Head", user=user,
         department=org["departments"][DepartmentKind.HR], location=org["location"],
@@ -45,6 +47,7 @@ def joiner(db, org, roles):
 
     user = User.objects.create_user(email="joiner@company.test", password=PASSWORD)
     UserRole.objects.create(user=user, role=roles["employee"])
+    bind_membership(user)
     return Employee.objects.create(
         employee_code="EMP06001", first_name="Lost", last_name="Joiner", user=user,
         personal_email="lost.joiner@gmail.test",

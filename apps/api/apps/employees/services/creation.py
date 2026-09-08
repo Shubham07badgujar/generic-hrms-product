@@ -31,8 +31,16 @@ from apps.accounts.services.passwords import (
     send_account_created_email,
 )
 from apps.employees.models import Employee, next_employee_code
-from apps.organization.models import Department, Designation, EmployeeLevel, Location, Team
+from apps.organization.models import (
+    Department,
+    Designation,
+    EmployeeLevel,
+    Location,
+    OrganizationMembership,
+    Team,
+)
 from core.access import Action, Resource, invalidate, require
+from core.access.context import get_context
 
 from .hierarchy import (
     assert_creator_may_grant,
@@ -189,6 +197,16 @@ def create_employee(
     )
     user.must_change_password = True
     user.save(update_fields=["must_change_password"])
+
+    # The new login belongs to the organization its creator acts in. This row
+    # is the ONLY thing `resolve_context()` reads to decide a principal's
+    # tenant, so an account created without one resolves to DENY_ALL and can
+    # sign in to nothing -- which is the correct failure direction, but a
+    # baffling one to debug. Created inside the same transaction as the User
+    # and the role grant, so a principal is never half-provisioned.
+    OrganizationMembership.objects.create(
+        organization_id=get_context(actor).organization_id, user=user
+    )
 
     employee = Employee(
         employee_code=employee_code or next_employee_code(),

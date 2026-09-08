@@ -17,6 +17,7 @@ from rest_framework.test import APIClient
 from apps.attendance.models import AttendanceRecord, EsslEmployeeLink, RawPunch
 from apps.attendance.services import is_mapped_to_a_device
 from apps.attendance.services import sync as sync_service
+from tests.conftest import bind_membership
 
 pytestmark = pytest.mark.django_db
 
@@ -38,6 +39,7 @@ def hr_head(db, org, roles):
 
     user = User.objects.create_user(email="hrhead@essl.test", password="test-password-12345")
     UserRole.objects.create(user=user, role=roles["hr_head"])
+    bind_membership(user)
     Employee.objects.create(
         employee_code="EMP09000", first_name="Hr", last_name="Head", user=user,
         department=org["departments"]["hr"], location=org["location"],

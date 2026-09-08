@@ -21,6 +21,7 @@ from apps.accounts.models import Role, RolePermission, UserRole
 from apps.accounts.services import role_admin
 from core.access import Action, Resource, Scope, can
 from core.access.context import invalidate
+from tests.conftest import bind_membership
 
 pytestmark = pytest.mark.django_db
 
@@ -85,6 +86,7 @@ def test_a_system_role_cannot_be_deactivated(admin, roles):
 def test_a_held_role_cannot_be_deactivated(admin, custom_role, make_user):
     holder = make_user("employee", email="holder@example.test")
     UserRole.objects.create(user=holder, role=custom_role)
+    bind_membership(holder)
 
     with pytest.raises(ValidationError):
         role_admin.deactivate_role(actor=admin, role=custom_role)
@@ -106,6 +108,7 @@ def test_a_granted_cell_is_live_in_can(admin, custom_role, make_user, org):
     holder = make_user("employee", email="cellholder@example.test")
     UserRole.objects.filter(user=holder).delete()
     UserRole.objects.create(user=holder, role=custom_role)
+    bind_membership(holder)
     # Custom roles require an employee record; without one the engine
     # correctly resolves the holder to nothing at all.
     Employee.objects.create(

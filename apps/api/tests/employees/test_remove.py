@@ -29,6 +29,7 @@ from apps.employees.models import Employee, EmployeeStatus
 from apps.employees.services.lifecycle import remove_employee
 from core.access.catalog import DepartmentKind
 from core.access.engine import AccessDenied
+from tests.conftest import bind_membership
 
 pytestmark = pytest.mark.django_db
 
@@ -45,6 +46,7 @@ def leaver(roles, org):
     """An exited employee who — as in production — still has a live login and role."""
     user = User.objects.create_user(email="leaver@example.test", password=PASSWORD, first_name="Lea")
     UserRole.objects.create(user=user, role=roles["employee"])
+    bind_membership(user)
     return Employee.objects.create(
         employee_code="EMP09001", user=user, first_name="Lea", last_name="Ver",
         department=org["departments"][DepartmentKind.MEDICAL], date_of_joining=dt.date(2024, 1, 1),

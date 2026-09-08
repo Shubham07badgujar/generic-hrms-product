@@ -24,6 +24,7 @@ from apps.recruitment.services.interviews import (
     schedule_interview,
     submit_feedback,
 )
+from tests.conftest import bind_membership
 
 pytestmark = pytest.mark.django_db
 
@@ -331,6 +332,7 @@ def test_only_the_assigned_interviewer_may_submit_feedback(
         email="other.doctor@example.test", password="test-password-12345", first_name="Nikhil"
     )
     UserRole.objects.create(user=other_user, role=roles["clinic_doctor"])
+    bind_membership(other_user)
     Employee.objects.create(
         employee_code="EMP09999", user=other_user, first_name="Nikhil", last_name="Rao",
         department=staff["clinic_doctor"].department,

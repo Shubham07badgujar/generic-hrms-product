@@ -8,6 +8,7 @@ from decimal import Decimal
 import pytest
 
 from core.access.catalog import DepartmentKind, Layer
+from tests.conftest import bind_membership
 
 PASSWORD = "test-password-12345"
 PERIOD = (2025, 6)
@@ -62,6 +63,7 @@ def finance(db, roles, org):
             email=f"{role_code}@pay.test", password=PASSWORD, first_name=name
         )
         UserRole.objects.create(user=user, role=roles[role_code])
+        bind_membership(user)
         employee = Employee.objects.create(
             employee_code=f"EMP{counter[0]:05d}",
             user=user,

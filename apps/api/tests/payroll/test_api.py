@@ -14,6 +14,7 @@ import pytest
 
 from apps.payroll import services
 from apps.payroll.models import PayrollRunStatus
+from tests.conftest import bind_membership
 
 pytestmark = pytest.mark.django_db
 
@@ -163,6 +164,7 @@ def test_can_approve_is_false_for_the_person_who_processed_the_run(
 
     processor = finance["payroll_executive"].user
     UserRole.objects.create(user=processor, role=roles["finance_head"])
+    bind_membership(processor)
 
     body = auth(processor).get(f"{RUNS}{approvable_run.pk}/").json()
 

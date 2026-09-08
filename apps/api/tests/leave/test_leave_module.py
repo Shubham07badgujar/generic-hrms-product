@@ -32,6 +32,7 @@ from apps.leave.seeds import seed_leave
 from apps.leave.services import LeaveError
 from core.access.catalog import DepartmentKind, Layer
 from core.access.engine import AccessDenied
+from tests.conftest import bind_membership
 
 pytestmark = pytest.mark.django_db
 
@@ -59,6 +60,7 @@ def staff(db, roles, org):
             email=f"{role_code}@leave.test", password=PASSWORD, first_name=name
         )
         UserRole.objects.create(user=user, role=roles[role_code])
+        bind_membership(user)
         employee = Employee.objects.create(
             employee_code=f"EMP{counter[0]:06d}",
             user=user,
@@ -212,6 +214,7 @@ def test_a_new_joiner_accrues_from_the_joining_month_only(staff, leave_config, r
 
     user = User.objects.create_user(email="fresh@leave.test", password=PASSWORD)
     UserRole.objects.create(user=user, role=roles["therapist"])
+    bind_membership(user)
     fresh = Employee.objects.create(
         employee_code="EMP009999", user=user, first_name="Fresh",
         department=org["departments"][DepartmentKind.MEDICAL],

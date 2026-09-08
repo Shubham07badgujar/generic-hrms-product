@@ -28,6 +28,7 @@ from apps.payroll.models import (
     Payslip,
     StatutoryKind,
 )
+from tests.conftest import bind_membership
 
 pytestmark = pytest.mark.django_db
 
@@ -120,6 +121,7 @@ def test_an_employee_without_a_salary_structure_is_skipped_and_reported(
 
     user = User.objects.create_user(email="nostructure@pay.test", password="x-12345678")
     UserRole.objects.create(user=user, role=roles["employee"])
+    bind_membership(user)
     Employee.objects.create(
         employee_code="EMP09999", user=user, first_name="No", last_name="Structure",
         department=org["departments"]["operations"], level=org["levels"][5],
@@ -243,6 +245,7 @@ def test_whoever_processed_a_run_cannot_approve_it(approvable_run, finance, role
 
     processor = finance["payroll_executive"].user
     UserRole.objects.create(user=processor, role=roles["finance_head"])
+    bind_membership(processor)
 
     with pytest.raises(PermissionDenied) as exc:
         services.approve_run(approvable_run, actor=processor)

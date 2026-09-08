@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.conftest import bind_membership
+
 # The import fixtures too, so an E2E can start from a platform export.
 from tests.imports.conftest import (  # noqa: F401  (re-exported fixtures)
     upload,
@@ -54,6 +56,7 @@ def finance_staff(db, roles, org, staff):
             email=f"{role_code}@e2e.test", password="test-password-12345", first_name=name
         )
         UserRole.objects.create(user=user, role=roles[role_code])
+        bind_membership(user)
         employee = Employee.objects.create(
             employee_code=f"EMP{counter[0]:05d}",
             user=user,

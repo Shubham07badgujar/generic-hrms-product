@@ -38,6 +38,18 @@ class AccessContext:
     """Immutable snapshot of what a principal may do."""
 
     user_id: object | None = None
+
+    #: The organization this principal acts within. `None` means UNBOUND, and
+    #: unbound means no rows -- never "all of them". Because `DENY_ALL` carries
+    #: the default, the fail-closed path is the default object rather than a
+    #: branch someone has to remember to write.
+    organization_id: object | None = None
+
+    #: Operator of the platform, not a member of any customer organization.
+    #: Carries no grants and no organization, so every tenant queryset resolves
+    #: to nothing for them. Their surface is /api/v1/platform/.
+    is_platform_admin: bool = False
+
     role_codes: frozenset[str] = frozenset()
     layers: frozenset[int] = frozenset()
     read_only: bool = False
@@ -98,6 +110,41 @@ class AccessContext:
 DENY_ALL = AccessContext()
 
 
+def _active_membership(user):
+    """
+    The one membership that decides this principal's organization.
+
+    One query, and the `uniq_one_active_membership` constraint is what makes
+    `.first()` unambiguous rather than arbitrary.
+    """
+    from apps.organization.models import MembershipStatus, OrganizationMembership
+
+    return (
+        OrganizationMembership.objects.filter(
+            user_id=user.pk, status=MembershipStatus.ACTIVE, is_active=True
+        )
+        .select_related("organization")
+        .first()
+    )
+
+
+def platform_admin_context(user) -> AccessContext:
+    """
+    A platform operator's context: no organization, no grants.
+
+    Deliberately not "an organization context meaning everything". `grants` is
+    empty, so `RBACPermission` denies every tenant route, and
+    `organization_id` is None, so every tenant queryset resolves to nothing.
+    The brief's rule -- Platform Admin gets no implicit access to customer HR
+    data -- is therefore a property of the object rather than a policy someone
+    enforces.
+
+    `read_only` stays False: they are not restricted on the PLATFORM surface,
+    where creating and suspending organizations is the whole job.
+    """
+    return AccessContext(user_id=user.pk, is_platform_admin=True)
+
+
 def _department_closure(department_id) -> frozenset:
     """A department plus all of its descendants. Cycle-safe."""
     if department_id is None:
@@ -130,6 +177,37 @@ def resolve_context(user) -> AccessContext:
         return DENY_ALL
     if not getattr(user, "is_active", False):
         return DENY_ALL
+
+    # 1.5 ORGANIZATION BINDING.
+    #
+    #     Derived from the resolved principal, never from an ambient variable.
+    #     This is the structural answer to HRMS-INC-20260717-01: the old system
+    #     read a tenant ContextVar that middleware had to have set first, and on
+    #     JWT requests it was read while still unset, so the manager failed open
+    #     and returned rows across organizations. Here the organization is a
+    #     property of the same user object the permission decision is already
+    #     being made from, so there is no ordering left to lose.
+    #
+    #     Placed BEFORE role resolution deliberately. A principal with no
+    #     membership never reaches the grants query, so no mistake in the
+    #     permission matrix can produce an organization-less context that still
+    #     carries grants.
+    if getattr(user, "is_platform_admin", False):
+        return platform_admin_context(user)
+
+    membership = _active_membership(user)
+    if membership is None:
+        logger.warning("access.no_membership user=%s", user.pk)
+        return DENY_ALL
+    if not membership.organization.is_operational:
+        logger.warning(
+            "access.org_not_operational user=%s org=%s status=%s",
+            user.pk,
+            membership.organization_id,
+            membership.organization.status,
+        )
+        return DENY_ALL
+    organization_id = membership.organization_id
 
     from apps.accounts.models import RolePermission, UserPermissionOverride, UserRole
 
@@ -218,6 +296,7 @@ def resolve_context(user) -> AccessContext:
 
     return AccessContext(
         user_id=user.pk,
+        organization_id=organization_id,
         role_codes=frozenset(r.code for r in roles),
         layers=layers,
         read_only=read_only,
@@ -228,6 +307,49 @@ def resolve_context(user) -> AccessContext:
         grants=grants,
         dashboard_key=dashboard_key,
     )
+
+
+def _requested_org_id(request) -> object | None:
+    """
+    The organization this request is ASKING for, distinct from the one its
+    principal turns out to belong to.
+
+    Always None in V1: a user has exactly one membership, so the organization
+    is a function of the principal and a client cannot ask for another. It
+    exists so the memo below is keyed on it from the start -- when multi-org
+    arrives and the requested organization comes from a header or a token
+    claim, a context resolved for organization A can never be served to a
+    request for organization B. That is a three-line precaution against
+    precisely the class of bug this design exists to prevent.
+    """
+    return None
+
+
+def _bind(ctx: AccessContext) -> AccessContext:
+    """
+    Publish the resolved organization to the write-path ContextVar.
+
+    Reads never consult that variable -- they use `ctx.organization_id`
+    directly. This is what lets `OrgOwnedModel.save()` stamp a new row and
+    `TenantManager` scope a service-layer query without every service function
+    growing an `organization=` argument, which is not viable across 386 service
+    functions of which only a third even take an actor.
+
+    ONLY CALLED ON THE REQUEST PATH, and that restriction is the point: this
+    sets a ContextVar without resetting it, so it is safe only where something
+    else owns the lifecycle. `RequestContextMiddleware` does -- it binds None on
+    the way in and resets on the way out, whatever happens in between.
+
+    Off the request path there is no such owner, so binding here would leak the
+    organization into whatever the worker thread ran next. That is the same
+    fault as the unreset `_ctx_cache` below, and it is why `acting_as()` -- which
+    brackets and restores -- is the only sanctioned way to bind an organization
+    outside a request.
+    """
+    from core.middleware import set_current_org_id
+
+    set_current_org_id(ctx.organization_id)
+    return ctx
 
 
 def get_context(user_or_request) -> AccessContext:
@@ -246,14 +368,17 @@ def get_context(user_or_request) -> AccessContext:
         # A request-only cache would pin that anonymous DENY_ALL for the whole
         # request and refuse every authenticated API call.
         cached = getattr(request, "_access_context", None)
-        cached_for = getattr(request, "_access_context_user_id", False)
-        current_user_id = getattr(user, "pk", None) if user is not None else None
-        if cached is not None and cached_for == current_user_id:
-            return cached
+        cached_key = getattr(request, "_access_context_key", False)
+        current_key = (
+            getattr(user, "pk", None) if user is not None else None,
+            _requested_org_id(request),
+        )
+        if cached is not None and cached_key == current_key:
+            return _bind(cached)
         ctx = resolve_context(user)
         request._access_context = ctx
-        request._access_context_user_id = current_user_id
-        return ctx
+        request._access_context_key = current_key
+        return _bind(ctx)
 
     if user is None or not getattr(user, "is_authenticated", False):
         return DENY_ALL
@@ -264,6 +389,7 @@ def get_context(user_or_request) -> AccessContext:
         _ctx_cache.set(cache)
     if user.pk not in cache:
         cache[user.pk] = resolve_context(user)
+    # Deliberately NOT bound: see `_bind`. Nothing here would reset it.
     return cache[user.pk]
 
 

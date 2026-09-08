@@ -8,6 +8,7 @@ import pytest
 from django.utils import timezone
 
 from core.access.catalog import DepartmentKind, Layer
+from tests.conftest import bind_membership
 
 PASSWORD = "test-password-12345"
 
@@ -35,6 +36,7 @@ def staff(db, roles, org):
             email=f"{role_code}@lifecycle.test", password=PASSWORD, first_name=name
         )
         UserRole.objects.create(user=user, role=roles[role_code])
+        bind_membership(user)
         employee = Employee.objects.create(
             employee_code=f"EMP{counter[0]:05d}",
             user=user,
@@ -64,6 +66,7 @@ def admin_user(db, roles):
 
     user = User.objects.create_user(email="admin@lifecycle.test", password=PASSWORD)
     UserRole.objects.create(user=user, role=roles["admin"])
+    bind_membership(user)
     return user
 
 
@@ -73,6 +76,7 @@ def ceo_user(db, roles):
 
     user = User.objects.create_user(email="ceo@lifecycle.test", password=PASSWORD)
     UserRole.objects.create(user=user, role=roles["ceo"])
+    bind_membership(user)
     return user
 
 

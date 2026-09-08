@@ -8,6 +8,7 @@ import pytest
 from django.utils import timezone
 
 from core.access.catalog import DepartmentKind, Layer
+from tests.conftest import bind_membership
 
 PASSWORD = "test-password-12345"
 
@@ -37,6 +38,7 @@ def staff(db, roles, org):
             email=f"{role_code}@exit.test", password=PASSWORD, first_name=name
         )
         UserRole.objects.create(user=user, role=roles[role_code])
+        bind_membership(user)
         employee = Employee.objects.create(
             employee_code=f"EMP{counter[0]:05d}",
             user=user,
@@ -80,6 +82,7 @@ def admin_user(db, roles):
 
     user = User.objects.create_user(email="admin@exit.test", password=PASSWORD)
     UserRole.objects.create(user=user, role=roles["admin"])
+    bind_membership(user)
     return user
 
 
@@ -150,9 +153,9 @@ def exit_workflow(db, leaver, staff, last_working_date):
 @pytest.fixture
 def laptop(db, leaver, org, exit_config):
     """A returnable asset allocated to the leaver, so the asset gate binds."""
+    from apps.accounts.models import User
     from apps.assets.models import Asset, AssetCategory
     from apps.assets.services import allocate
-    from apps.accounts.models import User
 
     category = AssetCategory.objects.get(code="laptop")
     asset = Asset.objects.create(
@@ -177,9 +180,10 @@ def clear_everything():
     """
 
     def _clear(workflow, *, actor, finance_actor=None):
+        from django.utils import timezone as tz
+
         from apps.itaccounts.models import AccountStatus, CompanyEmailAccount
         from apps.offboarding.models import ClearanceStatus
-        from django.utils import timezone as tz
 
         # Clearance items, bypassing ownership by writing directly — the
         # ownership rule has its own tests.

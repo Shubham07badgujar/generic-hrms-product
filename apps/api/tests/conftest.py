@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 
@@ -68,6 +70,44 @@ def _no_throttling(settings):
     cache.clear()
 
 
+#: Fixed so the session organization is stable, greppable, and obviously a
+#: fixture rather than something a test happened to create.
+SESSION_ORG_ID = uuid.UUID("00000000-0000-0000-0000-0000000000a1")
+
+
+@pytest.fixture(scope="session")
+def _platform_seed(django_db_setup, django_db_blocker):
+    """
+    One organization, committed once for the whole session.
+
+    Every principal now resolves its tenant through an
+    `OrganizationMembership`, so essentially every test needs an organization
+    to exist. Creating one per test would be fine on its own, but the role
+    catalogue below is session-scoped for speed and roles will shortly hang off
+    an organization too -- so the organization has to outlive a single test's
+    transaction for the same reason the roles do.
+    """
+    from apps.organization.models import Organization, OrgStatus
+
+    with django_db_blocker.unblock():
+        Organization.objects.get_or_create(
+            id=SESSION_ORG_ID,
+            defaults={
+                "name": "Test Clinic",
+                "slug": "test-clinic",
+                "status": OrgStatus.ACTIVE,
+            },
+        )
+
+
+@pytest.fixture
+def organization(db, _platform_seed):
+    """The organization every fixture-built principal belongs to."""
+    from apps.organization.models import Organization
+
+    return Organization.objects.get(pk=SESSION_ORG_ID)
+
+
 @pytest.fixture(scope="session")
 def _seeded_roles(django_db_setup, django_db_blocker):
     """
@@ -85,15 +125,44 @@ def _seeded_roles(django_db_setup, django_db_blocker):
 
 
 @pytest.fixture
-def roles(db, _seeded_roles):
+def roles(db, _seeded_roles, _platform_seed):
     """The 18 canonical roles, keyed by code."""
     from apps.accounts.models import Role
 
     return {r.code: r for r in Role.objects.all()}
 
 
+def session_organization():
+    """The session organization, fetched fresh so it is never a stale instance."""
+    from apps.organization.models import Organization
+
+    return Organization.objects.get(pk=SESSION_ORG_ID)
+
+
+def bind_membership(user, organization=None):
+    """
+    Give a hand-built principal its tenant identity.
+
+    Most suites build their people directly rather than through `make_user`,
+    because they need an Employee attached or are deliberately exercising the
+    chicken-and-egg cases the provisioning services exist to solve. Those users
+    still need a membership: it is the ONLY thing `resolve_context()` reads to
+    decide which organization a principal acts in, so without one they resolve
+    to DENY_ALL and every request they make returns 403.
+
+    Idempotent, so a fixture that layers a second role onto an existing user
+    can call it without caring whether it already ran.
+    """
+    from apps.organization.models import OrganizationMembership
+
+    membership, _ = OrganizationMembership.objects.get_or_create(
+        organization=organization or session_organization(), user=user
+    )
+    return membership
+
+
 @pytest.fixture
-def make_user(db, roles):
+def make_user(db, roles, _platform_seed):
     """
     Build a user holding a given role.
 
@@ -103,15 +172,23 @@ def make_user(db, roles):
     access engine encodes, so tests should be able to exercise both.
     """
     from apps.accounts.models import User, UserRole
+    from apps.organization.models import OrganizationMembership
 
     created: list = []
 
-    def _make(role_code: str, *, email: str | None = None, **extra):
+    def _make(role_code: str, *, email: str | None = None, organization=None, **extra):
         email = email or f"{role_code}@example.test"
         user = User.objects.create_user(
             email=email, password="test-password-12345", **extra
         )
         UserRole.objects.create(user=user, role=roles[role_code])
+        # Without a membership the access engine resolves DENY_ALL, by design:
+        # tenant identity comes from this row and nowhere else. `organization`
+        # is a keyword with a default so every existing caller is unchanged and
+        # the cross-tenant tests can still ask for a second one explicitly.
+        OrganizationMembership.objects.create(
+            organization=organization or session_organization(), user=user
+        )
         created.append(user)
         return user
 
@@ -126,7 +203,7 @@ def api():
 
 
 @pytest.fixture
-def org(db):
+def org(db, _platform_seed):
     """
     The four functional departments, plus levels, a location and a designation.
 
@@ -190,6 +267,7 @@ def org(db):
     any_designation = Designation.objects.create(title="Staff Member", department=None)
 
     return {
+        "organization": session_organization(),
         "departments": departments,
         "levels": levels,
         "location": location,

@@ -19,6 +19,7 @@ from apps.recruitment.models import ApplicationStatus
 from apps.recruitment.services.engine import record_decision
 from apps.workflows.models import Decision
 from core.access import AccessDenied
+from tests.conftest import bind_membership
 
 pytestmark = pytest.mark.django_db
 
@@ -60,9 +61,8 @@ def test_no_job_title_branching_in_the_engine():
 
     A grep-based guard: if someone later adds `if job.title == ...`, this fails.
     """
-    from pathlib import Path
-
     import re
+    from pathlib import Path
 
     engine_dir = Path(__file__).resolve().parents[2] / "apps" / "recruitment" / "services"
     # Whole-word matching: "cre" as a bare identifier is a role code, but it is
@@ -236,6 +236,7 @@ def test_interviewer_from_another_department_is_refused(
 
     intruder = staff["clinic_doctor"]
     UserRole.objects.create(user=intruder.user, role=roles["cre"])
+    bind_membership(intruder.user)
 
     with pytest.raises(ValidationError, match="you are in"):
         record_decision(

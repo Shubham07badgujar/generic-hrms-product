@@ -101,6 +101,19 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     mfa_secret = models.CharField(max_length=64, null=True, blank=True)
 
+    #: Operator of the SaaS platform, not a customer's employee.
+    #:
+    #: A structural flag rather than a Role, for the same reason `is_read_only`
+    #: and `can_manage_users` are columns: Role rows are runtime-editable, so a
+    #: platform capability expressed as a role could be granted by a customer's
+    #: own administrator. This is set only by `bootstrap_platform_admin`; no API
+    #: writes it, which is why it is not editable.
+    #:
+    #: A platform admin belongs to NO organization and holds NO role, so
+    #: `resolve_context()` already yields them no grants over customer data.
+    #: The flag selects a different surface; it does not widen this one.
+    is_platform_admin = models.BooleanField(default=False, editable=False)
+
     date_joined = models.DateTimeField(default=timezone.now)
 
     objects = UserManager()

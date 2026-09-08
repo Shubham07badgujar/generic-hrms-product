@@ -18,6 +18,7 @@ from apps.employees.models import Employee
 from apps.employees.services.creation import create_employee
 from core.access import AccessDenied
 from core.access.catalog import DepartmentKind, Layer
+from tests.conftest import bind_membership
 
 pytestmark = pytest.mark.django_db
 
@@ -302,6 +303,7 @@ def test_cross_department_reporting_is_permitted_upward(hr_head, org, roles):
 
     manager_user = U.objects.create_user(email="opsmgr@example.test", password="x")
     UR.objects.create(user=manager_user, role=roles["operations_manager"])
+    bind_membership(manager_user)
     manager = E.objects.create(
         employee_code="EMP09000",
         user=manager_user,
@@ -379,6 +381,7 @@ def test_creator_cannot_mint_someone_more_senior(db, roles, org, medical_directo
 
     user = U.objects.create_user(email="hrmgr@example.test", password="x")
     UR.objects.create(user=user, role=roles["hr_manager"])
+    bind_membership(user)
     E.objects.create(
         employee_code="EMP09002",
         user=user,

@@ -16,6 +16,7 @@ import pytest
 from apps.employees.models import Employee
 from apps.employees.services.profile import rename_employee
 from core.access.catalog import DepartmentKind
+from tests.conftest import bind_membership
 
 pytestmark = pytest.mark.django_db
 
@@ -28,6 +29,7 @@ def _person(org, roles, code, first, last, role_code, email, department=None):
 
     user = User.objects.create_user(email=email, password=PASSWORD)
     UserRole.objects.create(user=user, role=roles[role_code])
+    bind_membership(user)
     return Employee.objects.create(
         employee_code=code, first_name=first, last_name=last, user=user,
         department=department or org["departments"][DepartmentKind.MEDICAL],
