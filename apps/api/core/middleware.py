@@ -6,6 +6,23 @@ can attribute writes and the audit layer can correlate a chain of writes back
 to one HTTP request — without threading `request` through every service call.
 
 ContextVar (not thread-local) so this survives async views and Celery tasks.
+
+ORGANIZATION CONTEXT IS WRITE-PATH ONLY
+---------------------------------------
+`_current_org` exists so a newly created row can be stamped with its owner and
+so request-less callers (Celery, management commands) can scope their queries.
+It is deliberately NOT how a request decides which organization it is reading.
+
+That distinction is the whole lesson of HRMS-INC-20260717-01: the old system
+read an ambient tenant variable that middleware had to have set first, and on
+JWT requests it was read while still unset, so the manager failed open. Reads
+now resolve the organization from `AccessContext`, which is derived from the
+authenticated principal inside view dispatch -- see core/access/context.py.
+
+So: never read `get_current_org_id()` to answer "whose data may this request
+see". Ask the access context. This variable answers a narrower question --
+"which organization is this code acting on behalf of right now" -- and its
+absence is an error rather than a licence.
 """
 
 from __future__ import annotations
@@ -16,10 +33,33 @@ from contextvars import ContextVar
 
 _current_user: ContextVar = ContextVar("hrms_current_user", default=None)
 _request_id: ContextVar = ContextVar("hrms_request_id", default=None)
+_current_org: ContextVar = ContextVar("hrms_current_org", default=None)
 
 
 def get_current_user():
     return _current_user.get()
+
+
+def get_current_org_id():
+    """
+    The organization this code is acting on behalf of, or None.
+
+    None means "not established", never "all of them". Every caller treats it
+    as an error condition -- `TenantManager` raises on it -- because the one
+    thing this must never do is quietly widen a query.
+    """
+    return _current_org.get()
+
+
+def set_current_org_id(org_id):
+    """
+    Bind the acting organization, returning the token needed to restore it.
+
+    Called from the access layer once a context resolves, and from
+    `acting_as()`. Not for general use: binding an organization by hand is how
+    you end up with code that is correct only if it ran in the right order.
+    """
+    return _current_org.set(org_id)
 
 
 def get_request_id():
@@ -27,18 +67,40 @@ def get_request_id():
 
 
 @contextmanager
-def acting_as(user, request_id=None):
+def acting_as(user, request_id=None, organization=None):
     """
-    Run a block attributed to `user`.
+    Run a block attributed to `user`, on behalf of `organization`.
 
     Required in Celery tasks and management commands, which have no request
-    cycle — without it, writes are recorded with no actor.
+    cycle — without it, writes are recorded with no actor and tenant-scoped
+    queries have no organization to scope to.
+
+    `organization` accepts a model instance or a bare id. Passing it is how a
+    Celery task binds its tenant: the task receives an organization id as an
+    ARGUMENT and enters this block with it. It must never inherit one, because
+    Celery serialises arguments but not context variables — a task relying on
+    inherited context runs under whatever the previous task on that worker
+    left behind.
+
+    Also resets `core.access.context`'s memoized context cache for the
+    duration. That cache is keyed by user id, and outside a request it is
+    never otherwise cleared; leaving it in place would let a block running as
+    one principal, or for one organization, be served a context resolved for
+    another.
     """
+    from core.access import context as access_context
+
+    org_id = getattr(organization, "pk", organization)
+
     user_token = _current_user.set(user)
     rid_token = _request_id.set(request_id or uuid.uuid4())
+    org_token = _current_org.set(org_id)
+    cache_token = access_context.reset_context_cache()
     try:
         yield
     finally:
+        access_context.restore_context_cache(cache_token)
+        _current_org.reset(org_token)
         _current_user.reset(user_token)
         _request_id.reset(rid_token)
 
@@ -59,9 +121,15 @@ class RequestContextMiddleware:
         # *use* time, inside the view, which is the only place it is read.
         user_token = _current_user.set(request.user)
         rid_token = _request_id.set(request_id)
+        # Deliberately NOT set here. At middleware time a JWT request is still
+        # anonymous, so there is no principal to derive an organization from —
+        # which is exactly the ordering that made the old tenant manager fail
+        # open. The access layer binds it once it resolves a real context.
+        org_token = _current_org.set(None)
         try:
             response = self.get_response(request)
         finally:
+            _current_org.reset(org_token)
             _current_user.reset(user_token)
             _request_id.reset(rid_token)
 

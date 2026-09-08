@@ -267,6 +267,28 @@ def get_context(user_or_request) -> AccessContext:
     return cache[user.pk]
 
 
+def reset_context_cache():
+    """
+    Start a fresh memo scope, returning the token that restores the old one.
+
+    `_ctx_cache` is a ContextVar that was previously set and never reset. Inside
+    a request that is harmless -- the request-attribute cache above is used
+    instead -- but a WSGI worker thread or a Celery worker reuses its context
+    across requests and tasks, so entries survived into work they were never
+    resolved for. That was already wrong for role grants; once a context also
+    carries an organization it is a stale TENANT, which is the failure this
+    whole design exists to prevent.
+
+    `acting_as()` brackets every request-less block with this.
+    """
+    return _ctx_cache.set(None)
+
+
+def restore_context_cache(token) -> None:
+    """Undo `reset_context_cache()`."""
+    _ctx_cache.reset(token)
+
+
 def invalidate(user_id=None) -> None:
     """
     Drop memoized contexts.

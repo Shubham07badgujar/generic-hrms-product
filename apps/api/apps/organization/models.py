@@ -1,11 +1,18 @@
 """
-Organizational structure: departments, designations, locations, levels, teams.
+The tenant, and the organizational structure inside it.
 
-Single organization — there is no tenant column anywhere. `OrgSettings` is a
-singleton holding the company's own particulars.
+`Organization` is the customer company: the row every other table in the
+product ultimately belongs to. `OrgSettings` holds that company's operational
+particulars, and departments/designations/locations/levels/teams describe its
+shape.
+
+See docs/ARCHITECTURE.md PART 13 for why tenancy returned and the constraints
+it must satisfy.
 """
 
 from __future__ import annotations
+
+import uuid
 
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -13,6 +20,169 @@ from django.db import models
 from core.access.catalog import DepartmentKind, Layer
 from core.models import BaseModel
 from core.validators import STORED_PATH_MAX
+
+
+class OrgStatus(models.TextChoices):
+    """
+    Lifecycle of a customer organization.
+
+    Authoritative for ACCESS. A subscription's commercial state is tracked
+    separately, and a change there is applied to this field through one
+    service, so there is a single field to ask "may these users work?" and a
+    single write path that answers it.
+    """
+
+    PENDING_SETUP = "pending_setup", "Pending setup"
+    TRIAL = "trial", "Trial"
+    ACTIVE = "active", "Active"
+    SUSPENDED = "suspended", "Suspended"
+    CANCELLED = "cancelled", "Cancelled"
+    ARCHIVED = "archived", "Archived"
+
+
+#: Statuses whose users may sign in and use the product. PENDING_SETUP is a
+#: working state, not a locked one: the administrator is mid-wizard and must be
+#: able to read and write in order to finish it.
+OPERATIONAL_STATUSES = frozenset(
+    {OrgStatus.PENDING_SETUP, OrgStatus.TRIAL, OrgStatus.ACTIVE}
+)
+
+
+class Organization(models.Model):
+    """
+    One customer company.
+
+    Deliberately NOT a `BaseModel`, for two reasons.
+
+    `BaseModel` carries `created_by`/`updated_by` foreign keys to the user
+    model. `accounts` is the first local app and gains a link back to this one,
+    so those columns would make the dependency circular and force the
+    `0001_initial`/`0002_initial` split already visible in `apps/employees`.
+    "Who created this organization" is answered by the audit log, which is the
+    only append-only record in the system and the right place for it.
+
+    `BaseModel` also carries `is_active`, which would be a second way to say
+    "this organization is gone" alongside `status`. Two fields answering one
+    question is how they come to disagree.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    name = models.CharField(max_length=200)
+    legal_name = models.CharField(max_length=250, blank=True)
+
+    #: Stable public handle. The ONLY globally unique key in the product
+    #: besides `User.email`, because the pre-authentication branding endpoint
+    #: has no principal to resolve a tenant from and must be told which one.
+    slug = models.SlugField(max_length=63, unique=True)
+
+    logo = models.ImageField(
+        upload_to="org/", max_length=STORED_PATH_MAX, null=True, blank=True
+    )
+    favicon = models.ImageField(
+        upload_to="org/", max_length=STORED_PATH_MAX, null=True, blank=True
+    )
+
+    primary_email = models.EmailField(blank=True)
+    phone = models.CharField(max_length=20, blank=True)
+    website = models.URLField(blank=True)
+
+    address = models.TextField(blank=True)
+    city = models.CharField(max_length=80, blank=True)
+    #: Matches `Location.state`, which drives Professional Tax jurisdiction.
+    state = models.CharField(max_length=8, blank=True)
+    country = models.CharField(max_length=2, default="IN")
+    pincode = models.CharField(max_length=10, blank=True)
+
+    timezone = models.CharField(max_length=64, default="Asia/Kolkata")
+    currency = models.CharField(max_length=3, default="INR")
+    date_format = models.CharField(max_length=32, default="d M Y")
+
+    status = models.CharField(
+        max_length=20,
+        choices=OrgStatus.choices,
+        default=OrgStatus.PENDING_SETUP,
+        db_index=True,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+    @property
+    def is_operational(self) -> bool:
+        """Whether this organization's users may currently use the product."""
+        return self.status in OPERATIONAL_STATUSES
+
+
+class MembershipStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    SUSPENDED = "suspended", "Suspended"
+    REMOVED = "removed", "Removed"
+
+
+class OrganizationMembership(BaseModel):
+    """
+    Which organization a user belongs to. The sole source of tenant identity.
+
+    NOT an `OrgOwnedModel`, and the reason is structural rather than stylistic:
+    resolving a principal's organization is what this table is queried FOR, so
+    a manager that required an organization to be bound before it could be read
+    would be circular. It is also why `User` carries no `organization` column —
+    a denormalized copy is a cache, and a cache of tenant identity that can go
+    stale is precisely the class of bug this design exists to prevent.
+
+    Modelled as a genuine many-to-many so the identity model never has to be
+    redesigned, then clamped to one active membership for V1. Removing that
+    clamp is only the schema half of multi-organization support; see
+    docs/ARCHITECTURE.md §13.4 for the rest.
+    """
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="memberships"
+    )
+    user = models.ForeignKey(
+        "accounts.User", on_delete=models.CASCADE, related_name="memberships"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=MembershipStatus.choices,
+        default=MembershipStatus.ACTIVE,
+        db_index=True,
+    )
+    invited_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    joined_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "user"], name="uniq_membership_org_user"
+            ),
+            # THE V1 CLAMP. One active membership per user, so a login resolves
+            # to exactly one organization with no selection step. Dropping this
+            # is the schema change multi-org needs; it is not the whole job.
+            models.UniqueConstraint(
+                fields=["user"],
+                condition=models.Q(status=MembershipStatus.ACTIVE, is_active=True),
+                name="uniq_one_active_membership",
+            ),
+        ]
+        indexes = [models.Index(fields=["user", "status"])]
+
+    def __str__(self) -> str:
+        return f"{self.user} @ {self.organization}"
 
 
 class OrgSettings(BaseModel):
