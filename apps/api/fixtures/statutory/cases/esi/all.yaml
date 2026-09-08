@@ -1,0 +1,278 @@
+# ESI — all four categories.
+# Every expected value hand-derived from the rate-set parameters.
+
+# ---------------------------------------------------------------- normal
+- id: esi-normal-well-below-threshold
+  category: normal
+  rule_set: esi/2024-04-01
+  covers: [employee_rate, employer_rate, gross_wage_threshold, applies]
+  source: "ESI Act 1948 s.39; ESI (Central) Rules 1950 Rule 50"
+  assumptions:
+    - "Covered establishment; employee is not a person with disability"
+    - "ESI is assessed on full gross, not on Basic + DA"
+  given:
+    gross_wage: "18000.00"
+    pf_wage: "9000.00"        # deliberately different: ESI must ignore it
+  expect:
+    base_wage: "18000.00"
+    employee: "135.00"
+    employer: "585.00"
+    applied: true
+  derivation: |
+    Gross 18,000.00 is below the 21,000.00 limit, so ESI applies on full gross.
+
+    employee = 18,000.00 x 0.75% = 135.00
+    employer = 18,000.00 x 3.25% = 585.00
+
+    The base is 18,000 and NOT the 9,000 PF wage. Assessing ESI on Basic + DA
+    would under-deduct by half here — the mirror image of the PF-on-gross bug.
+
+- id: esi-normal-well-above-threshold
+  category: normal
+  rule_set: esi/2024-04-01
+  covers: [gross_wage_threshold, applies]
+  source: "ESI Act 1948 s.2(9) — employee definition excludes above the wage limit"
+  assumptions:
+    - "New employee whose wage has always exceeded the limit; no continuation"
+  given:
+    gross_wage: "35000.00"
+    esi_already_liable_this_period: false
+  expect:
+    base_wage: "0.00"
+    employee: "0.00"
+    employer: "0.00"
+    applied: false
+    exemption_reason: "above_wage_threshold"
+  derivation: |
+    35,000.00 exceeds the 21,000.00 limit and there is no continuing liability
+    from earlier in the contribution period, so the employee is outside ESI.
+    Both contributions are zero and `applied` is false.
+
+# -------------------------------------------------------------- boundary
+- id: esi-boundary-exactly-at-threshold
+  category: boundary
+  rule_set: esi/2024-04-01
+  covers: [gross_wage_threshold, threshold_is_inclusive, employee_rate, employer_rate]
+  source: "ESI (Central) Rules 1950 Rule 50 — 'wages not exceeding'"
+  assumptions:
+    - >
+      The limit is INCLUSIVE: an employee earning exactly 21,000.00 is covered.
+      Encoded as the parameter `threshold_is_inclusive` so a verifier can
+      contradict it without a code change.
+  given:
+    gross_wage: "21000.00"
+  expect:
+    base_wage: "21000.00"
+    employee: "157.50"
+    employer: "682.50"
+    applied: true
+  derivation: |
+    "Not exceeding 21,000" includes exactly 21,000, so ESI applies.
+
+    employee = 21,000.00 x 0.75% = 157.50
+    employer = 21,000.00 x 3.25% = 682.50
+
+    This is the single most consequential inclusivity decision in ESI: an
+    implementation using `<` instead of `<=` silently drops every employee
+    sitting exactly on the limit.
+
+- id: esi-boundary-one-rupee-below-threshold
+  category: boundary
+  rule_set: esi/2024-04-01
+  covers: [gross_wage_threshold]
+  source: "ESI (Central) Rules 1950 Rule 50"
+  assumptions:
+    - "Clearly within the limit"
+  given:
+    gross_wage: "20999.00"
+  expect:
+    base_wage: "20999.00"
+    employee: "157.49"
+    employer: "682.47"
+    applied: true
+  derivation: |
+    employee = 20,999.00 x 0.75% = 157.4925  -> 157.49  (half-up, 2dp)
+    employer = 20,999.00 x 3.25% = 682.4675  -> 682.47
+
+    Employee long form: 20,999 x 0.0075 = 157.49250; third decimal is 2, rounds
+    down to 157.49.
+    Employer long form: 20,999 x 0.0325 = 682.46750; third decimal is 5, rounds
+    half-up to 682.47.
+
+- id: esi-boundary-one-rupee-above-threshold
+  category: boundary
+  rule_set: esi/2024-04-01
+  covers: [gross_wage_threshold, threshold_is_inclusive]
+  source: "ESI Act 1948 s.2(9)"
+  assumptions:
+    - "No continuing liability from earlier in the contribution period"
+  given:
+    gross_wage: "21001.00"
+    esi_already_liable_this_period: false
+  expect:
+    base_wage: "0.00"
+    employee: "0.00"
+    employer: "0.00"
+    applied: false
+    exemption_reason: "above_wage_threshold"
+  derivation: |
+    21,001.00 exceeds 21,000.00, so the employee is outside ESI.
+
+    Paired with esi-boundary-exactly-at-threshold, these two cases pin the
+    comparison exactly: 21,000 in, 21,001 out.
+
+- id: esi-boundary-disability-threshold
+  category: boundary
+  rule_set: esi/2024-04-01
+  covers: [disability_wage_threshold, employee_rate, employer_rate]
+  source: "ESI Act 1948 — enhanced wage ceiling for persons with disability"
+  assumptions:
+    - "Employee is a person with disability, attracting the higher wage limit"
+    - "The higher limit replaces the standard one; it does not stack with it"
+  given:
+    gross_wage: "24000.00"
+    is_disabled: true
+  expect:
+    base_wage: "24000.00"
+    employee: "180.00"
+    employer: "780.00"
+    applied: true
+  derivation: |
+    24,000.00 exceeds the standard 21,000.00 limit but is within the 25,000.00
+    disability limit, so ESI applies on full gross.
+
+    employee = 24,000.00 x 0.75% = 180.00
+    employer = 24,000.00 x 3.25% = 780.00
+
+    Without the disability limit this employee would be wrongly excluded — a
+    coverage loss for exactly the group the enhanced limit exists to protect.
+
+# ------------------------------------------------------------- exemption
+- id: esi-exemption-scheme-not-applicable
+  category: exemption
+  rule_set: esi/2024-04-01
+  covers: [applies]
+  source: "ESI Act 1948 s.1(3), s.1(5) — applicability by establishment and area"
+  assumptions:
+    - "Establishment is not covered, e.g. outside a notified area"
+  given:
+    gross_wage: "15000.00"
+    _rate_set_override:
+      applies: false
+  expect:
+    base_wage: "0.00"
+    employee: "0.00"
+    employer: "0.00"
+    applied: false
+    exemption_reason: "scheme_not_applicable"
+  derivation: |
+    Where the scheme does not apply, all components are zero.
+
+    Distinct from a MISSING rule set, which raises RuleSetMissing. "ESI does not
+    cover this establishment" and "we do not know the ESI rules" must not
+    produce the same payslip.
+
+- id: esi-exemption-zero-wage
+  category: exemption
+  rule_set: esi/2024-04-01
+  covers: [employee_rate, employer_rate]
+  source: "ESI Act 1948 s.39 — contribution is a percentage of wages"
+  assumptions:
+    - "Full month of loss of pay"
+  given:
+    gross_wage: "0.00"
+  expect:
+    base_wage: "0.00"
+    employee: "0.00"
+    employer: "0.00"
+    applied: true
+  derivation: |
+    0.75% and 3.25% of zero are both zero. `applied` remains TRUE — the employee
+    is covered, there is simply nothing to assess this month. That distinction
+    matters for ESIC returns, which expect a zero-wage covered employee to be
+    reported rather than omitted.
+
+# ------------------------------------------------------------------ edge
+- id: esi-edge-contribution-period-continuation
+  category: edge
+  rule_set: esi/2024-04-01
+  covers: [contribution_periods, gross_wage_threshold, employee_rate, employer_rate]
+  source: "ESI Act 1948 s.2(9) proviso — continuation to the end of the contribution period"
+  assumptions:
+    - >
+      Employee was covered at the start of the April-September period and
+      received a rise mid-period taking them above the limit.
+    - >
+      Liability continues to 30 September on the ACTUAL wage, not on the
+      threshold. Tier 2 supplies the continuation flag from history.
+  given:
+    gross_wage: "26000.00"
+    period_month: 7
+    esi_already_liable_this_period: true
+  expect:
+    base_wage: "26000.00"
+    employee: "195.00"
+    employer: "845.00"
+    applied: true
+    continued_from_period_start: true
+  derivation: |
+    Gross 26,000.00 is above the 21,000.00 limit, but coverage began at the
+    start of the contribution period, so it continues to the period's end.
+
+    employee = 26,000.00 x 0.75% = 195.00
+    employer = 26,000.00 x 3.25% = 845.00
+
+    Two things this pins down. First, contribution is on the ACTUAL wage, not
+    capped at the threshold — ESI has no wage ceiling for contribution, unlike
+    PF. Second, the previous system had no continuation concept at all, so it
+    would have dropped this employee in July, which ESIC does not permit.
+
+- id: esi-edge-new-period-resets-liability
+  category: edge
+  rule_set: esi/2024-04-01
+  covers: [contribution_periods, gross_wage_threshold]
+  source: "ESI Act 1948 s.2(9) proviso"
+  assumptions:
+    - >
+      Same employee as the previous case, now in October — a NEW contribution
+      period. Their wage is above the limit at the period start, so they are
+      outside ESI for the whole of October-March.
+  given:
+    gross_wage: "26000.00"
+    period_month: 10
+    esi_already_liable_this_period: false
+  expect:
+    base_wage: "0.00"
+    employee: "0.00"
+    employer: "0.00"
+    applied: false
+    exemption_reason: "above_wage_threshold"
+  derivation: |
+    Continuation does not survive a period boundary. In the new October-March
+    period the wage is assessed afresh: 26,000.00 exceeds 21,000.00, so the
+    employee is outside ESI.
+
+    Paired with the previous case this proves continuation is bounded — an
+    implementation that latches coverage permanently would fail here.
+
+- id: esi-edge-rounding-half-up
+  category: edge
+  rule_set: esi/2024-04-01
+  covers: [employee_rate, employer_rate]
+  source: "ESI Act 1948 s.39"
+  assumptions:
+    - "Money rounds half-up to two decimals"
+    - "Each contribution rounds independently"
+  given:
+    gross_wage: "13333.33"
+  expect:
+    base_wage: "13333.33"
+    employee: "100.00"
+    employer: "433.33"
+    applied: true
+  derivation: |
+    employee = 13,333.33 x 0.75% = 99.999975  -> 100.00  (half-up, 2dp)
+    employer = 13,333.33 x 3.25% = 433.333225 -> 433.33
+
+    Chosen so the employee share sits just under a rupee boundary — an
+    implementation truncating instead of rounding would give 99.99.

@@ -1,0 +1,52 @@
+statute: gratuity
+jurisdiction: ""
+regime: ""
+rule_version: gratuity.v1
+
+effective_from: "2024-04-01"
+effective_to: null
+financial_year: ""
+
+source:
+  citation: >
+    Payment of Gratuity Act, 1972 — s.4(1) eligibility, s.4(2) formula,
+    s.4(3) maximum. Continuous-service reckoning per s.2A.
+  url: ""
+  retrieved_on: null
+
+verification:
+  status: UNVERIFIED
+  verified_by: null
+  verified_on: null
+  note: >
+    NOT VERIFIED. Finance must confirm the statutory maximum and the
+    eligibility period against the Act as currently amended.
+
+parameters:
+  formula_numerator: "15"          # 15 days' wages
+  formula_denominator: "26"        # per month of 26 working days
+  eligibility_years: "5"           # continuous service required
+  statutory_maximum: "2000000.00"  # lifetime cap on gratuity payable
+  months_for_year_rounding: "6"    # >= 6 months counts as a full year
+  provision_months_per_year: "12"  # for monthly accrual provisioning
+
+assumptions:
+  - >
+    Gratuity is computed on LAST DRAWN Basic + DA, not gross and not an average.
+    StatutoryContext carries last_drawn_monthly_wage for this.
+  - >
+    The 26-day divisor represents a working month and is fixed by the Act; it is
+    not derived from the actual days in the month.
+  - >
+    Monthly PROVISIONING (an accounting accrual) is distinct from the gratuity
+    PAYABLE on exit. The provision accrues from day one; the payment is due only
+    once eligibility is met. A provision is not a promise to pay.
+  - >
+    The s.2A continuous-service rule (240 days in a year counting as a year) is
+    modelled via completed_service_days rather than being inferred from dates,
+    because attendance history is a Tier 2 concern.
+  - >
+    The statutory maximum is a LIFETIME cap across employers, not per employer.
+    This system can only see its own employment, so the cap applied here is a
+    ceiling on what this employer owes, not a guarantee of the employee's
+    overall position.

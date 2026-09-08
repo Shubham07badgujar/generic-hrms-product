@@ -1,0 +1,66 @@
+# ── Python / Django ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# ── Secrets / environment ────────────────────────────────────────
+# NEVER commit real environment files. .env.example is the template.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# ── Django runtime ───────────────────────────────────────────────
+media/
+staticfiles/
+*.sqlite3
+*.log
+
+# ── Node / React ─────────────────────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+build/
+.vite/
+*.local
+.eslintcache
+
+# ── Editors / OS ─────────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Generated ────────────────────────────────────────────────────
+apps/web/src/api/generated/
+schema.yml
+
+# UAT demo-user documentation contains generated passwords.
+docs/uat/
+
+# TypeScript incremental build cache — a generated artifact.
+*.tsbuildinfo
+
+# Google credential material, wherever it lands
+client_secret_*.json
+*service_account*.json
+google-forms-token.json
+.hrms-secrets/

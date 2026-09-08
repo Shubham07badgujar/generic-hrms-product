@@ -1,0 +1,1 @@
+{% autoescape off %}Offer declined – {{ job_title }}{% endautoescape %}

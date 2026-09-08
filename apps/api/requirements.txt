@@ -1,0 +1,57 @@
+# Direct runtime dependencies.
+#
+# `requirements.lock.txt` alongside this is the full resolved set (108 packages,
+# `pip freeze` of the working environment) and is what a deployment should
+# install — it pins transitive versions, which this file deliberately does not.
+#
+# This file exists so a reader can see what the application actually depends on
+# and why, which a flat freeze cannot express.
+#
+#   pip install -r requirements.lock.txt   # deploy / CI
+#   pip install -r requirements.txt        # local, accepting newer transitives
+
+# --- framework ---------------------------------------------------------
+Django==5.1.5
+djangorestframework==3.15.2
+django-environ==0.11.2
+django-filter==24.3
+django-cors-headers==4.6.0
+
+# --- auth --------------------------------------------------------------
+djangorestframework-simplejwt==5.3.1
+argon2-cffi==23.1.0                 # password hashing
+
+# --- database ----------------------------------------------------------
+psycopg[binary]==3.2.3
+
+# --- async / scheduling ------------------------------------------------
+celery==5.4.0
+redis==5.2.1
+django-celery-beat==2.7.0
+
+# --- storage (production) ----------------------------------------------
+django-storages==1.14.4
+boto3==1.35.81
+
+# --- documents ---------------------------------------------------------
+reportlab==5.0.0                    # payslip and letter PDFs
+openpyxl==3.1.5                     # salary register, candidate import
+defusedxml==0.7.1                   # hardens openpyxl's XML parser (see below)
+#   openpyxl detects defusedxml at import and swaps its parser for the
+#   defended one with no code change. Without it, an .xlsx sheet is parsed
+#   by stdlib ElementTree, which resists XXE but NOT entity-expansion DoS
+#   (billion laughs). Candidate import parses attacker-supplied XML.
+
+# --- security / data ---------------------------------------------------
+cryptography==44.0.0                # encrypted PII fields
+PyYAML==6.0.3                       # statutory rate-set fixtures
+
+# --- API schema --------------------------------------------------------
+drf-spectacular==0.27.2
+
+# --- monitoring --------------------------------------------------------
+sentry-sdk==2.19.2
+
+# --- serving -----------------------------------------------------------
+gunicorn==23.0.0
+whitenoise==6.8.2

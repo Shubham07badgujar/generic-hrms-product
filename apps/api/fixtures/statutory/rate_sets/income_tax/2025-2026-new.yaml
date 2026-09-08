@@ -1,0 +1,87 @@
+statute: income_tax
+jurisdiction: ""
+regime: "new"
+rule_version: income_tax.v2       # v2 adds s.87A rebate with marginal relief
+
+effective_from: "2025-04-01"
+effective_to: "2026-03-31"
+financial_year: "2025-2026"
+
+source:
+  citation: >
+    Income-tax Act 1961 — s.115BAC (new regime), s.87A (rebate), s.192 (TDS on
+    salary). Slab rates, standard deduction, rebate threshold and surcharge
+    bands per the Finance Act for FY 2025-26.
+  url: ""
+  retrieved_on: null
+
+verification:
+  status: UNVERIFIED
+  verified_by: null
+  verified_on: null
+  note: >
+    NOT VERIFIED, AND THE VALUES BELOW ARE THE AUTHOR'S BEST UNDERSTANDING
+    RATHER THAN A READING OF THE STATUTE. This is the single highest-risk rate
+    set in the system: it determines every employee's monthly TDS, and an error
+    is discovered only at filing, with the employer liable for short deduction.
+
+    Finance MUST replace every figure with values read directly from the
+    applicable Finance Act, and record the section references above. See dispute
+    `itax-fy2025-26-slabs`.
+
+parameters:
+  standard_deduction: "75000.00"
+  cess_rate: "4.0000"                  # health & education cess, on tax + surcharge
+  is_default_regime: true              # applies when the employee has not declared
+
+  # Marginal rates applied to the slice of income within each band.
+  slabs:
+    - {min_income: "0.00",        max_income: "400000.00",  rate: "0.0000"}
+    - {min_income: "400000.01",   max_income: "800000.00",  rate: "5.0000"}
+    - {min_income: "800000.01",   max_income: "1200000.00", rate: "10.0000"}
+    - {min_income: "1200000.01",  max_income: "1600000.00", rate: "15.0000"}
+    - {min_income: "1600000.01",  max_income: "2000000.00", rate: "20.0000"}
+    - {min_income: "2000000.01",  max_income: "2400000.00", rate: "25.0000"}
+    - {min_income: "2400000.01",  max_income: null,         rate: "30.0000"}
+
+  # s.87A rebate. Eligibility-based and versioned — NOT a hardcoded constant.
+  rebate:
+    applies_to_regime: "new"
+    max_taxable_income: "1200000.00"   # rebate available at or below this
+    max_amount: "60000.00"             # ceiling on the rebate itself
+    marginal_relief_enabled: true
+
+  # Surcharge on high incomes, applied before cess.
+  surcharge:
+    bands:
+      - {min_income: "5000000.01",  max_income: "10000000.00", rate: "10.0000"}
+      - {min_income: "10000000.01", max_income: "20000000.00", rate: "15.0000"}
+      - {min_income: "20000000.01", max_income: null,          rate: "25.0000"}
+    marginal_relief_enabled: true
+
+  # The new regime disallows most Chapter VI-A deductions. An empty map means
+  # declared deductions are ignored entirely rather than silently applied.
+  deduction_caps: {}
+
+open_disputes:
+  - itax-fy2025-26-slabs
+
+assumptions:
+  - >
+    Slabs are MARGINAL: each rate applies only to the slice of income within its
+    band, never to the whole income. A flat-rate-on-total implementation would
+    over-tax dramatically and is the single most common tax bug.
+  - >
+    Order of operations: taxable income -> slab tax -> s.87A rebate ->
+    surcharge -> cess. Applying cess before the rebate, or the rebate after
+    surcharge, both give wrong answers. The order is asserted by fixtures.
+  - >
+    The rebate applies to the NEW regime only. `applies_to_regime` makes that a
+    parameter rather than an assumption baked into code.
+  - >
+    Marginal relief on the rebate ensures that just above the rebate threshold,
+    additional tax never exceeds additional income. Without it there is a cliff
+    where earning 1 rupee more costs many thousands.
+  - >
+    Salary income only. Other heads, capital gains and their special rates are
+    out of scope for payroll TDS.

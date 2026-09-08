@@ -1,0 +1,144 @@
+# PF — boundary cases. Ceiling behaviour is where PF bugs live.
+
+- id: pf-boundary-exactly-at-ceiling
+  category: boundary
+  rule_set: pf/2024-04-01
+  covers: [wage_ceiling, employee_rate, eps_rate, employer_rate]
+  source: "EPF & MP Act 1952 s.6 proviso"
+  assumptions:
+    - "At exactly the ceiling the base is the wage itself — the cap binds but does not reduce"
+  given:
+    pf_wage: "15000.00"
+  expect:
+    base_wage: "15000.00"
+    employee: "1800.00"
+    employer_eps: "1249.50"
+    employer_epf: "550.50"
+    applied: true
+  derivation: |
+    min(15,000.00, 15,000.00) = 15,000.00 — the cap is reached but not exceeded.
+
+      employee     = 15,000.00 x 12%   = 1,800.00
+      EPS          = 15,000.00 x 8.33% = 1,249.50
+      employer EPF = 1,800.00 - 1,249.50 = 550.50
+
+- id: pf-boundary-one-rupee-below-ceiling
+  category: boundary
+  rule_set: pf/2024-04-01
+  covers: [wage_ceiling]
+  source: "EPF & MP Act 1952 s.6 proviso"
+  assumptions:
+    - "Below the ceiling the full wage is the base"
+  given:
+    pf_wage: "14999.00"
+  expect:
+    base_wage: "14999.00"
+    employee: "1799.88"
+    employer_eps: "1249.42"
+    employer_epf: "550.46"
+    applied: true
+  derivation: |
+    base         = min(14,999.00, 15,000.00) = 14,999.00
+    employee     = 14,999.00 x 12%   = 1,799.88
+    EPS          = 14,999.00 x 8.33% = 1,249.4167 -> 1,249.42  (half-up, 2dp)
+    employer EPF = 1,799.88 - 1,249.42 = 550.46
+
+    EPS long form: 14,999 x 0.0833 = 1,249.41670. The third decimal is 6, so
+    the second decimal rounds up, giving 1,249.42.
+
+- id: pf-boundary-one-rupee-above-ceiling
+  category: boundary
+  rule_set: pf/2024-04-01
+  covers: [wage_ceiling]
+  source: "EPF & MP Act 1952 s.6 proviso"
+  assumptions:
+    - "One rupee above the ceiling must produce the identical result to being at it"
+  given:
+    pf_wage: "15001.00"
+  expect:
+    base_wage: "15000.00"
+    employee: "1800.00"
+    employer_eps: "1249.50"
+    employer_epf: "550.50"
+    applied: true
+  derivation: |
+    min(15,001.00, 15,000.00) = 15,000.00 — identical to pf-boundary-exactly-at-ceiling.
+
+    This case exists to catch an off-by-one in the cap comparison: an
+    implementation using `>` where it needs `>=` (or vice versa) passes the
+    at-ceiling case and fails here.
+
+- id: pf-boundary-international-worker-no-ceiling
+  category: boundary
+  rule_set: pf/2024-04-01
+  covers: [wage_ceiling, eps_wage_ceiling, employee_rate]
+  source: "EPF Scheme 1952 para 83 (International Workers)"
+  assumptions:
+    - "International workers contribute on full PF wage — the ceiling does not apply"
+    - "EPS remains capped at the ceiling even though PF is not"
+  given:
+    pf_wage: "60000.00"
+    is_international_worker: true
+  expect:
+    base_wage: "60000.00"
+    employee: "7200.00"
+    employer_eps: "1249.50"
+    employer_epf: "5950.50"
+    applied: true
+  derivation: |
+    PF base is the FULL wage — no ceiling for international workers:
+
+      employee      = 60,000.00 x 12%   = 7,200.00
+      employer total= 60,000.00 x 12%   = 7,200.00
+
+    EPS is still capped at the EPS ceiling of 15,000:
+
+      EPS           = 15,000.00 x 8.33% = 1,249.50
+      employer EPF  = 7,200.00 - 1,249.50 = 5,950.50
+
+    This asymmetry — uncapped PF, capped EPS — is the whole point of keeping
+    `eps_wage_ceiling` as a parameter distinct from `wage_ceiling`.
+
+- id: pf-boundary-eps-monthly-cap
+  category: boundary
+  rule_set: pf/2024-04-01
+  covers: [eps_monthly_cap, eps_rate, eps_wage_ceiling]
+  disputed: true
+  disputes: [eps-cap-basis]
+  source: "Employees' Pension Scheme 1995 para 3; EPFO ECR specification"
+  assumptions:
+    - "PF wage at or above the EPS ceiling, so the cap is the binding constraint"
+    - >
+      DISPUTED — the EPS figure at the ceiling depends on dispute
+      `eps-cap-basis`. Both candidate values are documented below; neither is
+      asserted, because asserting one would silently pick an answer the
+      organisation has not chosen.
+  given:
+    pf_wage: "15000.00"
+  expect:
+    base_wage: "15000.00"
+    employee: "1800.00"
+    employer_eps: DISPUTED
+    employer_epf: DISPUTED
+    applied: true
+  derivation: |
+    The employee share is undisputed:
+
+      employee = 15,000.00 x 12% = 1,800.00
+
+    The EPS split is not:
+
+      eps_monthly_cap = null       -> EPS = 15,000.00 x 8.33% = 1,249.50
+                                      employer EPF = 1,800.00 - 1,249.50 = 550.50
+
+      eps_monthly_cap = "1250.00"  -> EPS = min(1,249.50, 1,250.00) is 1,249.50,
+                                      so a CAP alone changes nothing here. If the
+                                      administrative figure is a FLOOR or an exact
+                                      value, EPS = 1,250.00 and employer EPF =
+                                      1,800.00 - 1,250.00 = 550.00
+
+    Note what this exposes: "1,250.00" is only reachable if the parameter is a
+    floor or an exact value, NOT a cap. So the dispute is not merely which
+    number — it is which KIND of rule. That must be settled before the parameter
+    can be named correctly, and it is precisely the sort of thing that gets
+    papered over by picking a number and moving on.

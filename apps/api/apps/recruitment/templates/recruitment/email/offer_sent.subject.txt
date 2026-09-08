@@ -1,0 +1,1 @@
+{% autoescape off %}Your offer from {{ company_name }} – {{ job_title }}{% endautoescape %}

@@ -1,0 +1,125 @@
+# PF — edge cases. Rounding and part-period behaviour.
+
+- id: pf-edge-rounding-half-up-to-paisa
+  category: edge
+  rule_set: pf/2024-04-01
+  covers: [employee_rate, eps_rate]
+  source: "EPF & MP Act 1952 s.6; contributions expressed in rupees and paise"
+  assumptions:
+    - "Money rounds half-up to two decimals, consistent with the rest of payroll"
+    - "Each component rounds independently; totals are not re-rounded"
+  given:
+    pf_wage: "8333.33"
+  expect:
+    base_wage: "8333.33"
+    employee: "1000.00"
+    employer_eps: "694.17"
+    employer_epf: "305.83"
+    applied: true
+  derivation: |
+    A wage chosen so both components land on a rounding boundary.
+
+    employee     = 8,333.33 x 12%   = 999.9996   -> 1,000.00  (half-up, 2dp)
+    employer tot = 8,333.33 x 12%   = 999.9996   -> 1,000.00
+    EPS          = 8,333.33 x 8.33% = 694.166389 ->   694.17
+    employer EPF = 1,000.00 - 694.17 =              305.83
+
+    The employer EPF share is derived by SUBTRACTION from the rounded employer
+    total, not by computing 3.67% independently. Computing it independently
+    gives 8,333.33 x 3.67% = 305.83 here by luck, but the two methods diverge
+    at other wages and only subtraction guarantees EPS + EPF equals the 12%
+    employer contribution exactly.
+
+- id: pf-edge-partial-month-reduced-wage
+  category: edge
+  rule_set: pf/2024-04-01
+  covers: [employee_rate, wage_ceiling]
+  source: "EPF & MP Act 1952 s.6 — contributions follow wages actually payable"
+  assumptions:
+    - "A mid-month joiner's PF wage is already pro-rated by the caller"
+    - "Tier 1 receives the pro-rated wage; it does not compute attendance itself"
+  given:
+    pf_wage: "7500.00"
+  expect:
+    base_wage: "7500.00"
+    employee: "900.00"
+    employer_eps: "624.75"
+    employer_epf: "275.25"
+    applied: true
+  derivation: |
+    Half of a 15,000 monthly wage, e.g. someone who joined on the 16th.
+
+    employee     = 7,500.00 x 12%   = 900.00
+    employer tot = 7,500.00 x 12%   = 900.00
+    EPS          = 7,500.00 x 8.33% = 624.75
+    employer EPF = 900.00 - 624.75  = 275.25
+
+    Note the ceiling does not bind: the CEILING applies to the wage actually
+    paid, not to the notional full-month wage. Applying the cap to the
+    un-prorated 15,000 and then halving would give the same answer here but
+    the wrong one for anyone earning above the ceiling.
+
+- id: pf-edge-wage-just-above-zero
+  category: edge
+  rule_set: pf/2024-04-01
+  covers: [employee_rate, eps_rate]
+  source: "EPF & MP Act 1952 s.6"
+  assumptions:
+    - "Near-total loss of pay leaves a nominal wage"
+    - "Sub-paisa amounts round to zero rather than erroring"
+  given:
+    pf_wage: "1.00"
+  expect:
+    base_wage: "1.00"
+    employee: "0.12"
+    employer_eps: "0.08"
+    employer_epf: "0.04"
+    applied: true
+  derivation: |
+    employee     = 1.00 x 12%   = 0.12
+    employer tot = 1.00 x 12%   = 0.12
+    EPS          = 1.00 x 8.33% = 0.0833 -> 0.08  (half-up, 2dp)
+    employer EPF = 0.12 - 0.08  = 0.04
+
+    Guards against an implementation that treats "very small" as "zero" or
+    raises on sub-rupee arithmetic.
+
+- id: pf-edge-admin-charge-minimum-binds
+  category: edge
+  rule_set: pf/2024-04-01
+  covers: [admin_charge_rate, admin_charge_minimum, admin_charge_minimum_scope]
+  disputed: true
+  disputes: [pf-admin-charge-scope]
+  source: "EPFO administrative charges notification"
+  assumptions:
+    - "The minimum is a monthly floor applied to a non-zero wage"
+    - >
+      DISPUTED — the expected value below cannot be settled until dispute
+      `pf-admin-charge-scope` is resolved. Under the per-employee reading the
+      charge is 75.00; under the per-establishment reading it is 25.00 here and
+      the floor is applied once to the run total in Tier 2, not per employee.
+      This case is deliberately left unresolved rather than asserting whichever
+      value happens to make the suite green.
+  given:
+    pf_wage: "5000.00"
+  expect:
+    base_wage: "5000.00"
+    employee: "600.00"
+    admin_charge: DISPUTED        # per_employee -> 75.00 | per_establishment -> 25.00
+    applied: true
+  derivation: |
+    employee     = 5,000.00 x 12%  = 600.00   (undisputed)
+
+    admin charge = 5,000.00 x 0.5% =  25.00   (the percentage is undisputed)
+
+    Whether the 75.00 monthly minimum then applies to THIS EMPLOYEE, or to the
+    establishment's monthly total, is the open question:
+
+      per_employee       -> max(25.00, 75.00) = 75.00 here, and 75.00 for every
+                            other low-wage employee independently
+      per_establishment  -> 25.00 here; the floor is applied once, in Tier 2,
+                            to the summed establishment charge
+
+    With 50 employees at this wage the two readings differ by 2,500.00 a month.
+    The employee contribution of 600.00 is asserted because it is unaffected
+    either way.

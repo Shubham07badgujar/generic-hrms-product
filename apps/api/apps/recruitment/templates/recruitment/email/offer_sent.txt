@@ -1,0 +1,8 @@
+{% extends "recruitment/email/base.txt" %}{% block body %}We are pleased to extend you an offer for the position of {{ offer_designation }} at {{ company_name }}.
+
+Position:     {{ offer_designation }}
+Annual CTC:   {{ offer_ctc }}
+Joining date: {{ joining_date }}{% if offer_valid_until %}
+Please respond by: {{ offer_valid_until }}{% endif %}
+
+Please reply to this email to confirm your acceptance, or contact our HR team with any questions.{% endblock %}

@@ -1,0 +1,12 @@
+{% extends "recruitment/email/base.txt" %}{% block body %}Your interview time for {{ job_title }} ({{ interview_round }}) needs to be rescheduled.{% if previous_time %}
+
+Previously scheduled: {{ previous_time }}{% endif %}{% if rebook_reason %}
+Reason: {{ rebook_reason }}{% endif %}
+
+Please choose a new time that suits you best:
+
+{{ slot_link }}
+
+Please pick a time by {{ slot_deadline }}. Your earlier booking link is no longer valid — use this new one. Once our team confirms your choice, you will receive the updated schedule with the meeting details.
+
+We apologise for the inconvenience and appreciate your flexibility.{% endblock %}

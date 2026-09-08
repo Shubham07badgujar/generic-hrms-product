@@ -1,0 +1,367 @@
+# Income Tax — new regime, FY 2025-26.
+#
+# EVERY expected value here is DISPUTED, because the slab boundaries, standard
+# deduction and s.87A parameters are unverified (dispute `itax-fy2025-26-slabs`).
+# The derivations show the arithmetic under the drafted parameters so that once
+# Finance confirms the figures, each expectation can be filled in by following
+# the working — not by running the engine.
+#
+# What these cases DO settle, independent of the numbers, is the SHAPE of the
+# computation: marginal slabs, order of operations, and the existence of
+# marginal relief. Those are structural and can be reviewed now.
+
+# ---------------------------------------------------------------- normal
+- id: itax-new-normal-mid-slab
+  category: normal
+  rule_set: income_tax/2025-2026-new
+  covers: [slabs, standard_deduction, cess_rate, is_default_regime]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961 s.115BAC; Finance Act FY 2025-26"
+  assumptions:
+    - "Salary income only; no other heads"
+    - "Employee has not declared a regime, so the default (new) applies"
+    - "DISPUTED — slab boundaries and standard deduction unverified"
+  given:
+    annual_gross_projection: "1800000.00"
+    tax_regime: null
+  expect:
+    regime_used: "new"
+    taxable_income: DISPUTED
+    annual_tax: DISPUTED
+    monthly_tds: DISPUTED
+  derivation: |
+    Under the DRAFTED parameters:
+
+      taxable = 1,800,000.00 - 75,000.00 (standard deduction) = 1,725,000.00
+
+    Marginal slab tax — each rate applies ONLY to its own slice:
+
+      0 - 400,000        @  0%  =        0.00
+      400,000 - 800,000  @  5%  =   20,000.00   (400,000 x 0.05)
+      800,000 - 1,200,000@ 10%  =   40,000.00   (400,000 x 0.10)
+      1,200,000-1,600,000@ 15%  =   60,000.00   (400,000 x 0.15)
+      1,600,000-1,725,000@ 20%  =   25,000.00   (125,000 x 0.20)
+                                  -----------
+      tax before rebate         =  145,000.00
+
+      rebate: taxable 1,725,000 > 1,200,000 threshold -> no rebate
+      surcharge: below 5,000,000 -> nil
+      cess  = 145,000.00 x 4%   =    5,800.00
+      annual tax                =  150,800.00
+      monthly                   =   12,566.67   (150,800 / 12, half-up)
+
+    The marginal structure is the point: a flat 20% on the whole 1,725,000
+    would give 345,000 — more than double. This is the most consequential
+    structural property in the whole engine.
+
+# -------------------------------------------------------------- boundary
+- id: itax-new-boundary-87a-rebate-at-threshold
+  category: boundary
+  rule_set: income_tax/2025-2026-new
+  covers: [rebate, slabs, standard_deduction, cess_rate]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961 s.87A"
+  assumptions:
+    - "Taxable income exactly at the rebate threshold"
+    - "DISPUTED — the threshold and rebate cap are unverified"
+  given:
+    annual_gross_projection: "1275000.00"
+    tax_regime: "new"
+  expect:
+    regime_used: "new"
+    taxable_income: DISPUTED
+    tax_before_rebate: DISPUTED
+    rebate_applied: DISPUTED
+    annual_tax: DISPUTED
+  derivation: |
+    Under the DRAFTED parameters:
+
+      taxable = 1,275,000.00 - 75,000.00 = 1,200,000.00  (exactly at threshold)
+
+      0 - 400,000        @  0%  =       0.00
+      400,000 - 800,000  @  5%  =  20,000.00
+      800,000 - 1,200,000@ 10%  =  40,000.00
+                                  ----------
+      tax before rebate         =  60,000.00
+
+      rebate: taxable 1,200,000 <= 1,200,000 threshold, so the rebate applies
+              rebate = min(tax, max_amount) = min(60,000, 60,000) = 60,000.00
+
+      tax after rebate          =       0.00
+      cess on zero              =       0.00
+      annual tax                =       0.00
+
+    This is why s.87A cannot be omitted: WITHOUT it this employee owes 62,400
+    (60,000 + 4% cess). WITH it they owe nothing. The previous system had no
+    rebate at all — `grep -i 87a` returned zero matches — so it over-deducted
+    from every employee in this band, all year.
+
+- id: itax-new-boundary-marginal-relief-just-above-threshold
+  category: boundary
+  rule_set: income_tax/2025-2026-new
+  covers: [rebate, rebate.marginal_relief_enabled, slabs, standard_deduction]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961 s.87A proviso — marginal relief"
+  assumptions:
+    - "Taxable income 10,000 above the rebate threshold"
+    - "DISPUTED — depends on the unverified threshold"
+  given:
+    annual_gross_projection: "1285000.00"
+    tax_regime: "new"
+  expect:
+    regime_used: "new"
+    taxable_income: DISPUTED
+    tax_before_rebate: DISPUTED
+    marginal_relief: DISPUTED
+    annual_tax: DISPUTED
+  derivation: |
+    Under the DRAFTED parameters:
+
+      taxable = 1,285,000.00 - 75,000.00 = 1,210,000.00
+              = 10,000.00 above the 1,200,000.00 rebate threshold
+
+      slab tax:
+        400,000 - 800,000   @  5%  =  20,000.00
+        800,000 - 1,200,000 @ 10%  =  40,000.00
+        1,200,000-1,210,000 @ 15%  =   1,500.00
+                                     ----------
+        tax before rebate          =  61,500.00
+
+      No rebate: 1,210,000 exceeds the threshold.
+
+      WITHOUT marginal relief: tax = 61,500 + 4% cess = 63,960.00
+        Earning 10,000 more than the threshold costs 63,960 in tax — a
+        catastrophic cliff. The employee is worse off by 53,960.
+
+      WITH marginal relief: tax is capped at the excess over the threshold
+        cap    = taxable - threshold = 1,210,000 - 1,200,000 = 10,000.00
+        relief = 61,500.00 - 10,000.00 = 51,500.00
+        tax    = 10,000.00
+        cess   = 400.00
+        annual = 10,400.00
+
+    The invariant marginal relief guarantees: across the relief band, one extra
+    rupee of income never costs more than one rupee of tax. A property test
+    sweeps the band to assert this holds at every point, not just here.
+
+- id: itax-new-boundary-first-taxable-rupee
+  category: boundary
+  rule_set: income_tax/2025-2026-new
+  covers: [slabs, standard_deduction]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961 s.115BAC, Schedule"
+  assumptions:
+    - "Taxable income one rupee into the first taxable band"
+    - "DISPUTED — slab boundary unverified"
+  given:
+    annual_gross_projection: "475000.01"
+    tax_regime: "new"
+  expect:
+    taxable_income: DISPUTED
+    tax_before_rebate: DISPUTED
+    annual_tax: DISPUTED
+  derivation: |
+    Under the DRAFTED parameters:
+
+      taxable = 475,000.01 - 75,000.00 = 400,000.01
+              = 0.01 into the 5% band
+
+      slab tax = 0.01 x 5% = 0.0005 -> 0.00 (half-up, 2dp)
+      rebate applies (well under threshold) -> 0.00
+      annual tax = 0.00
+
+    Guards the boundary comparison: an implementation using >= where it needs >
+    taxes the whole 400,000 at 5%.
+
+# ------------------------------------------------------------- exemption
+- id: itax-new-exemption-below-standard-deduction
+  category: exemption
+  rule_set: income_tax/2025-2026-new
+  covers: [standard_deduction, slabs]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961 s.16(ia)"
+  assumptions:
+    - "Annual gross below the standard deduction"
+    - "Taxable income floors at zero; it never goes negative"
+  given:
+    annual_gross_projection: "60000.00"
+    tax_regime: "new"
+  expect:
+    taxable_income: DISPUTED
+    annual_tax: "0.00"
+    monthly_tds: "0.00"
+  derivation: |
+    Under the DRAFTED parameters:
+
+      60,000.00 - 75,000.00 = -15,000.00 -> floored at 0.00
+
+      annual tax = 0.00, monthly = 0.00
+
+    The tax amounts are NOT disputed — zero tax is zero under any plausible
+    parameters. Only taxable_income depends on the unverified standard
+    deduction. Splitting the case this way keeps the undisputed assertion live
+    instead of withholding the whole case.
+
+- id: itax-new-exemption-declared-deductions-ignored
+  category: exemption
+  rule_set: income_tax/2025-2026-new
+  covers: [deduction_caps, slabs, standard_deduction]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961 s.115BAC(2) — most Chapter VI-A deductions disallowed"
+  assumptions:
+    - "Employee declared 80C and 80D but elected the new regime"
+    - "Declarations must be IGNORED, not applied"
+  given:
+    annual_gross_projection: "1200000.00"
+    tax_regime: "new"
+    declared_deductions:
+      "80C": "150000.00"
+      "80D": "25000.00"
+  expect:
+    taxable_income: DISPUTED
+    deductions_allowed: {}
+    annual_tax: DISPUTED
+  derivation: |
+    Under the DRAFTED parameters:
+
+      taxable = 1,200,000.00 - 75,000.00 = 1,125,000.00
+                (the 175,000 of declarations is DISALLOWED)
+
+    `deductions_allowed` is asserted as EMPTY and is not disputed — whatever the
+    slab figures turn out to be, the new regime disallows these deductions. An
+    implementation that applies them would under-deduct TDS by roughly 17,500
+    for this employee.
+
+# ------------------------------------------------------------------ edge
+- id: itax-new-edge-order-of-operations
+  category: edge
+  rule_set: income_tax/2025-2026-new
+  covers: [slabs, rebate, surcharge, cess_rate, standard_deduction]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961 ss.87A, 2(13) surcharge, cess per Finance Act"
+  assumptions:
+    - "High income attracting surcharge, to pin the sequence"
+    - "DISPUTED — every parameter involved is unverified"
+  given:
+    annual_gross_projection: "6075000.00"
+    tax_regime: "new"
+  expect:
+    taxable_income: DISPUTED
+    tax_before_rebate: DISPUTED
+    surcharge: DISPUTED
+    cess: DISPUTED
+    annual_tax: DISPUTED
+  derivation: |
+    The SEQUENCE is the assertion, and it holds whatever the numbers are:
+
+      1. taxable income  = gross - standard deduction
+      2. slab tax        = marginal rates over the bands
+      3. s.87A rebate    = subtracted from slab tax (nil here; income too high)
+      4. surcharge       = rate x (tax after rebate), by income band
+      5. cess            = rate x (tax after rebate + surcharge)
+      6. annual tax      = tax after rebate + surcharge + cess
+
+    Under the DRAFTED parameters:
+
+      taxable = 6,075,000.00 - 75,000.00 = 6,000,000.00
+
+      slab tax:
+        400,000-800,000     @  5%  =    20,000.00
+        800,000-1,200,000   @ 10%  =    40,000.00
+        1,200,000-1,600,000 @ 15%  =    60,000.00
+        1,600,000-2,000,000 @ 20%  =    80,000.00
+        2,000,000-2,400,000 @ 25%  =   100,000.00
+        2,400,000-6,000,000 @ 30%  = 1,080,000.00
+                                     ------------
+        tax before rebate          = 1,380,000.00
+
+      rebate    = 0.00 (income far above threshold)
+      surcharge = 1,380,000.00 x 10% = 138,000.00   (5,000,000-10,000,000 band)
+      cess      = (1,380,000.00 + 138,000.00) x 4% = 60,720.00
+      annual    = 1,380,000 + 138,000 + 60,720 = 1,578,720.00
+
+    Computing cess before surcharge instead gives 1,573,200.00 — a 5,520.00
+    error. The order is not cosmetic.
+
+- id: itax-new-edge-monthly-rounding
+  category: edge
+  rule_set: income_tax/2025-2026-new
+  covers: [slabs, cess_rate, standard_deduction]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961 s.192 — deduction in equal monthly instalments"
+  assumptions:
+    - "Annual tax divided across 12 months"
+    - "DISPUTED — the annual figure depends on unverified slabs"
+  given:
+    annual_gross_projection: "1800000.00"
+    tax_regime: "new"
+  expect:
+    annual_tax: DISPUTED
+    monthly_tds: DISPUTED
+  derivation: |
+    Under the DRAFTED parameters annual tax is 150,800.00 (see
+    itax-new-normal-mid-slab).
+
+      monthly = 150,800.00 / 12 = 12,566.6666... -> 12,566.67 (half-up, 2dp)
+
+    Note 12,566.67 x 12 = 150,800.04, which is 0.04 MORE than the annual
+    liability. Whether the final month absorbs the difference (12,566.63) or the
+    over-deduction is refunded at filing is a Tier 2 policy decision, not a
+    statutory one — flagged here so it is decided deliberately rather than
+    emerging from whatever the code happens to do.
+
+- id: itax-new-edge-surcharge-marginal-relief
+  category: edge
+  rule_set: income_tax/2025-2026-new
+  covers: [surcharge, surcharge.bands, surcharge.marginal_relief_enabled, slabs, cess_rate]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961 — surcharge with marginal relief per Finance Act"
+  assumptions:
+    - "Income just above the first surcharge threshold"
+    - >
+      Marginal relief on SURCHARGE is a separate mechanism from relief on the
+      s.87A rebate. Both exist; both are per-rate-set parameters. This case
+      exercises the surcharge one.
+    - "DISPUTED — surcharge bands and slabs unverified"
+  given:
+    annual_gross_projection: "5085000.00"
+    tax_regime: "new"
+  expect:
+    taxable_income: DISPUTED
+    surcharge: DISPUTED
+    annual_tax: DISPUTED
+  derivation: |
+    Under the DRAFTED parameters:
+
+      taxable = 5,085,000.00 - 75,000.00 = 5,010,000.00
+              = 10,000.00 above the 5,000,000.00 surcharge threshold
+
+    Surcharge creates the same cliff shape as the rebate. Without relief, tax
+    on the whole liability jumps by 10% the instant income crosses the
+    threshold — far more than the 10,000 of extra income.
+
+    Marginal relief caps the total (tax + surcharge) so it never exceeds:
+
+      tax at the threshold + (income above threshold)
+
+    i.e. the extra tax attributable to crossing can never exceed the extra
+    income itself.
+
+    The invariant, which a property test sweeps across the band:
+
+      for any income I in [threshold, threshold + relief_band]:
+        total_tax(I) - total_tax(threshold) <= I - threshold
+
+    This case exists because surcharge relief was absent from the previous
+    system entirely, alongside the rebate and its relief — three separate
+    mechanisms, none implemented, all silently wrong for the employees they
+    apply to.

@@ -1,0 +1,19 @@
+-r base.txt
+
+# ── Testing ──────────────────────────────────────────────────────
+pytest==8.3.4
+pytest-django==4.9.0
+pytest-cov==6.0.0
+factory-boy==3.3.1
+freezegun==1.5.1
+
+# ── Lint / format ────────────────────────────────────────────────
+ruff==0.8.4
+black==24.10.0
+mypy==1.13.0
+django-stubs==5.1.1
+djangorestframework-stubs==3.15.2
+
+# ── Dev tooling ──────────────────────────────────────────────────
+django-extensions==3.2.3
+ipython==8.31.0

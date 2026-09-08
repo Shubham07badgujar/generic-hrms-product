@@ -1,0 +1,27 @@
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.dev"
+python_files = ["test_*.py"]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "golden: hand-derived statutory golden-master fixture",
+    "arithmetic: proves formula application only (rule set may be UNVERIFIED)",
+    "compliance: asserts lawful values (requires a VERIFIED rule set)",
+    "meta: structural test that guards an architectural rule",
+    "rbac: permission and scope enforcement",
+    # Expected to FAIL while any statutory question is unresolved. Run
+    # `-m 'not dispute'` day to day; the full suite is the release gate.
+    "dispute: unresolved statutory interpretation question",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "DJ"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]

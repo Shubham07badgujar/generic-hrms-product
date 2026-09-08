@@ -1,0 +1,71 @@
+# PF — exemptions and non-application.
+
+- id: pf-exemption-scheme-not-applicable
+  category: exemption
+  rule_set: pf/2024-04-01
+  covers: [applies]
+  source: "EPF & MP Act 1952 s.1(3) — applicability by establishment"
+  assumptions:
+    - "The rate set carries applies=false, e.g. an establishment below the headcount threshold"
+  given:
+    pf_wage: "20000.00"
+    _rate_set_override:
+      applies: false
+  expect:
+    base_wage: "0.00"
+    employee: "0.00"
+    employer_eps: "0.00"
+    employer_epf: "0.00"
+    admin_charge: "0.00"
+    applied: false
+    exemption_reason: "scheme_not_applicable"
+  derivation: |
+    When the scheme does not apply, every component is zero and `applied` is
+    false. This is distinct from a MISSING rule set, which raises RuleSetMissing —
+    "the scheme does not apply here" and "we do not know the rules" are different
+    statements and must not produce the same payslip.
+
+- id: pf-exemption-member-opted-out
+  category: exemption
+  rule_set: pf/2024-04-01
+  covers: [applies, wage_ceiling]
+  source: "EPF Scheme 1952 para 26A; excluded employee definition"
+  assumptions:
+    - "Member earning above the ceiling at first joining, who exercised the exclusion"
+  given:
+    pf_wage: "45000.00"
+    pf_opted_out: true
+  expect:
+    base_wage: "0.00"
+    employee: "0.00"
+    employer_eps: "0.00"
+    employer_epf: "0.00"
+    applied: false
+    exemption_reason: "member_opted_out"
+  derivation: |
+    An excluded employee contributes nothing. Opt-out is an attribute of the
+    person, not of the rate set, which is why it lives on StatutoryContext.
+
+- id: pf-exemption-zero-wage
+  category: exemption
+  rule_set: pf/2024-04-01
+  covers: [employee_rate, admin_charge_minimum]
+  source: "EPF & MP Act 1952 s.6 — contribution is a percentage of wages"
+  assumptions:
+    - "Full month of loss of pay leaves no wage to contribute on"
+  given:
+    pf_wage: "0.00"
+  expect:
+    base_wage: "0.00"
+    employee: "0.00"
+    employer_eps: "0.00"
+    employer_epf: "0.00"
+    admin_charge: "0.00"
+    applied: true
+  derivation: |
+    12% of zero is zero. `applied` stays TRUE — the scheme applies to this
+    employee, there is simply nothing to assess this month.
+
+    The admin-charge minimum is deliberately NOT applied to a zero wage: the
+    75.00 floor is a per-establishment monthly minimum, not a per-employee
+    charge levied on someone who earned nothing.

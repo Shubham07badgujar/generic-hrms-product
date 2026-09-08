@@ -1,0 +1,73 @@
+statute: pf
+jurisdiction: ""          # national
+regime: ""
+rule_version: pf.v1
+
+effective_from: "2024-04-01"
+effective_to: null
+financial_year: ""        # PF is not financial-year scoped
+
+source:
+  citation: >
+    Employees' Provident Funds and Miscellaneous Provisions Act, 1952 —
+    s.6 (contributions) and the Employees' Pension Scheme, 1995 — para 3.
+    Wage ceiling per EPFO notification.
+  url: "https://www.epfindia.gov.in/"
+  retrieved_on: null      # to be completed by the verifier
+
+verification:
+  status: UNVERIFIED
+  verified_by: null
+  verified_on: null
+  note: >
+    NOT VERIFIED. These are commonly-quoted values carried forward as a
+    starting point for review. Finance must confirm every figure against the
+    current EPFO notification before any live payroll run. The system refuses
+    to run payroll against an UNVERIFIED rate set.
+
+parameters:
+  employee_rate: "12.0000"        # % of PF wage
+  employer_rate: "12.0000"        # % of PF wage, inclusive of EPS
+  eps_rate: "8.3300"              # % of PF wage, carved out of the employer share
+  wage_ceiling: "15000.00"        # monthly PF wage cap
+  eps_wage_ceiling: "15000.00"    # EPS is always capped, even when PF is not
+
+  # UNDETERMINED — see dispute `eps-cap-basis`.
+  #   null            -> EPS is the arithmetic result (8.33% of capped wage)
+  #   "1250.00"       -> EPS is floored/capped at the administrative flat figure
+  # The verifier MUST set this explicitly, even if the answer is null, so that
+  # the choice is recorded rather than inherited from a default.
+  eps_monthly_cap: null
+
+  admin_charge_rate: "0.5000"     # % of PF wage, employer-borne, over and above
+
+  # UNDETERMINED — see dispute `pf-admin-charge-scope`. Whether this floor is
+  # per employee or per establishment decides which TIER it belongs in, not just
+  # its value. If per-establishment it must leave Tier 1 entirely.
+  admin_charge_minimum: "75.00"
+  admin_charge_minimum_scope: "UNDETERMINED"   # per_employee | per_establishment
+
+  applies: true
+
+open_disputes:
+  - eps-cap-basis
+  - pf-admin-charge-scope
+
+assumptions:
+  - >
+    PF wage means Basic + Dearness Allowance, not gross. StatutoryContext keeps
+    pf_wage and gross_wage separate for this reason.
+  - >
+    The wage ceiling does not apply to international workers, who contribute on
+    full PF wage. Handled via StatutoryContext.is_international_worker.
+  - >
+    EPS applies only to members eligible under the Employees' Pension Scheme.
+    Members who joined above the ceiling after the applicable cut-off may be
+    excluded; that eligibility is an input, not a rule-set parameter.
+  - >
+    OPEN QUESTION FOR THE VERIFIER: 8.33% of the 15,000 ceiling is 1,249.50,
+    but EPS is widely administered as a flat 1,250.00. This rate set computes
+    1,249.50 (the arithmetic result). If EPFO requires 1,250.00, add an
+    `eps_monthly_cap: "1250.00"` parameter and the rule will apply it. The
+    difference is 0.50 per member per month — small individually, material in
+    an annual reconciliation, and it must match what EPFO expects.

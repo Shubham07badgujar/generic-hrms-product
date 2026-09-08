@@ -1,0 +1,1 @@
+{% autoescape off %}Application received – {{ job_title }} at {{ company_name }}{% endautoescape %}

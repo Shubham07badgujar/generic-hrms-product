@@ -1,0 +1,3 @@
+{% extends "recruitment/email/base.txt" %}{% block body %}Congratulations! Following your {{ interview_round }} for the {{ job_title }} position, you have been selected to progress to the next round.
+
+Current status: {{ current_status }}.{% endblock %}

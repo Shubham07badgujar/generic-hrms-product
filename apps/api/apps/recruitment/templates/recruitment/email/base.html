@@ -1,0 +1,7 @@
+{% autoescape on %}<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#1a1c22;max-width:600px">
+  <p style="margin:0 0 16px">Dear {{ candidate_name }},</p>
+  {% block body %}{% endblock %}
+  {% if next_step %}<p style="margin:0 0 16px"><strong>Next step:</strong> {{ next_step }}</p>{% endif %}
+  <p style="margin:0 0 16px">Application reference: <strong>{{ application_id }}</strong>. Please quote it in any correspondence.</p>
+  <p style="margin:0;color:#6c7080">Regards,<br><strong style="color:#1a1c22">HR Team</strong><br>{{ company_name }}<br><a href="mailto:{{ hr_contact_email }}">{{ hr_contact_email }}</a></p>
+</div>{% endautoescape %}

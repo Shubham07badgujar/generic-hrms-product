@@ -1,0 +1,1 @@
+{% autoescape off %}Interview cancelled – {{ job_title }} ({{ interview_round }}){% endautoescape %}

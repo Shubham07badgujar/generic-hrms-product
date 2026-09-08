@@ -1,0 +1,117 @@
+# ============================================================================
+# OPEN STATUTORY INTERPRETATION QUESTIONS
+#
+# Each entry is a question that must be answered by Finance before the related
+# rate set can be verified. While a dispute is `open`, `test_no_unresolved_
+# statutory_disputes` FAILS by design — the suite stays red so the question
+# cannot be forgotten, and the payroll release gate cannot pass.
+#
+# Resolving a dispute means: set `status: resolved`, record the decision and who
+# made it, and update the rate set and affected cases to match. It does NOT
+# mean editing a fixture until the tests go green.
+# ============================================================================
+
+- id: eps-cap-basis
+  statute: pf
+  status: open
+  blocking: [pf/2024-04-01]
+  question: >
+    Is the monthly EPS contribution at the wage ceiling 1,249.50 (arithmetic:
+    8.33% of 15,000.00) or a flat 1,250.00 as commonly administered by EPFO?
+  options:
+    - id: arithmetic
+      value: "1249.50"
+      description: >
+        Apply 8.33% to the capped wage and round half-up. Internally consistent
+        with every other contribution in the system.
+    - id: administrative_flat
+      value: "1250.00"
+      description: >
+        Apply an explicit eps_monthly_cap of 1,250.00. Matches the figure
+        widely quoted in EPFO practice.
+  impact: >
+    0.50 per EPS member per month. Negligible per person; material in an annual
+    ECR reconciliation, and a mismatch against what EPFO expects will surface as
+    a filing discrepancy rather than a payroll complaint — i.e. late and awkward.
+  how_to_resolve: >
+    Confirm against the current EPFO ECR specification or a filed return. If the
+    flat figure is correct, set `eps_monthly_cap: "1250.00"` in the rate set;
+    the rule already reads that parameter. If arithmetic is correct, set
+    `eps_monthly_cap: null` explicitly so the choice is recorded rather than
+    defaulted.
+  resolution: null          # {decision, decided_by, decided_on, evidence}
+
+- id: pf-admin-charge-scope
+  statute: pf
+  status: open
+  blocking: [pf/2024-04-01]
+  question: >
+    Is the PF administrative charge minimum (75.00/month) levied per
+    ESTABLISHMENT or per EMPLOYEE?
+  options:
+    - id: per_employee
+      description: >
+        Current model. The floor is applied inside the per-employee Tier 1
+        assessment. Simple, but over-charges an establishment with many
+        low-wage employees, since each one independently floors to 75.00.
+    - id: per_establishment
+      description: >
+        The floor applies once to the establishment's monthly total. This
+        CANNOT live in Tier 1: a per-employee assessment has no visibility of
+        the establishment total. The percentage stays in Tier 1; the minimum
+        moves to Tier 2 payroll-run totals.
+  impact: >
+    With 50 employees at a 5,000 PF wage: per-employee gives 50 x 75.00 =
+    3,750.00; per-establishment gives max(50 x 25.00, 75.00) = 1,250.00. A
+    3x over-charge, every month, entirely borne by the employer.
+  how_to_resolve: >
+    Confirm against the current EPFO administrative-charges notification. If
+    per-establishment, move the minimum out of `pf.v1` into the Tier 2 run
+    aggregation and retire case `pf-edge-admin-charge-minimum-binds`.
+  resolution: null
+
+- id: itax-fy2025-26-slabs
+  statute: income_tax
+  status: open
+  blocking: [income_tax/2025-2026-new, income_tax/2025-2026-old]
+  question: >
+    What are the exact new-regime slab boundaries, standard deduction, and
+    s.87A rebate threshold and cap for FY 2025-26?
+  options:
+    - id: as_drafted
+      description: >
+        The values currently in the rate set are the author's best
+        understanding and are NOT verified. They must be replaced with figures
+        read directly from the Finance Act for the relevant year.
+  impact: >
+    Every employee's monthly TDS. Wrong slabs or a wrong rebate threshold means
+    systematically wrong deductions all year, corrected only at filing — with
+    the employer liable for short deduction.
+  how_to_resolve: >
+    Read the slabs, standard deduction, s.87A threshold and rebate cap, and the
+    surcharge bands directly from the applicable Finance Act. Record the section
+    references in the rate set's source citation.
+  resolution: null
+
+- id: mh-pt-women-exemption-threshold
+  statute: pt
+  status: open
+  blocking: [pt/MH/2024-04-01]
+  question: >
+    What is the current monthly-salary threshold for the Maharashtra
+    Professional Tax exemption for women, and does it apply to the whole
+    liability or only to specified slabs?
+  options:
+    - id: as_drafted
+      description: >
+        Drafted as a full exemption below a monthly-wage threshold. Both the
+        threshold value and the "full exemption" reading require confirmation.
+  impact: >
+    Over-deduction from every affected woman employee, every month, plus a
+    state-law compliance exposure. Under-deduction is a recovery problem.
+  how_to_resolve: >
+    Confirm against the Maharashtra State Tax on Professions, Trades, Callings
+    and Employments Act 1975, Schedule I, as amended, including the effective
+    date of the amendment — which determines whether the exemption applies to
+    the periods this rate set covers.
+  resolution: null

@@ -1,0 +1,291 @@
+# Professional Tax — Maharashtra.
+# Slab amounts are fixed sums, so there is no rounding; the interesting
+# behaviour is band edges, the February special, and the women's exemption.
+
+# ---------------------------------------------------------------- normal
+- id: pt-mh-normal-middle-band
+  category: normal
+  rule_set: pt/MH/2024-04-01
+  covers: [slabs]
+  source: "MH PT Act 1975, Schedule I"
+  assumptions:
+    - "Male employee, ordinary month (not the special month)"
+  given:
+    gross_wage: "9000.00"
+    state: "MH"
+    gender: "M"
+    period_month: 6
+  expect:
+    amount: "175.00"
+    applied: true
+    is_special_month: false
+  derivation: |
+    9,000.00 falls in the 7,500.01-10,000.00 band, which levies a flat 175.00.
+    No percentage, no rounding — the slab amount is the liability.
+
+- id: pt-mh-normal-top-band
+  category: normal
+  rule_set: pt/MH/2024-04-01
+  covers: [slabs]
+  source: "MH PT Act 1975, Schedule I"
+  assumptions:
+    - "Male employee, ordinary month"
+  given:
+    gross_wage: "45000.00"
+    state: "MH"
+    gender: "M"
+    period_month: 6
+  expect:
+    amount: "200.00"
+    applied: true
+    is_special_month: false
+  derivation: |
+    45,000.00 falls in the unbounded top band (10,000.01 and above) = 200.00.
+
+    Note PT does not scale with income beyond the top band — someone earning
+    45,000 and someone earning 450,000 owe the same 200.00.
+
+# -------------------------------------------------------------- boundary
+- id: pt-mh-boundary-top-of-nil-band
+  category: boundary
+  rule_set: pt/MH/2024-04-01
+  covers: [slabs]
+  source: "MH PT Act 1975, Schedule I"
+  assumptions:
+    - "Male employee; 7,500.00 is the last wage attracting no tax"
+  given:
+    gross_wage: "7500.00"
+    state: "MH"
+    gender: "M"
+    period_month: 6
+  expect:
+    amount: "0.00"
+    applied: true
+  derivation: |
+    7,500.00 is the upper bound of the nil band (0.00-7,500.00) = 0.00.
+
+    `applied` is TRUE: the employee is within PT jurisdiction and the correct
+    liability happens to be zero. That is different from being exempt, which is
+    why the exemption cases below assert an `exemption_reason` and these do not.
+
+- id: pt-mh-boundary-first-taxable-rupee
+  category: boundary
+  rule_set: pt/MH/2024-04-01
+  covers: [slabs]
+  source: "MH PT Act 1975, Schedule I"
+  assumptions:
+    - "Male employee; one paisa above the nil band"
+  given:
+    gross_wage: "7500.01"
+    state: "MH"
+    gender: "M"
+    period_month: 6
+  expect:
+    amount: "175.00"
+    applied: true
+  derivation: |
+    7,500.01 is the lower bound of the 175.00 band.
+
+    Paired with the previous case this pins the boundary exactly: 7,500.00 owes
+    nothing, 7,500.01 owes 175.00. A one-paisa difference in gross moves the
+    employee a full 175.00 — PT is a step function, not a marginal rate, and
+    the fixtures should make that visible rather than hide it.
+
+- id: pt-mh-boundary-top-of-middle-band
+  category: boundary
+  rule_set: pt/MH/2024-04-01
+  covers: [slabs]
+  source: "MH PT Act 1975, Schedule I"
+  assumptions:
+    - "Male employee"
+  given:
+    gross_wage: "10000.00"
+    state: "MH"
+    gender: "M"
+    period_month: 6
+  expect:
+    amount: "175.00"
+    applied: true
+  derivation: |
+    10,000.00 is the upper bound of the 7,500.01-10,000.00 band = 175.00.
+
+- id: pt-mh-boundary-first-of-top-band
+  category: boundary
+  rule_set: pt/MH/2024-04-01
+  covers: [slabs]
+  source: "MH PT Act 1975, Schedule I"
+  assumptions:
+    - "Male employee"
+  given:
+    gross_wage: "10000.01"
+    state: "MH"
+    gender: "M"
+    period_month: 6
+  expect:
+    amount: "200.00"
+    applied: true
+  derivation: |
+    10,000.01 crosses into the top band = 200.00.
+
+# ------------------------------------------------------------- exemption
+- id: pt-mh-exemption-women-below-threshold
+  category: exemption
+  rule_set: pt/MH/2024-04-01
+  covers: [exemptions]
+  disputed: true
+  disputes: [mh-pt-women-exemption-threshold]
+  source: "MH PT Act 1975, Schedule I — exemption for women"
+  assumptions:
+    - >
+      DISPUTED — both the threshold value and whether the exemption is full or
+      slab-limited require confirmation. The expected amount is withheld rather
+      than asserting the drafted reading.
+    - >
+      Under the drafted reading a woman earning 20,000.00 pays nothing, where a
+      man on the same wage pays 200.00.
+  given:
+    gross_wage: "20000.00"
+    state: "MH"
+    gender: "F"
+    period_month: 6
+  expect:
+    amount: DISPUTED
+    applied: true
+  derivation: |
+    Under the drafted reading:
+
+      exemption `mh-women-monthly-wage` matches (gender F, 20,000.00 <= 25,000.00)
+      -> liability 0.00, exemption_id "mh-women-monthly-wage"
+
+    If the threshold differs, or the exemption applies only to specified slabs,
+    the answer changes. Compare pt-mh-normal-top-band: a man on this wage owes
+    200.00, so getting this wrong over-deducts 2,400.00 a year from every
+    affected woman — and is a state-law compliance failure, not just an
+    accounting error.
+
+- id: pt-mh-exemption-women-above-threshold
+  category: exemption
+  rule_set: pt/MH/2024-04-01
+  covers: [exemptions, slabs]
+  disputed: true
+  disputes: [mh-pt-women-exemption-threshold]
+  source: "MH PT Act 1975, Schedule I"
+  assumptions:
+    - "DISPUTED — depends on the same unconfirmed threshold"
+    - "Tests that the exemption STOPS applying above its threshold"
+  given:
+    gross_wage: "30000.00"
+    state: "MH"
+    gender: "F"
+    period_month: 6
+  expect:
+    amount: DISPUTED
+    applied: true
+  derivation: |
+    Under the drafted reading:
+
+      30,000.00 > the 25,000.00 exemption threshold, so the exemption does NOT
+      match and normal slab lookup applies -> 200.00
+
+    This case exists as the negative half of the eligibility condition. An
+    implementation that applies the exemption to every woman regardless of wage
+    passes the previous case and fails this one.
+
+- id: pt-mh-exemption-no-slabs-for-state
+  category: exemption
+  rule_set: pt/MH/2024-04-01
+  covers: [slabs]
+  source: "Professional Tax is a state levy; not every state imposes one"
+  assumptions:
+    - "Employee located in a state with no PT rule set at all"
+  given:
+    gross_wage: "50000.00"
+    state: "DL"
+    gender: "M"
+    period_month: 6
+  expect:
+    _raises: RuleSetMissing
+  derivation: |
+    There is no rule set for Delhi, so resolution RAISES rather than returning
+    zero.
+
+    This is the deliberate design choice: "Delhi levies no Professional Tax" and
+    "nobody has configured Delhi" are different statements, and only the first
+    should produce a zero-PT payslip. Configuring an explicit nil rate set for a
+    non-levying state is how the first is expressed.
+
+# ------------------------------------------------------------------ edge
+- id: pt-mh-edge-february-special-amount
+  category: edge
+  rule_set: pt/MH/2024-04-01
+  covers: [special_month, special_amount, slabs]
+  source: "MH PT Act 1975, Schedule I — higher levy in the final month"
+  assumptions:
+    - "Male employee in the top band, in the special month"
+    - "The special amount REPLACES the slab amount; it is not added to it"
+  given:
+    gross_wage: "30000.00"
+    state: "MH"
+    gender: "M"
+    period_month: 2
+  expect:
+    amount: "300.00"
+    applied: true
+    is_special_month: true
+  derivation: |
+    In the special month (February) the top-band levy becomes 300.00 rather
+    than 200.00.
+
+    Annual check: 11 months x 200.00 + 1 x 300.00 = 2,500.00, which is the
+    statutory annual ceiling. That the numbers reconcile to the ceiling is the
+    strongest available evidence the special-month mechanism is understood
+    correctly.
+
+- id: pt-mh-edge-february-does-not-affect-lower-bands
+  category: edge
+  rule_set: pt/MH/2024-04-01
+  covers: [special_month, special_amount, slabs]
+  source: "MH PT Act 1975, Schedule I"
+  assumptions:
+    - >
+      The special amount attaches to the slab that defines it — the top band —
+      not to every band. A middle-band employee pays the ordinary amount in
+      February.
+  given:
+    gross_wage: "9000.00"
+    state: "MH"
+    gender: "M"
+    period_month: 2
+  expect:
+    amount: "175.00"
+    applied: true
+    is_special_month: false
+  derivation: |
+    9,000.00 sits in the middle band, whose slab carries no special_amount, so
+    February is an ordinary month for this employee = 175.00.
+
+    An implementation that treats `special_month` as a global February override
+    passes the previous case and fails this one, over-charging every
+    middle-band employee 125.00 once a year.
+
+- id: pt-mh-edge-zero-wage
+  category: edge
+  rule_set: pt/MH/2024-04-01
+  covers: [slabs]
+  source: "MH PT Act 1975, Schedule I"
+  assumptions:
+    - "Full month of loss of pay; PT is not pro-rated but the wage is nil"
+  given:
+    gross_wage: "0.00"
+    state: "MH"
+    gender: "M"
+    period_month: 6
+  expect:
+    amount: "0.00"
+    applied: true
+  derivation: |
+    0.00 falls in the nil band = 0.00.
+
+    Worth stating explicitly because PT is otherwise NOT pro-rated: an employee
+    who works a single day in the month owes the full slab amount. Only a nil
+    wage lands in the nil band.

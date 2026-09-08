@@ -1,0 +1,3 @@
+{% extends "recruitment/email/base.txt" %}{% block body %}Thank you for accepting our offer for the position of {{ offer_designation }}. We are delighted to welcome you to {{ company_name }}.
+
+Your joining date is {{ joining_date }}. Our HR team will contact you with onboarding details and the documents to bring on your first day.{% endblock %}

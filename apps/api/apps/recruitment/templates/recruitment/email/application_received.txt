@@ -1,0 +1,3 @@
+{% extends "recruitment/email/base.txt" %}{% block body %}Thank you for applying for the position of {{ job_title }} at {{ company_name }}. We have received your application on {{ applied_on }} and it is now with our recruitment team.
+
+Current status: {{ current_status }}.{% endblock %}

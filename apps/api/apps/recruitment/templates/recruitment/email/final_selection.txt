@@ -1,0 +1,3 @@
+{% extends "recruitment/email/base.txt" %}{% block body %}We are delighted to inform you that you have been SELECTED for the position of {{ job_title }} at {{ company_name }}.
+
+Our HR team will be in touch shortly with your offer and the details of the next steps.{% endblock %}

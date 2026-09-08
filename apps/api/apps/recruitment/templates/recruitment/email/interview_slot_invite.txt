@@ -1,0 +1,7 @@
+{% extends "recruitment/email/base.txt" %}{% block body %}Good news — your application for {{ job_title }} is moving forward, and the next step is your {{ interview_round }}.
+
+Please choose the time that suits you best:
+
+{{ slot_link }}
+
+Please pick a time by {{ slot_deadline }}. Once our team confirms it, you will receive the final schedule with the meeting details.{% endblock %}

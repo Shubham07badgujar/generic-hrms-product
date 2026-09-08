@@ -1,0 +1,12 @@
+{% autoescape off %}Dear {{ candidate_name }},
+
+{% block body %}{% endblock %}
+{% if next_step %}Next step: {{ next_step }}
+
+{% endif %}Application reference: {{ application_id }}. Please quote it in any correspondence.
+
+Regards,
+HR Team
+{{ company_name }}
+{{ hr_contact_email }}
+{% endautoescape %}

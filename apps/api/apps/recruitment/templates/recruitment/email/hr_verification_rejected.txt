@@ -1,0 +1,3 @@
+{% extends "recruitment/email/base.txt" %}{% block body %}Thank you for your interest in the {{ job_title }} position at {{ company_name }}. After careful review, we will not be progressing your application on this occasion.
+
+We appreciate the time you invested and encourage you to apply for future openings that match your profile.{% endblock %}

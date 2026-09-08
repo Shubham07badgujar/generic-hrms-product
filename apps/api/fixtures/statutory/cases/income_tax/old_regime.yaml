@@ -1,0 +1,268 @@
+# Income Tax — old regime, FY 2025-26.
+# All expectations DISPUTED pending `itax-fy2025-26-slabs`; derivations show the
+# arithmetic under the drafted parameters.
+
+# ---------------------------------------------------------------- normal
+- id: itax-old-normal-with-80c
+  category: normal
+  rule_set: income_tax/2025-2026-old
+  covers: [slabs, standard_deduction, cess_rate, deduction_caps, is_default_regime]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961, Schedule I Part III; Chapter VI-A s.80C"
+  assumptions:
+    - "Employee explicitly elected the old regime"
+    - "80C declared at the cap"
+    - "DISPUTED — slabs, standard deduction and caps unverified"
+  given:
+    annual_gross_projection: "1000000.00"
+    tax_regime: "old"
+    declared_deductions:
+      "80C": "150000.00"
+  expect:
+    regime_used: "old"
+    taxable_income: DISPUTED
+    annual_tax: DISPUTED
+  derivation: |
+    Under the DRAFTED parameters:
+
+      taxable = 1,000,000.00 - 50,000.00 (std) - 150,000.00 (80C) = 800,000.00
+
+      0 - 250,000       @  0%  =       0.00
+      250,000 - 500,000 @  5%  =  12,500.00
+      500,000 - 800,000 @ 20%  =  60,000.00
+                                 ----------
+      tax before rebate        =  72,500.00
+
+      rebate: 800,000 > 500,000 threshold -> none
+      cess   = 72,500.00 x 4%  =   2,900.00
+      annual tax               =  75,400.00
+
+# -------------------------------------------------------------- boundary
+- id: itax-old-boundary-87a-at-threshold
+  category: boundary
+  rule_set: income_tax/2025-2026-old
+  covers: [rebate, slabs, standard_deduction]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961 s.87A"
+  assumptions:
+    - "Taxable income exactly at the old-regime rebate threshold"
+    - "The old-regime rebate has NO marginal relief"
+  given:
+    annual_gross_projection: "550000.00"
+    tax_regime: "old"
+  expect:
+    taxable_income: DISPUTED
+    tax_before_rebate: DISPUTED
+    rebate_applied: DISPUTED
+    annual_tax: DISPUTED
+  derivation: |
+    Under the DRAFTED parameters:
+
+      taxable = 550,000.00 - 50,000.00 = 500,000.00  (exactly at threshold)
+
+      0 - 250,000       @ 0% =      0.00
+      250,000 - 500,000 @ 5% = 12,500.00
+                               ---------
+      tax before rebate      = 12,500.00
+
+      rebate = min(12,500.00, 12,500.00) = 12,500.00
+      tax after rebate       =      0.00
+      annual tax             =      0.00
+
+- id: itax-old-boundary-just-above-rebate-no-marginal-relief
+  category: boundary
+  rule_set: income_tax/2025-2026-old
+  covers: [rebate, rebate.marginal_relief_enabled, slabs]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961 s.87A — old regime"
+  assumptions:
+    - >
+      One rupee above the old-regime rebate threshold. Marginal relief is
+      DISABLED for the old regime, so the cliff is real and intended — unlike
+      the new regime, where relief smooths it.
+  given:
+    annual_gross_projection: "550001.00"
+    tax_regime: "old"
+  expect:
+    taxable_income: DISPUTED
+    rebate_applied: "0.00"
+    marginal_relief: "0.00"
+    annual_tax: DISPUTED
+  derivation: |
+    Under the DRAFTED parameters:
+
+      taxable = 550,001.00 - 50,000.00 = 500,001.00  (1 rupee over)
+
+      250,000 - 500,000 @  5% = 12,500.00
+      500,000 - 500,001 @ 20% =      0.20
+                                ----------
+      tax before rebate       = 12,500.20
+
+      rebate: 500,001 > 500,000 -> NONE
+      marginal relief: disabled for this regime -> 0.00
+      cess = 12,500.20 x 4% = 500.01
+      annual tax = 13,000.21
+
+    One extra rupee of income costs 13,000.21 in tax. That cliff is a genuine
+    feature of the old regime, not a bug — which is exactly why
+    `marginal_relief_enabled` is a per-regime PARAMETER. Hardcoding relief for
+    both regimes would silently under-deduct here; hardcoding it for neither
+    would produce the same cliff in the new regime, where it does not belong.
+
+    `rebate_applied` and `marginal_relief` are asserted as 0.00 and NOT
+    disputed: whatever the threshold turns out to be, one rupee above it yields
+    no rebate and no relief in this regime.
+
+# ------------------------------------------------------------- exemption
+- id: itax-old-exemption-80c-over-cap-is-clamped
+  category: exemption
+  rule_set: income_tax/2025-2026-old
+  covers: [deduction_caps, slabs, standard_deduction]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961 s.80C(1) — maximum deduction"
+  assumptions:
+    - "Employee declared 500,000 under 80C, far above the cap"
+    - "Over-declaration is CLAMPED, never rejected — a hard failure would block payroll"
+  given:
+    annual_gross_projection: "1000000.00"
+    tax_regime: "old"
+    declared_deductions:
+      "80C": "500000.00"
+  expect:
+    taxable_income: DISPUTED
+    deductions_allowed:
+      "80C": "150000.00"
+    annual_tax: DISPUTED
+  derivation: |
+    Declared 500,000.00 is clamped to the 150,000.00 cap, so this case must
+    produce EXACTLY the same tax as itax-old-normal-with-80c.
+
+      taxable = 1,000,000.00 - 50,000.00 - 150,000.00 = 800,000.00
+      annual tax = 75,400.00 (identical to the normal case)
+
+    `deductions_allowed` records the CLAMPED figure, which is what the payslip
+    and Form 16 must show. The employee's declaration is retained at 500,000 for
+    their records; only the allowed amount enters the computation.
+
+    Guards against an implementation that deducts the full 500,000 — which would
+    under-deduct by 70,000 of taxable income and leave the employee with an
+    unexpected filing liability.
+
+- id: itax-old-exemption-multiple-deductions-each-capped
+  category: exemption
+  rule_set: income_tax/2025-2026-old
+  covers: [deduction_caps, standard_deduction]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961 Chapter VI-A"
+  assumptions:
+    - "Several deductions declared, each over its own cap"
+    - "Caps apply INDEPENDENTLY — there is no shared pool"
+  given:
+    annual_gross_projection: "1500000.00"
+    tax_regime: "old"
+    declared_deductions:
+      "80C": "200000.00"
+      "80D": "75000.00"
+      "80CCD_1B": "80000.00"
+      "80TTA": "15000.00"
+  expect:
+    deductions_allowed:
+      "80C": "150000.00"
+      "80D": "50000.00"
+      "80CCD_1B": "50000.00"
+      "80TTA": "10000.00"
+    taxable_income: DISPUTED
+    annual_tax: DISPUTED
+  derivation: |
+    Each declaration is clamped to its own cap independently:
+
+      80C      : 200,000 -> 150,000   (clamped)
+      80D      :  75,000 ->  50,000   (clamped)
+      80CCD_1B :  80,000 ->  50,000   (clamped)
+      80TTA    :  15,000 ->  10,000   (clamped)
+                            --------
+      total allowed        = 260,000
+
+      taxable = 1,500,000 - 50,000 (std) - 260,000 = 1,190,000
+
+    `deductions_allowed` is asserted in full and NOT disputed: the caps are
+    per-section constants independent of the slab question. Only the resulting
+    taxable income and tax depend on the unverified figures.
+
+# ------------------------------------------------------------------ edge
+- id: itax-old-edge-regime-not-declared-falls-to-new
+  category: edge
+  rule_set: income_tax/2025-2026-old
+  covers: [is_default_regime]
+  source: "Income-tax Act 1961 s.115BAC(6) — new regime is the default"
+  assumptions:
+    - >
+      Employee declared old-regime DEDUCTIONS but did not elect a regime. The
+      default applies and the deductions are disallowed.
+    - >
+      This is a common and expensive user error: declaring investments does not
+      elect the old regime.
+  given:
+    annual_gross_projection: "900000.00"
+    tax_regime: null
+    declared_deductions:
+      "80C": "150000.00"
+  expect:
+    regime_used: "new"
+    deductions_allowed: {}
+  derivation: |
+    `tax_regime` is null, so the default regime applies. The old rate set has
+    `is_default_regime: false`; the new one has true — so resolution selects the
+    NEW regime and the 80C declaration is disallowed.
+
+    `regime_used` and `deductions_allowed` are asserted and NOT disputed: which
+    regime is the default is a structural fact independent of the slab figures.
+
+    This case exists because the failure is silent and expensive. An
+    implementation that infers "they declared 80C, so they must want the old
+    regime" would be helpful and wrong — the election is a formal act, and
+    inferring it produces a TDS figure that disagrees with the employee's
+    eventual return.
+
+- id: itax-old-edge-surcharge-marginal-relief
+  category: edge
+  rule_set: income_tax/2025-2026-old
+  covers: [surcharge, surcharge.bands, surcharge.marginal_relief_enabled, slabs]
+  disputed: true
+  disputes: [itax-fy2025-26-slabs]
+  source: "Income-tax Act 1961 — surcharge with marginal relief per Finance Act"
+  assumptions:
+    - "Income just above the first surcharge threshold, old regime"
+    - >
+      Surcharge marginal relief is ENABLED in the old regime even though the
+      s.87A rebate relief is not. The two flags are independent, which is
+      precisely why they are separate parameters.
+    - "DISPUTED — surcharge bands and slabs unverified"
+  given:
+    annual_gross_projection: "5060000.00"
+    tax_regime: "old"
+  expect:
+    taxable_income: DISPUTED
+    surcharge: DISPUTED
+    annual_tax: DISPUTED
+  derivation: |
+    Under the DRAFTED parameters:
+
+      taxable = 5,060,000.00 - 50,000.00 = 5,010,000.00
+              = 10,000.00 above the 5,000,000.00 surcharge threshold
+
+    Same relief mechanism as the new regime: total tax plus surcharge is capped
+    so that crossing the threshold never costs more than the income gained.
+
+    Note the contrast within this single rate set:
+
+      rebate.marginal_relief_enabled    = false  (cliff at 500,000 is real)
+      surcharge.marginal_relief_enabled = true   (cliff at 5,000,000 is smoothed)
+
+    An implementation with one global "marginal relief" flag cannot express
+    this, and would be wrong at one threshold or the other.

@@ -1,0 +1,83 @@
+statute: income_tax
+jurisdiction: ""
+regime: "old"
+rule_version: income_tax.v2
+
+effective_from: "2025-04-01"
+effective_to: "2026-03-31"
+financial_year: "2025-2026"
+
+source:
+  citation: >
+    Income-tax Act 1961 — Part III of Schedule I (old regime rates), s.87A
+    (rebate), Chapter VI-A (80C, 80D, 80TTA, 80CCD(1B), 80E, 80G),
+    s.24(b) (home loan interest), s.10(13A) (HRA), s.192 (TDS on salary).
+  url: ""
+  retrieved_on: null
+
+verification:
+  status: UNVERIFIED
+  verified_by: null
+  verified_on: null
+  note: >
+    NOT VERIFIED. Slab boundaries, the s.87A threshold for the old regime, and
+    every Chapter VI-A cap must be confirmed against the applicable Finance Act.
+    See dispute `itax-fy2025-26-slabs`.
+
+parameters:
+  standard_deduction: "50000.00"
+  cess_rate: "4.0000"
+  is_default_regime: false
+
+  slabs:
+    - {min_income: "0.00",       max_income: "250000.00",  rate: "0.0000"}
+    - {min_income: "250000.01",  max_income: "500000.00",  rate: "5.0000"}
+    - {min_income: "500000.01",  max_income: "1000000.00", rate: "20.0000"}
+    - {min_income: "1000000.01", max_income: null,         rate: "30.0000"}
+
+  rebate:
+    applies_to_regime: "old"
+    max_taxable_income: "500000.00"
+    max_amount: "12500.00"
+    marginal_relief_enabled: false     # old-regime rebate has no marginal relief
+
+  surcharge:
+    bands:
+      - {min_income: "5000000.01",  max_income: "10000000.00", rate: "10.0000"}
+      - {min_income: "10000000.01", max_income: "20000000.00", rate: "15.0000"}
+      - {min_income: "20000000.01", max_income: "50000000.00", rate: "25.0000"}
+      - {min_income: "50000000.01", max_income: null,          rate: "37.0000"}
+    marginal_relief_enabled: true
+
+  # Chapter VI-A caps. A declaration above a cap is CLAMPED, never rejected —
+  # employees over-declare routinely and a hard failure would block payroll.
+  deduction_caps:
+    "80C": "150000.00"
+    "80D": "50000.00"
+    "80CCD_1B": "50000.00"
+    "80TTA": "10000.00"
+    "24b": "200000.00"
+    "80E": null                        # no monetary cap on education-loan interest
+    "80G": null                        # cap depends on the donee; out of scope
+    "HRA_exempt": null                 # computed under s.10(13A), not capped here
+
+open_disputes:
+  - itax-fy2025-26-slabs
+
+assumptions:
+  - >
+    The old regime remains available by election. `is_default_regime: false`
+    means an employee who declares nothing falls into the NEW regime.
+  - >
+    Declared amounts above a cap are clamped silently. The declaration is
+    retained at its declared value for the employee's records; only the
+    ALLOWED amount is used in the computation.
+  - >
+    Deductions with a null cap are accepted as declared. That places the burden
+    of correctness on the employee's declaration and proof, which is the legal
+    position — but it also means a mistyped 80E figure flows straight through,
+    so proof verification is a Tier 2 process concern.
+  - >
+    HRA exemption under s.10(13A) is computed from rent paid, salary and city
+    class. That computation is out of scope here; this rate set accepts a
+    pre-computed exempt amount.

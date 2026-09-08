@@ -1,0 +1,270 @@
+# Gratuity — Payment of Gratuity Act 1972.
+# Formula: last drawn Basic+DA x (15/26) x completed years.
+
+# ---------------------------------------------------------------- normal
+- id: gratuity-normal-ten-years
+  category: normal
+  rule_set: gratuity/2024-04-01
+  covers: [formula_numerator, formula_denominator, eligibility_years]
+  source: "Payment of Gratuity Act 1972, s.4(2)"
+  assumptions:
+    - "Last drawn Basic + DA of 26,000.00; exactly 10 completed years"
+    - "Well within the statutory maximum"
+  given:
+    last_drawn_monthly_wage: "26000.00"
+    completed_service_years: "10"
+  expect:
+    accrued_total: "150000.00"
+    is_eligible: true
+    capped: false
+  derivation: |
+    gratuity = last drawn x (15 / 26) x completed years
+             = 26,000.00 x 15 / 26 x 10
+
+    Step by step:
+      26,000.00 / 26 = 1,000.00      (daily wage on a 26-day working month)
+      1,000.00 x 15  = 15,000.00     (15 days' wages per completed year)
+      15,000.00 x 10 = 150,000.00
+
+    A 26,000 wage is chosen so the 26-day divisor lands exactly, making the
+    arithmetic checkable without rounding at any step.
+
+- id: gratuity-normal-seven-years
+  category: normal
+  rule_set: gratuity/2024-04-01
+  covers: [formula_numerator, formula_denominator]
+  source: "Payment of Gratuity Act 1972, s.4(2)"
+  assumptions:
+    - "Last drawn Basic + DA of 40,000.00; 7 completed years"
+  given:
+    last_drawn_monthly_wage: "40000.00"
+    completed_service_years: "7"
+  expect:
+    accrued_total: "161538.46"
+    is_eligible: true
+    capped: false
+  derivation: |
+    40,000.00 / 26      = 1,538.4615384...   (daily wage)
+    x 15                = 23,076.923076...   (per completed year)
+    x 7                 = 161,538.4615384...
+    -> 161,538.46                            (half-up, 2dp)
+
+    Rounding is applied ONCE, to the final figure. Rounding the daily wage first
+    (1,538.46) would give 161,538.30 — a 0.16 difference that compounds with
+    longer service. The order of rounding is a real decision, and this case
+    pins it.
+
+# -------------------------------------------------------------- boundary
+- id: gratuity-boundary-exactly-five-years
+  category: boundary
+  rule_set: gratuity/2024-04-01
+  covers: [eligibility_years, formula_numerator, formula_denominator]
+  source: "Payment of Gratuity Act 1972, s.4(1) — five years' continuous service"
+  assumptions:
+    - "Exactly 5 completed years: the first year at which gratuity is payable"
+  given:
+    last_drawn_monthly_wage: "26000.00"
+    completed_service_years: "5"
+  expect:
+    accrued_total: "75000.00"
+    is_eligible: true
+    capped: false
+  derivation: |
+    26,000.00 / 26 x 15 x 5 = 15,000.00 x 5 = 75,000.00
+
+    Five years is the eligibility threshold and it is INCLUSIVE — five years
+    qualifies. Paired with the next case this pins the boundary.
+
+- id: gratuity-boundary-just-under-five-years
+  category: boundary
+  rule_set: gratuity/2024-04-01
+  covers: [eligibility_years]
+  source: "Payment of Gratuity Act 1972, s.4(1)"
+  assumptions:
+    - "4 years 11 months — short of the five-year requirement"
+    - "Not a death or disablement exit, where the requirement is waived"
+  given:
+    last_drawn_monthly_wage: "26000.00"
+    completed_service_years: "4.92"
+  expect:
+    accrued_total: "0.00"
+    is_eligible: false
+    exemption_reason: "below_eligibility_period"
+  derivation: |
+    4.92 years is below the 5-year threshold, so nothing is PAYABLE.
+
+    Note this concerns the payable amount. A monthly PROVISION may still have
+    been accrued in the accounts throughout those 4 years 11 months — see
+    gratuity-edge-monthly-provision. Provisioning and entitlement are different
+    questions, and conflating them either overstates a liability or surprises
+    the finance team at exit.
+
+- id: gratuity-boundary-240-day-year
+  category: boundary
+  rule_set: gratuity/2024-04-01
+  covers: [eligibility_years]
+  source: "Payment of Gratuity Act 1972, s.2A — continuous service"
+  assumptions:
+    - >
+      s.2A deems a year of continuous service where the employee worked at
+      least 240 days in that year. The caller supplies the resulting completed
+      years; Tier 1 does not compute attendance.
+    - "Employee worked 240+ days in each of 5 years despite calendar gaps"
+  given:
+    last_drawn_monthly_wage: "26000.00"
+    completed_service_years: "5"
+    completed_service_days: "1200"
+  expect:
+    accrued_total: "75000.00"
+    is_eligible: true
+  derivation: |
+    26,000.00 / 26 x 15 x 5 = 75,000.00
+
+    Identical arithmetic to the exactly-five-years case. The case exists to
+    document WHERE the 240-day rule is applied: in Tier 2, when deriving
+    completed_service_years from attendance. Tier 1 must not re-derive it, or
+    the two would eventually disagree.
+
+- id: gratuity-boundary-statutory-maximum
+  category: boundary
+  rule_set: gratuity/2024-04-01
+  covers: [statutory_maximum, formula_numerator, formula_denominator]
+  source: "Payment of Gratuity Act 1972, s.4(3)"
+  assumptions:
+    - "Long service at a high wage, exceeding the statutory maximum"
+  given:
+    last_drawn_monthly_wage: "200000.00"
+    completed_service_years: "30"
+  expect:
+    accrued_total: "2000000.00"
+    is_eligible: true
+    capped: true
+  derivation: |
+    Uncapped:
+      200,000.00 / 26 = 7,692.3076923...
+      x 15            = 115,384.615384...
+      x 30            = 3,461,538.46...
+
+    That exceeds the 2,000,000.00 statutory maximum, so the payable amount is
+    capped at 2,000,000.00 and `capped` is TRUE.
+
+    The flag matters: finance needs to know the cap bound, because the
+    difference between computed and payable is disclosed differently and the
+    employee may query it.
+
+# ------------------------------------------------------------- exemption
+- id: gratuity-exemption-short-service
+  category: exemption
+  rule_set: gratuity/2024-04-01
+  covers: [eligibility_years]
+  source: "Payment of Gratuity Act 1972, s.4(1)"
+  assumptions:
+    - "2 years' service; well short of eligibility"
+  given:
+    last_drawn_monthly_wage: "30000.00"
+    completed_service_years: "2"
+  expect:
+    accrued_total: "0.00"
+    is_eligible: false
+    exemption_reason: "below_eligibility_period"
+  derivation: |
+    2 years < 5 years, so no gratuity is payable = 0.00.
+
+- id: gratuity-exemption-zero-wage
+  category: exemption
+  rule_set: gratuity/2024-04-01
+  covers: [formula_numerator, formula_denominator]
+  source: "Payment of Gratuity Act 1972, s.4(2)"
+  assumptions:
+    - "Defensive case: a missing or zero last-drawn wage must not error"
+  given:
+    last_drawn_monthly_wage: "0.00"
+    completed_service_years: "10"
+  expect:
+    accrued_total: "0.00"
+    is_eligible: true
+  derivation: |
+    0.00 / 26 x 15 x 10 = 0.00
+
+    `is_eligible` stays TRUE — the service requirement is met; the wage is the
+    problem. Reporting these separately lets the caller distinguish "not
+    entitled" from "entitled to nothing because the wage is missing", which is
+    almost always a data error worth surfacing.
+
+# ------------------------------------------------------------------ edge
+- id: gratuity-edge-monthly-provision
+  category: edge
+  rule_set: gratuity/2024-04-01
+  covers: [formula_numerator, formula_denominator, provision_months_per_year]
+  source: "Accounting accrual; Payment of Gratuity Act 1972 s.4(2) formula"
+  assumptions:
+    - >
+      Monthly provisioning spreads one year's gratuity entitlement across 12
+      months. This is an accounting accrual, not a statutory payment.
+    - "Provision accrues from month one, before eligibility is reached"
+  given:
+    last_drawn_monthly_wage: "26000.00"
+    completed_service_years: "2"
+  expect:
+    monthly_provision: "1250.00"
+    accrued_total: "0.00"
+    is_eligible: false
+  derivation: |
+    One year's entitlement:
+      26,000.00 / 26 x 15 = 15,000.00
+
+    Spread monthly:
+      15,000.00 / 12 = 1,250.00
+
+    Note the pairing: monthly_provision is 1,250.00 while accrued_total (the
+    amount PAYABLE today) is 0.00, because this employee has only 2 years of
+    service. The employer is accruing a liability that is not yet owed — which
+    is exactly what provisioning is for, and exactly what a single combined
+    field would obscure.
+
+- id: gratuity-edge-part-year-rounds-up
+  category: edge
+  rule_set: gratuity/2024-04-01
+  covers: [months_for_year_rounding, formula_numerator, formula_denominator]
+  source: "Payment of Gratuity Act 1972, s.4(2) — part of a year over six months"
+  assumptions:
+    - "7 years 8 months of service; the part-year exceeds six months"
+    - "Rounds UP to 8 completed years"
+  given:
+    last_drawn_monthly_wage: "26000.00"
+    completed_service_years: "7.67"
+  expect:
+    accrued_total: "120000.00"
+    is_eligible: true
+  derivation: |
+    7.67 years = 7 years and ~8 months. The part-year exceeds 6 months, so it
+    counts as a full year: 8 completed years.
+
+      26,000.00 / 26 x 15 x 8 = 15,000.00 x 8 = 120,000.00
+
+    Rounding UP by year, not pro-rating: 7.67 x 15,000 would give 115,050.00,
+    which is 4,950.00 short of the entitlement.
+
+- id: gratuity-edge-part-year-rounds-down
+  category: edge
+  rule_set: gratuity/2024-04-01
+  covers: [months_for_year_rounding]
+  source: "Payment of Gratuity Act 1972, s.4(2)"
+  assumptions:
+    - "7 years 4 months; the part-year is under six months"
+    - "Rounds DOWN to 7 completed years"
+  given:
+    last_drawn_monthly_wage: "26000.00"
+    completed_service_years: "7.33"
+  expect:
+    accrued_total: "105000.00"
+    is_eligible: true
+  derivation: |
+    7.33 years = 7 years and ~4 months. The part-year is below 6 months, so it
+    is disregarded: 7 completed years.
+
+      26,000.00 / 26 x 15 x 7 = 15,000.00 x 7 = 105,000.00
+
+    Paired with the previous case this pins the six-month pivot. The difference
+    between them is a full 15,000.00 — one month of service either side of the
+    pivot changes the entitlement by a whole year's accrual.

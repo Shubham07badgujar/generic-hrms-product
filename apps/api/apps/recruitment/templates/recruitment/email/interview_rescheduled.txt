@@ -1,0 +1,11 @@
+{% extends "recruitment/email/base.txt" %}{% block body %}Your interview has been RESCHEDULED. The updated details are below; the earlier slot no longer applies.
+
+{{ interview_round }} for the {{ job_title }} position.
+
+Date:            {{ interview_date }}
+Time:            {{ interview_time }}{% if interviewer_name %}
+Interviewer:     {{ interviewer_name }}{% endif %}
+Mode:            {{ interview_mode }}{% if meeting_link %}
+Location / link: {{ meeting_link }}{% endif %}
+
+Please join a few minutes early and keep this email handy. If you cannot attend, reply to this email as soon as possible so we can find another slot.{% endblock %}

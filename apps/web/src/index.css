@@ -1,0 +1,143 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * The palette. Every colour in the app resolves to one of these, so themes
+ * change here and nowhere else.
+ */
+@layer base {
+  :root {
+    --canvas: 210 20% 97%;
+    --surface: 0 0% 100%;
+    --surface-raised: 0 0% 100%;
+    --line: 214 20% 89%;
+
+    --ink: 218 25% 14%;
+    --ink-muted: 215 14% 42%;
+    --ink-subtle: 215 12% 58%;
+
+    --brand: 221 68% 46%;
+    --brand-hover: 221 68% 39%;
+    --brand-soft: 221 80% 96%;
+    --brand-ink: 221 68% 34%;
+
+    --success: 152 52% 34%;
+    --success-soft: 150 55% 95%;
+    --success-ink: 153 58% 24%;
+
+    --warning: 32 88% 44%;
+    --warning-soft: 40 90% 95%;
+    --warning-ink: 28 74% 30%;
+
+    --danger: 0 66% 48%;
+    --danger-hover: 0 66% 41%;
+    --danger-soft: 0 80% 96%;
+    --danger-ink: 0 62% 36%;
+
+    --info: 205 74% 42%;
+    --info-soft: 205 85% 95%;
+    --info-ink: 205 70% 30%;
+
+    --shadow: 218 40% 20%;
+    --focus: 221 80% 52%;
+  }
+
+  .dark {
+    --canvas: 222 26% 9%;
+    --surface: 222 22% 12%;
+    --surface-raised: 222 20% 15%;
+    --line: 220 15% 24%;
+
+    --ink: 210 24% 94%;
+    --ink-muted: 215 16% 68%;
+    --ink-subtle: 215 14% 52%;
+
+    --brand: 217 84% 64%;
+    --brand-hover: 217 84% 71%;
+    --brand-soft: 221 45% 20%;
+    --brand-ink: 217 90% 78%;
+
+    --success: 152 48% 50%;
+    --success-soft: 153 40% 17%;
+    --success-ink: 150 60% 72%;
+
+    --warning: 36 84% 58%;
+    --warning-soft: 33 45% 18%;
+    --warning-ink: 40 88% 74%;
+
+    --danger: 0 72% 62%;
+    --danger-hover: 0 72% 69%;
+    --danger-soft: 0 40% 20%;
+    --danger-ink: 0 80% 78%;
+
+    --info: 205 76% 60%;
+    --info-soft: 205 42% 19%;
+    --info-ink: 205 82% 76%;
+
+    --shadow: 222 60% 3%;
+    --focus: 217 90% 64%;
+  }
+
+  * {
+    @apply border-line;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans text-base antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'tnum' 0;
+  }
+
+  /*
+   * Focus is visible for keyboard users and invisible for mouse users, via
+   * :focus-visible rather than removing outlines outright. Accessibility
+   * requirement, not a preference.
+   */
+  :focus-visible {
+    @apply outline-none ring-2 ring-offset-2;
+    --tw-ring-color: hsl(var(--focus));
+    --tw-ring-offset-color: hsl(var(--canvas));
+  }
+
+  /* Numeric columns align only if the digits are the same width. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* Skip link: the first tab stop on every page. */
+  .skip-link {
+    @apply sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50
+           focus:rounded-lg focus:bg-brand focus:px-4 focus:py-2 focus:text-white;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--line)) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-line;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}

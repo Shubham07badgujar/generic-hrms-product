@@ -1,0 +1,3 @@
+{% extends "recruitment/email/base.txt" %}{% block body %}Your application for the {{ job_title }} position has completed the departmental review stage and is now with our HR team for a final decision.
+
+Current status: {{ current_status }}.{% endblock %}

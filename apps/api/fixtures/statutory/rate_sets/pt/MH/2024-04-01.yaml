@@ -1,0 +1,74 @@
+statute: pt
+jurisdiction: "MH"
+regime: ""
+rule_version: pt.v2          # v2 adds eligibility-based exemptions
+
+effective_from: "2024-04-01"
+effective_to: null
+financial_year: ""
+
+source:
+  citation: >
+    Maharashtra State Tax on Professions, Trades, Callings and Employments
+    Act, 1975 — Schedule I, as amended. Exemption for women per the amending
+    Act; effective date to be confirmed.
+  url: ""
+  retrieved_on: null
+
+verification:
+  status: UNVERIFIED
+  verified_by: null
+  verified_on: null
+  note: >
+    NOT VERIFIED. Both the slab boundaries and the women's exemption threshold
+    require confirmation against Schedule I as currently amended. See dispute
+    `mh-pt-women-exemption-threshold` — the exemption's effective date also
+    determines whether it applies to the periods this rate set covers.
+
+parameters:
+  # Slabs are evaluated in order; the first whose range contains the gross wage
+  # wins. `max_gross: null` means unbounded.
+  slabs:
+    - {min_gross: "0.00",      max_gross: "7500.00",  monthly_amount: "0.00"}
+    - {min_gross: "7500.01",   max_gross: "10000.00", monthly_amount: "175.00"}
+    - {min_gross: "10000.01",  max_gross: null,       monthly_amount: "200.00"}
+
+  # Maharashtra levies a higher amount in one month so the annual total reaches
+  # the statutory ceiling. Modelled as data, not a hardcoded February check.
+  special_month: 2
+  special_amount: "300.00"
+
+  # Eligibility-based exemptions, evaluated BEFORE slab lookup. Conditions come
+  # from a fixed, typed vocabulary — deliberately not an expression language.
+  exemptions:
+    - id: mh-women-monthly-wage
+      conditions:
+        gender: "F"
+        max_monthly_wage: "25000.00"
+      result:
+        monthly_amount: "0.00"
+      source: "MH PT Act 1975 Schedule I, exemption for women"
+      note: >
+        DISPUTED — both the 25,000.00 threshold and the "full exemption"
+        reading require confirmation. See dispute
+        `mh-pt-women-exemption-threshold`.
+
+open_disputes:
+  - mh-pt-women-exemption-threshold
+
+assumptions:
+  - >
+    Professional Tax is assessed on GROSS monthly wage, and is a fixed slab
+    amount rather than a percentage — so unlike PF and ESI there is no rounding
+    question.
+  - >
+    Slab boundaries use .01 increments (7500.00 / 7500.01) rather than
+    inclusive-exclusive comparisons, so the gap between bands is explicit in
+    the data rather than implied by comparison operators.
+  - >
+    The exemption is applied before slab lookup and short-circuits it entirely.
+    If the correct reading is that the exemption applies only to particular
+    slabs, this rule set and `pt.v2` both need revision.
+  - >
+    Liability is per employee per month regardless of days worked; there is no
+    pro-rating for part months.

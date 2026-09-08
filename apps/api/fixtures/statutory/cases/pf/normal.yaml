@@ -1,0 +1,90 @@
+# PF — normal cases.
+# Every expected value below is hand-derived from the rate-set parameters.
+# None of them came from running the engine.
+
+- id: pf-normal-below-ceiling
+  category: normal
+  rule_set: pf/2024-04-01
+  covers: [employee_rate, employer_rate, eps_rate, admin_charge_rate, applies]
+  source: "EPF & MP Act 1952 s.6; EPS 1995 para 3"
+  assumptions:
+    - "Domestic employee, EPS-eligible"
+    - "PF wage (Basic + DA) is 12,000 — below the 15,000 ceiling"
+  given:
+    pf_wage: "12000.00"
+    gross_wage: "20000.00"      # deliberately different: PF must ignore gross
+  expect:
+    base_wage: "12000.00"
+    employee: "1440.00"
+    employer_eps: "999.60"
+    employer_epf: "440.40"
+    admin_charge: "75.00"
+    applied: true
+  derivation: |
+    Wage is below the ceiling, so the base is the full PF wage: 12,000.00.
+
+      employee      = 12,000.00 x 12%    = 1,440.00
+      employer total= 12,000.00 x 12%    = 1,440.00
+      EPS           = 12,000.00 x 8.33%  =   999.60
+      employer EPF  = 1,440.00 - 999.60  =   440.40
+      admin charge  = 12,000.00 x 0.5%   =    60.00
+                      -> floored at the 75.00 monthly minimum = 75.00
+
+    Note the base is 12,000 and NOT the 20,000 gross. PF is assessed on
+    Basic + DA only; assessing it on gross would over-deduct 960.00 a month
+    from this employee.
+
+- id: pf-normal-above-ceiling
+  category: normal
+  rule_set: pf/2024-04-01
+  covers: [wage_ceiling, eps_wage_ceiling, employee_rate, eps_rate]
+  source: "EPF & MP Act 1952 s.6 proviso (wage ceiling)"
+  assumptions:
+    - "Domestic employee; statutory ceiling applies"
+  given:
+    pf_wage: "25000.00"
+    gross_wage: "40000.00"
+  expect:
+    base_wage: "15000.00"
+    employee: "1800.00"
+    employer_eps: "1249.50"
+    employer_epf: "550.50"
+    admin_charge: "75.00"
+    applied: true
+  derivation: |
+    Wage exceeds the ceiling, so the base is capped: min(25,000, 15,000) = 15,000.
+
+      employee      = 15,000.00 x 12%    = 1,800.00
+      employer total= 15,000.00 x 12%    = 1,800.00
+      EPS           = 15,000.00 x 8.33%  = 1,249.50
+      employer EPF  = 1,800.00 - 1,249.50=   550.50
+      admin charge  = 15,000.00 x 0.5%   =    75.00
+
+    See the open question in the rate set: EPS may be administered as a flat
+    1,250.00 rather than 1,249.50. This case asserts the arithmetic result.
+
+- id: pf-normal-typical-mid-salary
+  category: normal
+  rule_set: pf/2024-04-01
+  covers: [employee_rate, eps_rate, employer_rate]
+  source: "EPF & MP Act 1952 s.6"
+  assumptions:
+    - "Representative mid-band salary; no ceiling interaction"
+  given:
+    pf_wage: "9500.00"
+    gross_wage: "16000.00"
+  expect:
+    base_wage: "9500.00"
+    employee: "1140.00"
+    employer_eps: "791.35"
+    employer_epf: "348.65"
+    admin_charge: "75.00"
+    applied: true
+  derivation: |
+    employee       = 9,500.00 x 12%     = 1,140.00
+    employer total = 9,500.00 x 12%     = 1,140.00
+    EPS            = 9,500.00 x 8.33%   =   791.35
+    employer EPF   = 1,140.00 - 791.35  =   348.65
+    admin charge   = 9,500.00 x 0.5%    =    47.50 -> floored at 75.00
+
+    EPS long form: 9,500 x 0.0833 = 791.35 exactly, so no rounding is required.

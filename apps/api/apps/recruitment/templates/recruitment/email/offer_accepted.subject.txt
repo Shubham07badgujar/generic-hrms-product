@@ -1,0 +1,1 @@
+{% autoescape off %}Offer accepted – welcome to {{ company_name }}{% endautoescape %}

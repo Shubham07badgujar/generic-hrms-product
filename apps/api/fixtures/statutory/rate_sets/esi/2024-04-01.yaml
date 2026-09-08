@@ -1,0 +1,58 @@
+statute: esi
+jurisdiction: ""
+regime: ""
+rule_version: esi.v1
+
+effective_from: "2024-04-01"
+effective_to: null
+financial_year: ""
+
+source:
+  citation: >
+    Employees' State Insurance Act, 1948 — s.39 (contributions) and
+    s.2(9) (employee definition). Wage limit per ESI (Central) Rules 1950,
+    Rule 50. Contribution rates per ESIC notification.
+  url: "https://www.esic.gov.in/"
+  retrieved_on: null
+
+verification:
+  status: UNVERIFIED
+  verified_by: null
+  verified_on: null
+  note: >
+    NOT VERIFIED. Finance must confirm the wage limit, both contribution rates,
+    and the disability threshold against the current ESIC notification before
+    any live payroll run.
+
+parameters:
+  employee_rate: "0.7500"              # % of gross wage
+  employer_rate: "3.2500"              # % of gross wage
+  gross_wage_threshold: "21000.00"     # monthly gross at or below which ESI applies
+  disability_wage_threshold: "25000.00"  # higher limit for persons with disability
+  threshold_is_inclusive: true         # wage EQUAL to the limit is covered
+  applies: true
+
+  # Contribution periods run April-September and October-March. Once an employee
+  # is covered at the start of a period, coverage continues to the end of that
+  # period even if wages later rise above the limit. Modelled as data so a
+  # future change to the period calendar is a rate-set change, not a code change.
+  contribution_periods:
+    - {start_month: 4, end_month: 9}
+    - {start_month: 10, end_month: 3}
+
+assumptions:
+  - >
+    ESI is assessed on GROSS wage, unlike PF which uses Basic + DA. This is why
+    StatutoryContext carries gross_wage and pf_wage separately.
+  - >
+    `threshold_is_inclusive: true` encodes that an employee earning exactly the
+    limit IS covered. The Act's wording is "wages not exceeding", which reads as
+    inclusive — but it is stated as a parameter rather than assumed in code so a
+    verifier can confirm or contradict it without a release.
+  - >
+    Contribution-period continuation requires history Tier 1 must not read.
+    Tier 2 supplies it via StatutoryContext.esi_already_liable_this_period.
+  - >
+    Applicability also depends on the establishment being covered under s.1(5).
+    That is an establishment-level fact, not an employee-level one, and is
+    represented here only by the `applies` flag.

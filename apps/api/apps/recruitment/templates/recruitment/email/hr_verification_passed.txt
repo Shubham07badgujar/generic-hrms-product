@@ -1,0 +1,3 @@
+{% extends "recruitment/email/base.txt" %}{% block body %}Good news: your application for {{ job_title }} has cleared our initial HR review and has moved to the next stage of the process.
+
+Current status: {{ current_status }}.{% endblock %}

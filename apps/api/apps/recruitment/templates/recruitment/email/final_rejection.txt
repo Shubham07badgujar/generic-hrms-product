@@ -1,0 +1,3 @@
+{% extends "recruitment/email/base.txt" %}{% block body %}Thank you for the time and effort you invested in your application for the {{ job_title }} position at {{ company_name }}. After careful consideration, we regret to inform you that we will not be making an offer on this occasion.
+
+We would be glad to hear from you for future roles that suit your experience.{% endblock %}

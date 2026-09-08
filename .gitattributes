@@ -1,0 +1,18 @@
+# Line endings.
+#
+# This repository is developed on Windows and deployed into Linux containers.
+# Git would otherwise check these out with CRLF, and a shell script whose
+# shebang ends `#!/bin/sh\r` fails with "no such file or directory" — naming
+# the interpreter, not the script, which sends you looking in the wrong place
+# entirely. Forcing LF on anything executed inside a container avoids that.
+
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.dockerfile    text eol=lf
+entrypoint.sh   text eol=lf
+*.conf          text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+
+# Let Git decide for everything else.
+*               text=auto

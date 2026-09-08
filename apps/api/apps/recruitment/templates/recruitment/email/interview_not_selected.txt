@@ -1,0 +1,3 @@
+{% extends "recruitment/email/base.txt" %}{% block body %}Thank you for attending the {{ interview_round }} for the {{ job_title }} position. After careful consideration, we will not be progressing your application further at this time.
+
+We appreciate the effort you put in and wish you every success.{% endblock %}

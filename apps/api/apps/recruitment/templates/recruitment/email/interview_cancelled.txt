@@ -1,0 +1,3 @@
+{% extends "recruitment/email/base.txt" %}{% block body %}Your {{ interview_round }} for the {{ job_title }} position, previously scheduled for {{ interview_date }} at {{ interview_time }}, has been CANCELLED.
+
+Your application remains open. Our team will contact you about the next available slot.{% endblock %}
