@@ -13,7 +13,7 @@ Single Organization → React + TypeScript → Django + DRF → PostgreSQL → R
 
 | # | Decision | Consequence |
 |---|---|---|
-| 1 | **Multi-tenancy removed** | No `organization` FK anywhere. Delete `common/tenancy.py`, `TenantManager`, `CurrentOrgMiddleware`, `drf_tenancy.py`, `use_org()`. Org-switching never built. |
+| 1 | ~~**Multi-tenancy removed**~~ **— SUPERSEDED 2026-09-08, see PART 13** | Held from the original build until 2026-09-08. The product is being taken multi-tenant; the reasoning that produced this decision is not discarded but becomes the constraint the new design must satisfy. |
 | 2 | **Recruiter ≠ Payroll Executive** | Two distinct roles, disjoint permission sets. |
 | 3 | **Employee-first creation** | HR Head creates Employee + Department + Designation + Reporting Manager + Role + Login in **one atomic transaction**. Partial accounts structurally impossible. CEO/Admin are system-level exceptions with no Employee record. |
 | 4 | **CEO exclusive, view-only** | Cannot combine with any operational role. Read + export only, everywhere. |
@@ -24,7 +24,9 @@ Single Organization → React + TypeScript → Django + DRF → PostgreSQL → R
 
 ## 0.2 Two decisions that materially reduce risk
 
-**Removing multi-tenancy eliminates your worst prior production defect.** Incident HRMS-INC-20260717-01 happened because `CurrentOrgMiddleware` set tenant context at Django-middleware time, before DRF resolved a token-authenticated user — so `current_org()` stayed unset, `TenantManager` failed *open*, and a user in one organization approved and locked another organization's payroll run. Moving a React SPA to JWT would have reintroduced exactly that ordering problem on every request. **With a single organization there is no tenant context to establish, no fail-open manager, and no ordering trap.** The entire `drf_tenancy` mixin and its two guard test-suites become unnecessary.
+**Removing multi-tenancy eliminated your worst prior production defect.** Incident HRMS-INC-20260717-01 happened because `CurrentOrgMiddleware` set tenant context at Django-middleware time, before DRF resolved a token-authenticated user — so `current_org()` stayed unset, `TenantManager` failed *open*, and a user in one organization approved and locked another organization's payroll run. Moving a React SPA to JWT would have reintroduced exactly that ordering problem on every request. With a single organization there was no tenant context to establish, no fail-open manager, and no ordering trap.
+
+> **Superseded 2026-09-08.** The product is now being taken multi-tenant (PART 13). This paragraph is kept verbatim rather than deleted, because it is the clearest statement of the failure the new design has to defeat. What it establishes is not "tenancy is unsafe" but something narrower and more useful: **tenant identity must never be an ambient value that has to be *set* before it is *read*.** PART 13 §13.2 removes that precondition instead of trying to satisfy it more carefully.
 
 **A fresh database removes the migration-drift blocker.** The live DB currently does not match its own models — `makemigrations --check` reports unmigrated changes in `onboarding`, `payroll`, `policies` and `recruitment`. Reconciling that was a prerequisite phase. It no longer exists.
 
@@ -1027,3 +1029,124 @@ All previously open items are now settled and integrated into the sections above
 | 7 | **12-month retention after final decision** — configurable; eligible candidates queue for explicit HR/Admin approval; purge is anonymisation (not deletion) so analytics and audit survive; candidates who became employees are never eligible. | §4.7 (`Candidate`), §7.8, Phase 6 |
 
 **Nothing further blocks approval.** On sign-off, Phase 0 begins: project scaffolding, Docker dev environment, CI, and porting the payroll golden-master fixtures as the statutory compliance oracle.
+
+---
+
+# PART 13 — Multi-tenant SaaS (supersedes decision 0.1 #1)
+
+**Status:** design approved 2026-09-08; implementation in progress on `saas/multi-tenant`.
+**Baseline to compare against or revert to:** tag `pre-saas-baseline`.
+
+## 13.0 The product boundary
+
+> The system consists of two clearly separated security domains: **Platform** and
+> **Organization**. Platform functionality manages the SaaS itself; Organization
+> functionality manages customer HRMS data. **No organization role may access another
+> organization's data, and Platform Admin does not receive implicit customer-data access.**
+
+Where a design choice below is ambiguous, that sentence is the tie-breaker.
+
+## 13.1 What changes, and what explicitly does not
+
+`Organization` becomes a first-class entity in `apps/organization`, beside `OrgSettings` —
+which stops being a global singleton and becomes a per-organization profile row. Every
+organization-owned table carries `organization_id`. Roles, permissions and every policy
+surface become per-organization rows.
+
+Unchanged, deliberately: authorization still returns a **`Scope`, not a boolean**;
+`scope_queryset()` is still the only sanctioned path to a scoped queryset; business logic
+still lives in `services.py`; out-of-scope reads still return **404, not 403**; the
+segregation-of-duties invariants still hold; money is still `Decimal`. Tenancy is an
+*additional* outer predicate, **not a new `Scope` value** — `Scope.ALL` continues to mean
+"the whole organization", and adding a `Scope.ORGANIZATION` above it would be a footgun,
+because every existing grant reading `ALL` would silently widen.
+
+## 13.2 How the 2026 failure mode is removed rather than re-risked
+
+§0.2 records why tenancy was taken out. The failure was an **ordering bug**: tenant identity
+lived in an ambient variable that had to be *set* before it was *read*, and on JWT requests
+it was read while still unset, so the manager failed open.
+
+The new design does not try to set that variable more reliably. It removes the precondition:
+
+> **Read-path organization identity is derived from the resolved principal, not from an
+> ambient variable.** `AccessContext` gains `organization_id`, resolved inside
+> `resolve_context(user)` — which is already called lazily, from inside view dispatch, with
+> `request.user` fully resolved by DRF. The organization is therefore a function of the same
+> object the permission decision is already being made from, and there is no ordering left
+> to lose.
+
+Five consequences, each load-bearing:
+
+1. **No tenant middleware.** `CurrentOrgMiddleware` and anything shaped like it is banned.
+   The same ban covers suspension and feature gating: both are DRF permission classes, because
+   middleware runs before DRF resolves the token and would see `AnonymousUser`.
+2. **`organization_id is None` means `.none()`**, never "everything". `DENY_ALL` carries
+   `None`, so the fail-closed path is the default object, not a branch someone must remember.
+3. **The default manager raises**, rather than returning an empty queryset, when no
+   organization is bound outside a request. A silently empty result in a Celery task is
+   indistinguishable from "no work to do" — failing silently is the mirror image of failing
+   open, and equally invisible.
+4. **Celery tasks take `organization_id` as an argument** and re-resolve it. Celery
+   serializes arguments, not context variables; a task inheriting ambient context would run
+   under whatever the previous task on that worker left behind.
+5. **The client never supplies tenant identity.** An `organization_id` in a query string,
+   body, path or header is not trusted for an organization user, and neither are related-object
+   ids naming another organization's rows.
+
+## 13.3 Coverage is mechanical, not disciplinary
+
+§3.5 already made "every API view is RBAC-mapped" a build failure rather than a review
+question. Tenancy gets the same treatment: system checks assert that every organization-owned
+model carries the column, that every `ResourceSpec` declares an organization path that
+actually resolves against the model, and that every unique constraint on an organization-owned
+model includes `organization`.
+
+That last check is the one that matters longest. Without it, converting the ~20 globally
+unique business keys is a one-time cleanup that decays the first time someone adds a model.
+
+**A caveat this project learned the hard way.** `core/access/checks.py` had been registering
+nothing since it was written: no module imported it, so `@register` never ran and
+`manage.py check` passed vacuously while two genuinely unmapped views sat behind a green
+build. Fixed by `core/apps.py`, and `tests/core/test_system_checks.py` now asserts the checks
+are registered *and* still bite. A guarantee nobody verifies is a comment.
+
+## 13.4 Identity
+
+`User.email` stays globally unique in V1: stock `ModelBackend` requires a unique
+`USERNAME_FIELD`, and per-organization email would force organization discovery on the login
+page before any user exists to derive one from. One login therefore belongs to one
+organization, resolved from `OrganizationMembership` *after* authentication.
+
+`OrganizationMembership` is nonetheless modelled as a genuine many-to-many, with a V1 clamp
+(a partial unique constraint on one active membership per user), so the identity model never
+has to be redesigned. Removing the clamp is the schema half of multi-organization support;
+the rest — an active-organization concept, a switcher, token re-issue, cache partitioning,
+file and audit attribution — is a project in its own right and should not be described as a
+constraint drop.
+
+**Consequence to document for customers:** an email address that already has an account on
+the platform cannot be invited into a second organization.
+
+## 13.5 Platform Admin
+
+A structural flag on `User`, never a `Role` — `Role` rows are runtime-editable, so a platform
+capability expressed as a role could be granted by an organization's own admin. For the same
+reason, `PLAN`, `SUBSCRIPTION` and `ORGANIZATION` are **not** added to `Resource`: anything in
+that enum appears in the permission-matrix editor.
+
+A Platform Admin holds no role in any organization and has no `organization_id`, so
+`resolve_context()` already yields no grants and every tenant queryset resolves to `.none()`.
+The "no implicit access to customer HR data" rule is therefore structural, not policy.
+Support access, when needed, is an explicit, reason-required, time-limited, audited grant
+approved by an admin *of the organization being supported*, resolving to a read-only context
+over a code-defined allowlist of configuration resources — never employee, salary, payslip or
+candidate data.
+
+## 13.6 Statutory data stays global
+
+`StatutoryRuleSet` is not tenanted. India's PF/ESI/PT/income-tax tables are facts about the
+Republic of India, not about a customer; duplicating them per organization means N copies to
+verify and defeats the purpose of four-eyes verification. The per-organization *act* of
+certification becomes an organization-owned adoption record. **Known limitation:** a customer
+requiring a genuinely different statutory regime cannot have one under this design.

@@ -1,5 +1,13 @@
 # Generic HRMS
 
+> **⚠ In transition — being taken multi-tenant.**
+> This branch (`saas/multi-tenant`) is converting the product from one-organisation-per-deployment
+> into a multi-tenant SaaS platform. The decision record is
+> [`docs/ARCHITECTURE.md` PART 13](docs/ARCHITECTURE.md); the single-organisation product is
+> preserved at tag `pre-saas-baseline`. **Sections below still describe the single-organisation
+> product and are being rewritten as each stage lands** — where this README and PART 13
+> disagree, PART 13 is the intent and this README is the current state.
+
 A complete, self-hosted HRMS for a **single organisation per deployment** —
 recruitment, onboarding, attendance (biometric), leave, payroll with Indian
 statutory computation, assets, offboarding, dashboards and a full audit trail.
@@ -110,7 +118,12 @@ before a payroll run using them can be approved.
 
 These are load-bearing. Changing them requires updating `docs/ARCHITECTURE.md` first.
 
-1. **Single organization.** There is no tenant/organization scoping anywhere. Do not add an `organization` FK.
+1. **Multi-tenant, failing closed.** *(Superseded the former "single organization; do not add
+   an `organization` FK" rule on 2026-09-08 — see [`ARCHITECTURE.md` PART 13](docs/ARCHITECTURE.md).)*
+   Every organization-owned table carries `organization_id`. Tenant identity is derived from the
+   **authenticated principal**, never from middleware, a request parameter, or anything the client
+   sends. Unbound organization context yields no rows and no writes — never unfiltered access.
+   Tenancy is an outer predicate, **not** a new `Scope` value.
 2. **Authorization returns a scope, not a boolean.** `Scope.NONE(0) < SELF(1) < TEAM(2) < DEPARTMENT(3) < ALL(4)`.
 3. **`scope_queryset()` is the only sanctioned path to a scoped queryset.** Never hand-roll a scope filter.
 4. **Business logic lives in `services.py`** — never in views or serializers.
