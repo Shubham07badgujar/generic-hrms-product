@@ -21,20 +21,69 @@ EXEMPT_VIEW_NAMES = {
     "TokenRefreshView",         # refresh: authenticated by the cookie itself
     "LogoutView",
     "AdminBootstrapView",       # token + IP gated; creates the first Admin
-    "CredentialHandoffView",    # one-time token in the URL is the credential
     "HealthCheckView",
     "SpectacularAPIView",
     "SpectacularSwaggerView",
     "SpectacularRedocView",
+    # DRF generates one APIRootView per DefaultRouter, listing every route it
+    # owns. It declares no resource, so RBACPermission denies it for every
+    # principal and an anonymous caller gets 401 -- which is the right outcome
+    # for a route index. Listed here because it is third-party code we cannot
+    # annotate, not because it is reachable.
+    "APIRootView",
 }
+
+
+def check_one_view(view_class, path: str) -> list[Error]:
+    """
+    Verdict for a single API view.
+
+    Split out of the resolver walk below so it can be exercised directly. A
+    check that is registered but has quietly become a no-op still reports
+    success, so `tests/core/test_system_checks.py` calls this with a
+    deliberately unmapped view and asserts it complains.
+    """
+    from .registry import RESOURCE_SPECS
+
+    name = view_class.__name__
+
+    if getattr(view_class, "access_exempt", False):
+        return []
+
+    resource = getattr(view_class, "access_resource", None)
+    if not resource:
+        return [
+            Error(
+                f"API view '{name}' (/{path}) does not declare "
+                f"`access_resource`.",
+                hint=(
+                    "Set `access_resource = Resource.X` on the view, or "
+                    "`access_exempt = True` if it is genuinely public. "
+                    "Unmapped views are denied at runtime."
+                ),
+                id="access.E001",
+                obj=view_class,
+            )
+        ]
+
+    if str(resource) not in RESOURCE_SPECS:
+        return [
+            Error(
+                f"API view '{name}' declares unknown resource "
+                f"'{resource}'.",
+                hint="Add a ResourceSpec in core/access/registry.py.",
+                id="access.E002",
+                obj=view_class,
+            )
+        ]
+
+    return []
 
 
 @register(Tags.urls)
 def check_all_api_views_are_mapped(app_configs, **kwargs):
     """Every DRF view under /api/ must declare access_resource or opt out."""
     from django.urls import get_resolver
-
-    from .registry import RESOURCE_SPECS
 
     errors: list[Error] = []
     seen: set[str] = set()
@@ -64,34 +113,7 @@ def check_all_api_views_are_mapped(app_configs, **kwargs):
                 continue
             seen.add(name)
 
-            if getattr(view_class, "access_exempt", False):
-                continue
-
-            resource = getattr(view_class, "access_resource", None)
-            if not resource:
-                errors.append(
-                    Error(
-                        f"API view '{name}' (/{path}) does not declare "
-                        f"`access_resource`.",
-                        hint=(
-                            "Set `access_resource = Resource.X` on the view, or "
-                            "`access_exempt = True` if it is genuinely public. "
-                            "Unmapped views are denied at runtime."
-                        ),
-                        id="access.E001",
-                        obj=view_class,
-                    )
-                )
-            elif str(resource) not in RESOURCE_SPECS:
-                errors.append(
-                    Error(
-                        f"API view '{name}' declares unknown resource "
-                        f"'{resource}'.",
-                        hint="Add a ResourceSpec in core/access/registry.py.",
-                        id="access.E002",
-                        obj=view_class,
-                    )
-                )
+            errors.extend(check_one_view(view_class, path))
 
     walk(get_resolver().url_patterns)
     return errors

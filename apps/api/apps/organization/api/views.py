@@ -121,6 +121,12 @@ class OrgBrandingView(APIView):
     the logo. Everything else on OrgSettings stays behind ORG_SETTINGS/VIEW.
     """
 
+    #: Genuinely public, and therefore declared rather than left unmapped.
+    #: `manage.py check` fails on any API view that declares neither
+    #: `access_resource` nor this flag; without it this view was an unmapped
+    #: hole that the check would have caught, had the check been running.
+    access_exempt = True
+
     authentication_classes: list = []
     permission_classes: list = []
 
