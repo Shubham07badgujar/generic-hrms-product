@@ -38,6 +38,7 @@ from django.db.models import Q, QuerySet
 from django.http import Http404
 
 from core.access import Action, Resource, Scope, can, get_context
+from core.access.engine import apply_org_predicate
 
 
 def pipeline_scope_filter(
@@ -73,13 +74,20 @@ def pipeline_scope_filter(
     "hers". Widening someone's authority must never subtract their own work.
     """
     scope = can(user, resource, action)
+    ctx = get_context(user)
+
+    # The same outermost filter `scope_queryset()` applies, through the same
+    # helper. This function exists because the recruitment pipeline scopes by
+    # department and assignment rather than by an owning employee, but that is
+    # a difference in how much of an ORGANIZATION a recruiter sees -- not in
+    # which organization. Two scopers with two copies of the tenant predicate
+    # is one copy too many, and it is the copy that would be forgotten.
+    qs = apply_org_predicate(qs, ctx)
 
     if not scope:
         return qs.none()
     if scope == Scope.ALL:
         return qs
-
-    ctx = get_context(user)
 
     paths = ()
     if assigned_path is not None and ctx.employee_id is not None:

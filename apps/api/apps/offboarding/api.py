@@ -597,14 +597,20 @@ class ExitClearanceItemViewSet(ServiceCreatedOnly, ScopedModelViewSet):
         """
         from core.access import can, get_context
         from core.access.catalog import Scope
+        from core.access.engine import apply_org_predicate
 
         scope = can(self.request.user, Resource.OFFBOARDING, Action.VIEW)
-        if not scope:
-            return self.queryset.none()
-        if scope == Scope.ALL:
-            return self.queryset
-
         context = get_context(self.request.user)
+        # Hand-rolled scoper: routed through the shared tenant predicate so
+        # it cannot drift from scope_queryset(). Without this the branch
+        # below returns the whole TABLE at Scope.ALL, not the whole
+        # organization.
+        queryset = apply_org_predicate(self.queryset, context)
+
+        if not scope:
+            return queryset.none()
+        if scope == Scope.ALL:
+            return queryset
         if context.employee_id is None:
             return self.queryset.none()
 

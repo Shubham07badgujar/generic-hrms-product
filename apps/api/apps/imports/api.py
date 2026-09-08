@@ -176,7 +176,14 @@ class CandidateImportViewSet(ScopedModelViewSet):
         phone and address in it. A peer holding the same grant has no business
         reading it, so anything short of organisation-wide sees only its own.
         """
-        qs = self.queryset
+        from core.access import get_context
+        from core.access.engine import apply_org_predicate
+
+        # Hand-rolled scoper: routed through the shared tenant predicate so it
+        # cannot drift from scope_queryset(). A staging batch is a raw dump of
+        # somebody's spreadsheet, which makes an unscoped read here worse than
+        # most.
+        qs = apply_org_predicate(self.queryset, get_context(self.request.user))
         scope = can(self.request.user, Resource.CANDIDATE, Action.IMPORT)
         if not scope:
             return qs.none()

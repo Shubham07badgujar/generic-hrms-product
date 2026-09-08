@@ -16,6 +16,17 @@ from django.core.checks import Error, Tags, register
 #: Views legitimately reachable without a permission mapping — login, token
 #: refresh, the one-time credential handoff, health checks. Every entry needs a
 #: comment justifying it.
+#: The apps whose models this project owns. Third-party tables (Django's own,
+#: celery-beat, token blacklist) are not ours to tenant.
+FIRST_PARTY_APP_LABELS = frozenset(
+    {
+        "accounts", "organization", "employees", "assets", "itaccounts",
+        "workflows", "recruitment", "onboarding", "offboarding", "attendance",
+        "leave", "payroll", "policies", "notifications", "reporting",
+        "imports", "audit", "statutory",
+    }
+)
+
 EXEMPT_VIEW_NAMES = {
     "TokenObtainView",          # login: no principal exists yet
     "TokenRefreshView",         # refresh: authenticated by the cookie itself
@@ -78,6 +89,66 @@ def check_one_view(view_class, path: str) -> list[Error]:
         ]
 
     return []
+
+
+@register()
+def check_tenancy_coverage(app_configs, **kwargs):
+    """
+    Every first-party model is tenant-scoped, deliberately global, or on the
+    named backlog. Nothing may be none of the three.
+
+    This is what stops the conversion from stalling silently. A model that is
+    not yet scoped is UNPROTECTED, and the only acceptable version of that is
+    one somebody wrote down: `PENDING_TENANCY` is the backlog, it shrinks as
+    apps convert, and a NEW model cannot join it by accident -- it fails the
+    build until its author decides which of the three it is.
+    """
+    from django.apps import apps as django_apps
+
+    from .tenancy import PENDING_TENANCY, TENANT_EXEMPT, is_tenanted
+
+    errors: list[Error] = []
+    first_party = {
+        m
+        for m in django_apps.get_models()
+        if m._meta.app_label in FIRST_PARTY_APP_LABELS
+    }
+    real_labels = {m._meta.label for m in first_party}
+
+    for model in sorted(first_party, key=lambda m: m._meta.label):
+        label = model._meta.label
+        if is_tenanted(model) or label in TENANT_EXEMPT or label in PENDING_TENANCY:
+            continue
+        errors.append(
+            Error(
+                f"Model '{label}' is neither tenant-scoped nor declared global.",
+                hint=(
+                    "Inherit OrgOwnedModel so it carries an organization, or "
+                    "add it to TENANT_EXEMPT in core/access/tenancy.py with a "
+                    "reason. A model that is silently unscoped is a "
+                    "cross-tenant leak waiting for its first query."
+                ),
+                id="access.E005",
+                obj=model,
+            )
+        )
+
+    # A backlog entry naming a model that no longer exists hides the fact that
+    # the real one is unprotected -- and leaves a dead name in a security list,
+    # which is how `CredentialHandoff` sat in the view allow-list for a view
+    # that had been deleted.
+    for label in sorted((PENDING_TENANCY | set(TENANT_EXEMPT)) - real_labels):
+        errors.append(
+            Error(
+                f"'{label}' is named in core/access/tenancy.py but no such "
+                f"model exists.",
+                hint="Remove the stale entry.",
+                id="access.E006",
+                obj="core.access.tenancy",
+            )
+        )
+
+    return errors
 
 
 @register(Tags.urls)

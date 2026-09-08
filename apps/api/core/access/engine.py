@@ -78,6 +78,46 @@ def require(user, resource: str, action: str = Action.VIEW) -> Scope:
     return scope
 
 
+def apply_org_predicate(qs: QuerySet, ctx) -> QuerySet:
+    """
+    Narrow `qs` to the caller's organization. The outermost filter there is.
+
+    Applied BEFORE any scope reasoning, including before `Scope.ALL` returns
+    early -- because `Scope.ALL` means "the whole organization", and until this
+    runs it means "the whole database". That early return is the single line
+    the 2026 cross-tenant incident would have travelled through.
+
+    Keyed on the model rather than on a per-resource path: the column is called
+    `organization` on every tenant-owned table, by construction, so there is no
+    path to declare and therefore none to typo into an open filter.
+
+    THREE OUTCOMES, and the middle one is temporary:
+
+      * deliberately global (see TENANT_EXEMPT) -- unfiltered, by decision;
+      * not yet converted -- unfiltered, by omission. Named in
+        PENDING_TENANCY and reported by `manage.py check`, so it is a visible
+        backlog rather than a silent hole. This branch dies with the last
+        entry;
+      * tenant-owned -- filtered, or `.none()` when no organization is bound.
+        Never unfiltered.
+    """
+    from .tenancy import TENANT_EXEMPT, is_tenanted
+
+    model = qs.model
+    if model._meta.label in TENANT_EXEMPT or not is_tenanted(model):
+        return qs
+
+    if ctx.organization_id is None:
+        logger.error(
+            "access.no_org_context model=%s user=%s",
+            model._meta.label,
+            ctx.user_id,
+        )
+        return qs.none()
+
+    return qs.filter(organization_id=ctx.organization_id)
+
+
 def scope_queryset(
     qs: QuerySet,
     user,
@@ -100,6 +140,12 @@ def scope_queryset(
     misread, so it stays keyword-only and rare. Everything else omits it.
     """
     ctx = get_context(user)
+
+    # Tenancy first, and unconditionally. Everything below reasons about how
+    # much of an ORGANIZATION the caller may see; this is what makes that the
+    # right question.
+    qs = apply_org_predicate(qs, ctx)
+
     if scope is None:
         scope = ctx.scope_for(resource, action)
 

@@ -398,20 +398,26 @@ class OnboardingItemViewSet(ServiceCreatedOnly, ScopedModelViewSet):
 
         from core.access import can, get_context
         from core.access.catalog import Scope
+        from core.access.engine import apply_org_predicate
 
         scope = can(self.request.user, Resource.ONBOARDING, Action.VIEW)
-        if not scope:
-            return self.queryset.none()
-        if scope == Scope.ALL:
-            return self.queryset
-
         context = get_context(self.request.user)
+        # Hand-rolled scoper: routed through the shared tenant predicate so
+        # it cannot drift from scope_queryset(). Without this the branch
+        # below returns the whole TABLE at Scope.ALL, not the whole
+        # organization.
+        queryset = apply_org_predicate(self.queryset, context)
+
+        if not scope:
+            return queryset.none()
+        if scope == Scope.ALL:
+            return queryset
         if context.employee_id is None:
             return self.queryset.none()
 
         if scope == Scope.DEPARTMENT:
             if not context.department_ids:
-                return self.queryset.none()
+                return queryset.none()
             return self.queryset.filter(
                 onboarding__employee__department_id__in=context.department_ids
             )
