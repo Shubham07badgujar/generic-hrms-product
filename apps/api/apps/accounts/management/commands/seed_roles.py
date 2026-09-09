@@ -11,7 +11,7 @@ from __future__ import annotations
 import csv
 from collections import defaultdict
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from apps.accounts.permission_matrix import ROLE_SPECS, cell_count
 from apps.accounts.services.roles import matrix_report, seed_roles
@@ -42,12 +42,46 @@ class Command(BaseCommand):
             help="Keep permission rows no longer present in the matrix.",
         )
 
+        parser.add_argument(
+            "--organization",
+            help=(
+                "Slug of the organization to seed. Optional while a deployment "
+                "has exactly one; required once it has several, because there "
+                "is no sensible default."
+            ),
+        )
+    def _organization(self, slug):
+        from apps.organization.models import Organization
+
+        if slug:
+            try:
+                return Organization.objects.get(slug=slug)
+            except Organization.DoesNotExist as exc:
+                raise CommandError(f"No organization with slug {slug!r}.") from exc
+
+        existing = list(Organization.objects.all()[:2])
+        if len(existing) == 1:
+            return existing[0]
+        if not existing:
+            raise CommandError(
+                "No organization exists. Run bootstrap_admin first -- it "
+                "creates the founding Admin and the organization they "
+                "administer."
+            )
+        raise CommandError(
+            "Several organizations exist; pass --organization <slug> to say "
+            "which one to seed. Refusing to guess."
+        )
+
     def handle(self, *args, **options):
         if options["dump"]:
             self._dump_spec()
             return
 
-        result = seed_roles(prune=not options["no_prune"])
+        organization = self._organization(options.get("organization"))
+        result = seed_roles(
+            organization=organization, prune=not options["no_prune"]
+        )
         self.stdout.write(self.style.SUCCESS(f"Seeded. {result}"))
 
         if options["csv"]:

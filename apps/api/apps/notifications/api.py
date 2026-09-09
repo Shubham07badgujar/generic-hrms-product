@@ -25,6 +25,7 @@ from rest_framework.mixins import ListModelMixin, RetrieveModelMixin
 from rest_framework.routers import DefaultRouter
 
 from core.access import Action, Resource
+from core.access.drf import ScopedQuerysetMixin
 
 from . import services
 from .models import Notification, NotificationKind, NotificationPreference
@@ -50,7 +51,20 @@ class NotificationPreferenceSerializer(serializers.ModelSerializer):
         return NotificationKind(obj.kind).label
 
 
-class NotificationViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
+class NotificationViewSet(
+    ScopedQuerysetMixin, ListModelMixin, RetrieveModelMixin, GenericViewSet
+):
+    """
+    The only viewset that had no scoping mixin at all.
+
+    Its `get_queryset` filters to the recipient, and a recipient belongs to one
+    organization, so the rows were never actually cross-tenant. But that safety
+    is a consequence of another model's constraint rather than anything stated
+    here, and it would evaporate quietly the day a user can belong to two
+    organizations. The mixin applies the tenant predicate in `filter_queryset`,
+    which says it directly.
+    """
+
     access_resource = Resource.NOTIFICATION
     serializer_class = NotificationSerializer
     parser_classes = [JSONParser]

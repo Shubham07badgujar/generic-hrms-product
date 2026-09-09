@@ -39,9 +39,15 @@ class SeedResult:
 
 
 @transaction.atomic
-def seed_roles(*, prune: bool = True) -> SeedResult:
+def seed_roles(*, organization, prune: bool = True) -> SeedResult:
     """
-    Create or update the 18 canonical roles and their permission matrix.
+    Create or update one organization's 18 canonical roles and their matrix.
+
+    The organization is REQUIRED, and the lookup below is scoped to it. Without
+    that scoping `update_or_create(code=...)` matches on a code that is now
+    unique only per organization, so seeding a second company would find the
+    FIRST company's role, rewrite it, and leave the second with no roles at all
+    -- silently, since update_or_create reports success either way.
 
     `prune=False` leaves permission rows that are no longer in the matrix in
     place. Use it when narrowing the matrix and you want to inspect what would
@@ -51,6 +57,7 @@ def seed_roles(*, prune: bool = True) -> SeedResult:
 
     for spec in ROLE_SPECS:
         role, created = Role.objects.update_or_create(
+            organization=organization,
             code=spec.code,
             defaults={
                 "name": spec.name,

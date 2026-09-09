@@ -153,10 +153,11 @@ def _seeded_roles(django_db_setup, django_db_blocker, _platform_seed):
     while its own writes roll back as usual.
     """
     from apps.accounts.services.roles import seed_roles
+    from apps.organization.models import Organization
     from core.middleware import acting_as
 
     with django_db_blocker.unblock(), acting_as(None, organization=SESSION_ORG_ID):
-        seed_roles()
+        seed_roles(organization=Organization.objects.get(pk=SESSION_ORG_ID))
 
 
 @pytest.fixture

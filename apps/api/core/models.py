@@ -303,6 +303,19 @@ class OrgOwnedManager(models.Manager.from_queryset(OrgOwnedQuerySet)):
     ensures writes carry an organization.
     """
 
+    def all_orgs(self):
+        """
+        Every row, every organization. Explicit and greppable.
+
+        Defined here as well as on `TenantManager` so the escape hatch has ONE
+        name across the codebase. Without it, code written against the eventual
+        filtering manager -- platform administration, data migrations, and the
+        isolation tests, which must start from an unfiltered queryset to prove
+        the filtering works -- would break on whichever models had not been
+        flipped yet, for no reason a reader could see.
+        """
+        return self.get_queryset()
+
 
 class OrgOwnedModel(OrgStampingMixin, BaseModel):
     """

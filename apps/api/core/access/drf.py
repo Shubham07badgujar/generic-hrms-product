@@ -71,6 +71,29 @@ class ScopedQuerysetMixin:
             action=self.scoping_action(),
         )
 
+    def filter_queryset(self, queryset):
+        """
+        Apply the tenant predicate where NO override can step around it.
+
+        `get_queryset()` is the obvious hook and the wrong one to rely on: nine
+        viewsets override it, and several return a queryset built from scratch
+        without calling `super()` -- reasonably, because their rows hang off a
+        period or a job rather than a person, so the person-path scoper does
+        not apply to them. Every one of those was returning rows from every
+        organization.
+
+        DRF routes both `list()` and `get_object()` through `filter_queryset()`,
+        so putting the predicate here covers the overrides too. It is applied
+        twice on the ordinary path -- once in `get_queryset()`, once here --
+        which costs an idempotent `WHERE organization_id = %s` and removes a
+        whole category of mistake.
+        """
+        from .context import get_context
+        from .engine import apply_org_predicate
+
+        queryset = apply_org_predicate(queryset, get_context(self.request))
+        return super().filter_queryset(queryset)
+
     def scoped(self, qs, *, resource=None, action=None):
         """Scope an ad-hoc queryset inside a custom `@action`."""
         return scope_queryset(
