@@ -142,7 +142,30 @@ class AuditLog(models.Model):
     def save(self, *args, **kwargs):
         if self.pk is not None:
             raise ValueError("AuditLog is append-only; existing rows cannot be modified.")
+        if self.organization_id is None:
+            self.organization_id = self._current_organization_id()
         super().save(*args, **kwargs)
+
+    @staticmethod
+    def _current_organization_id():
+        """
+        The organization this event belongs to, or None for a platform event.
+
+        Stamped HERE rather than at each writer for one reason: fifteen call
+        sites construct `AuditLog` directly, in addition to the signal path, and
+        a rule spread over sixteen places is a rule the sixteenth breaks. It is
+        the same argument as `OrgStampingMixin`, which stamps every other
+        tenant-owned table in `save()` instead of asking its callers to.
+
+        None is a real answer, not a failure: a failed login for an unknown
+        address, the platform bootstrap, and the creation of an organization
+        before its row exists all genuinely have no organization. Those rows are
+        platform-owned, and `apply_org_predicate` shows them to nobody, because
+        `= X` never matches NULL.
+        """
+        from core.middleware import get_current_org_id
+
+        return get_current_org_id()
 
     def delete(self, *args, **kwargs):
         raise ValueError("AuditLog is append-only; rows cannot be deleted.")

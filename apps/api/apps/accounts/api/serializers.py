@@ -165,9 +165,17 @@ def _is_admin(user) -> bool:
 
 def _audit_login(user, *, success: bool) -> None:
     from apps.audit.models import AuditAction, AuditLog
+    from core.access.context import _active_membership
     from core.middleware import get_request_id
 
+    # The one audit event written BEFORE there is an access context to derive
+    # an organization from -- authentication is what produces the context. So
+    # it is resolved here, from the membership, or the organization's own audit
+    # trail would silently lose every sign-in and failed sign-in against it.
+    membership = _active_membership(user)
+
     AuditLog.objects.create(
+        organization=membership.organization if membership else None,
         actor=user if success else None,
         actor_email=user.email,
         action=AuditAction.LOGIN if success else AuditAction.LOGIN_FAILED,

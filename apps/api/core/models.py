@@ -352,6 +352,18 @@ class OrgOwnedModel(OrgStampingMixin, BaseModel):
         super().save(*args, **kwargs)
 
 
+class OrgOwnedTimestampedQuerySet(OrgStampingQuerySetMixin, models.QuerySet):
+    """Organization stamping on bulk writes, without soft-delete semantics."""
+
+
+class OrgOwnedTimestampedManager(
+    models.Manager.from_queryset(OrgOwnedTimestampedQuerySet)
+):
+    def all_orgs(self):
+        """Every row, every organization. See `OrgOwnedManager.all_orgs`."""
+        return self.get_queryset()
+
+
 class OrgOwnedTimestampedModel(OrgStampingMixin, TimestampedModel):
     """
     `OrgOwnedModel` for the append-only, high-volume tables that deliberately
@@ -370,9 +382,11 @@ class OrgOwnedTimestampedModel(OrgStampingMixin, TimestampedModel):
     #: Stamps the organization on bulk writes. These two tables are exactly
     #: the ones written in bulk -- punches arrive from a device sync, import
     #: rows from a spreadsheet -- so `save()` alone would never run.
-    objects = models.Manager.from_queryset(
-        type("_OrgStampingQuerySet", (OrgStampingQuerySetMixin, models.QuerySet), {})
-    )()
+    #:
+    #: Carries `all_orgs()` for the same reason `OrgOwnedManager` does: the
+    #: escape hatch has ONE name across the codebase, so code written against
+    #: it does not break on whichever models happen to use a different base.
+    objects = OrgOwnedTimestampedManager()
 
     class Meta:
         abstract = True

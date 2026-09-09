@@ -34,10 +34,28 @@ TENANT_EXEMPT: dict[str, str] = {
         "not about a customer. Duplicating them per organization would mean N "
         "copies to verify and would defeat four-eyes verification."
     ),
+}
+
+#: Tenant-owned, but the column is NULLABLE -- and NULL means "platform-owned",
+#: never "everyone's".
+#:
+#: `audit.AuditLog` was in TENANT_EXEMPT, on the reasoning that pre-auth events,
+#: platform actions and organization creation itself genuinely have no
+#: organization, so it needed "an explicit predicate, never the shared one".
+#: The explicit predicate was never written. The route walker found the result:
+#: one organization's admin reading another's audit trail through
+#: `/api/v1/audit/<id>/`, on a resource the brief names by name.
+#:
+#: The shared predicate turns out to be exactly the explicit one that was
+#: wanted. `WHERE organization_id = X` matches no NULL row, so platform events
+#: stay invisible to organization users without a special case -- and the
+#: dangerous shape, `= X OR IS NULL`, is one nobody has to remember not to
+#: write. This set exists only to record that the nullability is deliberate.
+NULLABLE_TENANT: dict[str, str] = {
     "audit.AuditLog": (
-        "Carries a NULLABLE organization instead: pre-authentication events, "
-        "platform actions and organization creation itself genuinely have "
-        "none. Scoped by an explicit predicate, never by the shared one."
+        "Pre-authentication events, platform actions and organization creation "
+        "itself have no organization. They are platform-owned, and no "
+        "organization reads them."
     ),
 }
 

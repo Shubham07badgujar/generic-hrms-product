@@ -22,6 +22,8 @@ import pytest
 from core.access.catalog import DepartmentKind, Layer
 from core.middleware import acting_as
 
+from ._extra import build_extra_rows
+
 PASSWORD = "test-password-12345"
 
 
@@ -118,6 +120,21 @@ def _build(slug: str, name: str) -> World:
         )
         worker, worker_employee = principal("employee", "worker", code="EMP002")
 
+        # No user, no role: a record for the offboarding rows to hang off, so
+        # the employee the rest of the fixture uses is not simultaneously
+        # resigning. `Employee.user` is nullable precisely for people who never
+        # get a login.
+        spare_employee = Employee.objects.create(
+            employee_code="EMP003",
+            first_name="Spare",
+            last_name=name.split()[0],
+            department=department,
+            designation=designation,
+            location=location,
+            level=level,
+            date_of_joining=dt.date(2024, 1, 1),
+        )
+
         # A row per resource the brief names, so the matrix has something to
         # ask for on both sides.
         leave_type = LeaveType.objects.create(name="Casual Leave", code="CL")
@@ -154,6 +171,29 @@ def _build(slug: str, name: str) -> World:
                 consent_given=True,
             ),
         }
+
+        # Everything else the product exposes. Kept in its own module because
+        # it is bulk, and because the walker's coverage should grow by adding
+        # to a list rather than by editing the fixture's shape.
+        rows.update(
+            build_extra_rows(
+                organization=organization,
+                slug=slug,
+                roles=roles,
+                department=department,
+                location=location,
+                designation=designation,
+                level=level,
+                hr=hr,
+                hr_employee=hr_employee,
+                worker_employee=worker_employee,
+                spare_employee=spare_employee,
+                leave_type=leave_type,
+                asset=rows["asset"],
+                candidate=rows["candidate"],
+                payroll_run=rows["payroll_run"],
+            )
+        )
 
     return World(
         organization=organization,
