@@ -284,7 +284,7 @@ def current_org_settings():
 
 class Location(OrgOwnedModel):
     name = models.CharField(max_length=120)
-    code = models.CharField(max_length=20, unique=True)
+    code = models.CharField(max_length=20, db_index=True)
     address = models.TextField(blank=True)
     city = models.CharField(max_length=80, blank=True)
     #: Drives Professional Tax jurisdiction and the holiday calendar.
@@ -294,6 +294,11 @@ class Location(OrgOwnedModel):
     is_head_office = models.BooleanField(default=False)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "code"], name="uniq_location_org_code"
+            ),
+        ]
         ordering = ["name"]
 
     def __str__(self) -> str:
@@ -312,7 +317,7 @@ class Department(OrgOwnedModel):
     """
 
     name = models.CharField(max_length=120)
-    code = models.CharField(max_length=20, unique=True)
+    code = models.CharField(max_length=20, db_index=True)
     kind = models.CharField(
         max_length=20, choices=DepartmentKind.choices, default=DepartmentKind.OTHER, db_index=True
     )
@@ -330,6 +335,11 @@ class Department(OrgOwnedModel):
     )
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "code"], name="uniq_department_org_code"
+            ),
+        ]
         ordering = ["name"]
         indexes = [models.Index(fields=["kind", "is_active"])]
 
@@ -392,7 +402,7 @@ class Designation(OrgOwnedModel):
         ordering = ["title"]
         constraints = [
             models.UniqueConstraint(
-                fields=["title", "department"], name="uniq_designation_title_department"
+                fields=["organization", "title", "department"], name="uniq_designation_title_department"
             )
         ]
 
@@ -409,13 +419,18 @@ class EmployeeLevel(OrgOwnedModel):
     """
 
     name = models.CharField(max_length=80)
-    code = models.CharField(max_length=20, unique=True)
+    code = models.CharField(max_length=20, db_index=True)
     layer = models.PositiveSmallIntegerField(choices=Layer.choices, db_index=True)
     rank = models.PositiveSmallIntegerField(
         default=0, help_text="Ordering within a layer. Higher = more senior."
     )
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "code"], name="uniq_employeelevel_org_code"
+            ),
+        ]
         ordering = ["layer", "-rank", "name"]
 
     def __str__(self) -> str:
@@ -424,7 +439,7 @@ class EmployeeLevel(OrgOwnedModel):
 
 class Team(OrgOwnedModel):
     name = models.CharField(max_length=120)
-    code = models.CharField(max_length=20, unique=True)
+    code = models.CharField(max_length=20, db_index=True)
     department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name="teams")
     parent_team = models.ForeignKey(
         "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="children"
@@ -438,6 +453,11 @@ class Team(OrgOwnedModel):
     )
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "code"], name="uniq_team_org_code"
+            ),
+        ]
         ordering = ["name"]
 
     def __str__(self) -> str:

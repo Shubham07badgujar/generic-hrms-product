@@ -49,6 +49,8 @@ from .models import (
 )
 
 
+from core.api.serializers import OrgScopedUniqueMixin
+
 def _call(fn, **kwargs):
     """Run a service, translating its Django exceptions into DRF responses."""
     try:
@@ -65,7 +67,7 @@ def _call(fn, **kwargs):
 # ===========================================================================
 
 
-class SalaryComponentSerializer(serializers.ModelSerializer):
+class SalaryComponentSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     class Meta:
         model = SalaryComponent
         fields = [
@@ -177,7 +179,7 @@ class PayslipDetailSerializer(PayslipSummarySerializer):
         ]
 
 
-class PayrollRunSerializer(serializers.ModelSerializer):
+class PayrollRunSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     location_code = serializers.CharField(source="location.code", read_only=True, default=None)
     payslip_count = serializers.IntegerField(source="payslips.count", read_only=True)
     financial_year = serializers.CharField(read_only=True)

@@ -15,7 +15,9 @@ from apps.organization.models import (
 )
 
 
-class DepartmentSerializer(serializers.ModelSerializer):
+from core.api.serializers import OrgScopedUniqueMixin
+
+class DepartmentSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     head_employee_name = serializers.CharField(
         source="head_employee.full_name", read_only=True, default=None
     )
@@ -28,7 +30,7 @@ class DepartmentSerializer(serializers.ModelSerializer):
         ]
 
 
-class DesignationSerializer(serializers.ModelSerializer):
+class DesignationSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     department_name = serializers.CharField(
         source="department.name", read_only=True, default=None
     )
@@ -48,25 +50,25 @@ class DesignationSerializer(serializers.ModelSerializer):
         fields = ["id", "title", "department", "department_name", "description"]
 
 
-class LocationSerializer(serializers.ModelSerializer):
+class LocationSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     class Meta:
         model = Location
         fields = ["id", "name", "code", "city", "state", "pincode", "is_head_office"]
 
 
-class EmployeeLevelSerializer(serializers.ModelSerializer):
+class EmployeeLevelSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     class Meta:
         model = EmployeeLevel
         fields = ["id", "name", "code", "layer", "rank"]
 
 
-class TeamSerializer(serializers.ModelSerializer):
+class TeamSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     class Meta:
         model = Team
         fields = ["id", "name", "code", "department", "parent_team", "head_employee"]
 
 
-class RoleSerializer(serializers.ModelSerializer):
+class RoleSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     """
     The read shape, used everywhere a role is displayed or picked.
     `is_system` tells the Admin Panel which rows have immutable structure.
@@ -82,7 +84,7 @@ class RoleSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class RoleWriteSerializer(serializers.ModelSerializer):
+class RoleWriteSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     """
     What the Admin may AUTHOR. Deliberately absent: `is_read_only`,
     `can_manage_users`, `is_system` — the three flags that change what the

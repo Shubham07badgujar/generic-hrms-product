@@ -72,7 +72,7 @@ class SalaryComponent(OrgOwnedModel):
     an allowance can be taxable, inside CTC, and still not be a wage.
     """
 
-    code = models.SlugField(max_length=30, unique=True)
+    code = models.SlugField(max_length=30, db_index=True)
     name = models.CharField(max_length=120)
     component_type = models.CharField(max_length=30, choices=ComponentType.choices)
     calc_type = models.CharField(
@@ -92,6 +92,11 @@ class SalaryComponent(OrgOwnedModel):
     display_order = models.PositiveIntegerField(default=100)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "code"], name="uniq_salarycomponent_org_code"
+            ),
+        ]
         ordering = ["display_order", "code"]
         indexes = [models.Index(fields=["component_type"])]
 
@@ -381,7 +386,23 @@ class PayrollRun(OrgOwnedModel):
                 name="ck_payroll_run_month_range",
             ),
             models.UniqueConstraint(
-                fields=["period_year", "period_month", "location", "run_type", "sequence"],
+                fields=[
+                    "organization", "period_year", "period_month", "location",
+                    "run_type", "sequence",
+                ],
+                # `location` is nullable, and Postgres treats NULLs as
+                # DISTINCT in a unique index -- so two organisation-wide runs
+                # for the same period were already allowed, before tenancy had
+                # anything to do with it. Django 5.1's nulls_distinct closes
+                # it.
+                nulls_distinct=False,
+                # Soft-deleted runs must not reserve a period forever. This
+                # condition is what the test asserting that has always claimed
+                # to exercise; in fact the assertion only passed because NULL
+                # locations compared unequal, so a run WITH a location did
+                # block its period after deletion. Closing the NULL hole
+                # exposed the missing half.
+                condition=models.Q(is_active=True),
                 name="uniq_payroll_run_per_period",
             ),
         ]

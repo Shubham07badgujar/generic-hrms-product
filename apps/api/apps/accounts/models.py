@@ -160,8 +160,8 @@ class Role(OrgOwnedModel):
     organization can relabel; `code` is the stable machine key and is not.
     """
 
-    code = models.SlugField(max_length=50, unique=True, editable=False)
-    name = models.CharField(max_length=80, unique=True)
+    code = models.SlugField(max_length=50, db_index=True, editable=False)
+    name = models.CharField(max_length=80, db_index=True)
     description = models.CharField(max_length=255, blank=True)
 
     layer = models.PositiveSmallIntegerField(choices=Layer.choices, db_index=True)
@@ -215,6 +215,12 @@ class Role(OrgOwnedModel):
     class Meta:
         ordering = ["layer", "name"]
         constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "name"], name="uniq_role_org_name"
+            ),
+            models.UniqueConstraint(
+                fields=["organization", "code"], name="uniq_role_org_code"
+            ),
             models.CheckConstraint(
                 condition=~models.Q(is_read_only=True, can_manage_users=True),
                 name="ck_role_readonly_cannot_manage_users",

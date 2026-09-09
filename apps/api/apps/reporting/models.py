@@ -39,7 +39,7 @@ class MetricSnapshot(OrgOwnedModel):
         ]
         constraints = [
             models.UniqueConstraint(
-                fields=["metric_key", "dimension", "period_start"],
+                fields=["organization", "metric_key", "dimension", "period_start"],
                 name="uniq_snapshot_per_metric_dimension_period",
             )
         ]

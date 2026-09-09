@@ -50,6 +50,8 @@ from .models import (
 )
 
 
+from core.api.serializers import OrgScopedUniqueMixin
+
 def _call(func, **kwargs):
     try:
         return func(**kwargs)
@@ -522,7 +524,7 @@ class RegularizationViewSet(ScopedModelViewSet):
 # ------------------------------------------------------- eSSL integration
 
 
-class DeviceSerializer(serializers.ModelSerializer):
+class DeviceSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     location_name = serializers.CharField(source="location.name", read_only=True)
 
     class Meta:
@@ -568,7 +570,7 @@ class SyncRunSerializer(serializers.ModelSerializer):
         ]
 
 
-class ShiftRuleSerializer(serializers.ModelSerializer):
+class ShiftRuleSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     location_name = serializers.CharField(source="location.name", read_only=True)
 
     class Meta:

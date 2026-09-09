@@ -47,13 +47,15 @@ from apps.workflows.models import (
 # --------------------------------------------------------------------------
 
 
+from core.api.serializers import OrgScopedUniqueMixin
+
 class FeedbackFieldSerializer(serializers.ModelSerializer):
     class Meta:
         model = FeedbackField
         fields = ["id", "key", "label", "kind", "choices", "order", "is_required"]
 
 
-class FeedbackFormSerializer(serializers.ModelSerializer):
+class FeedbackFormSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     fields_ = FeedbackFieldSerializer(source="fields", many=True, read_only=True)
 
     class Meta:
@@ -89,7 +91,7 @@ class WorkflowStageSerializer(serializers.ModelSerializer):
         ]
 
 
-class HiringWorkflowSerializer(serializers.ModelSerializer):
+class HiringWorkflowSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     stages = WorkflowStageSerializer(many=True, read_only=True)
 
     class Meta:
@@ -133,7 +135,7 @@ class WorkflowAuthorSerializer(serializers.Serializer):
     )
 
 
-class HiringWorkflowListSerializer(serializers.ModelSerializer):
+class HiringWorkflowListSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     stage_count = serializers.IntegerField(source="stages.count", read_only=True)
 
     class Meta:

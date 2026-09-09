@@ -82,7 +82,7 @@ class Gender(models.TextChoices):
 
 
 class Employee(OrgOwnedModel):
-    employee_code = models.CharField(max_length=20, unique=True, db_index=True)
+    employee_code = models.CharField(max_length=20, db_index=True)
 
     #: The login, when one exists. SET_NULL rather than CASCADE: deleting an
     #: account must never delete the employment record it points at.
@@ -203,6 +203,11 @@ class Employee(OrgOwnedModel):
     )
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "employee_code"], name="uniq_employee_org_code"
+            ),
+        ]
         ordering = ["employee_code"]
         indexes = [
             models.Index(fields=["department", "status"]),
@@ -407,7 +412,7 @@ class DocumentType(OrgOwnedModel):
     """
 
     name = models.CharField(max_length=120)
-    code = models.SlugField(max_length=60, unique=True)
+    code = models.SlugField(max_length=60, db_index=True)
     category = models.CharField(
         max_length=30, choices=DocumentCategory.choices, default=DocumentCategory.OTHER
     )
@@ -419,6 +424,11 @@ class DocumentType(OrgOwnedModel):
     order = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "code"], name="uniq_documenttype_org_code"
+            ),
+        ]
         ordering = ["category", "order", "name"]
 
     def __str__(self) -> str:

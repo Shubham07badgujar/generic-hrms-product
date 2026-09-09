@@ -38,7 +38,9 @@ from apps.onboarding.models import (
 # ===========================================================================
 
 
-class DocumentTypeSerializer(serializers.ModelSerializer):
+from core.api.serializers import OrgScopedUniqueMixin
+
+class DocumentTypeSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     class Meta:
         model = DocumentType
         fields = [
@@ -316,7 +318,7 @@ class OnboardingWaiveSerializer(serializers.Serializer):
 # ===========================================================================
 
 
-class LetterTemplateSerializer(serializers.ModelSerializer):
+class LetterTemplateSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     class Meta:
         model = LetterTemplate
         fields = ["id", "name", "letter_type", "subject", "version", "is_default"]
@@ -356,7 +358,7 @@ class LetterGenerateSerializer(serializers.Serializer):
 # ===========================================================================
 
 
-class CompanyEmailAccountSerializer(serializers.ModelSerializer):
+class CompanyEmailAccountSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     """
     Metadata only.
 
@@ -397,13 +399,13 @@ class AccountProvisionSerializer(serializers.Serializer):
 # ===========================================================================
 
 
-class AssetCategorySerializer(serializers.ModelSerializer):
+class AssetCategorySerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     class Meta:
         model = AssetCategory
         fields = ["id", "name", "code", "description", "requires_serial", "is_returnable"]
 
 
-class AssetSerializer(serializers.ModelSerializer):
+class AssetSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     #: Optional on purpose. The register form asks HR for a name, a tag and
     #: little else — an omitted category lands in the "General" bucket rather
     #: than forcing a taxonomy on people who never asked for one.

@@ -166,6 +166,105 @@ def check_tenancy_coverage(app_configs, **kwargs):
     return errors
 
 
+@register()
+def check_unique_constraints_are_organization_scoped(app_configs, **kwargs):
+    """
+    On a tenant-owned table, nothing is unique platform-wide by accident.
+
+    Two companies must both be able to have an EMP001, a department coded HR,
+    and a leave type called CL. A uniqueness rule that spans organizations does
+    not merely inconvenience the second customer -- it TELLS them the value is
+    taken, which leaks the existence of another tenant's data through an error
+    message.
+
+    A constraint passes if it names `organization`, or if it is unique through
+    a relation that is itself organization-owned -- `(payroll_run, employee)`
+    needs no organization column, because a PayrollRun belongs to exactly one.
+    That rule is why this is a check and not a hand-maintained list: it stays
+    true as models change.
+
+    Anything genuinely global says so in `GLOBALLY_UNIQUE`, with a reason.
+    """
+    from django.apps import apps as django_apps
+    from django.db.models import UniqueConstraint
+
+    from .tenancy import (
+        GLOBALLY_UNIQUE,
+        SCOPED_THROUGH_USER,
+        TENANT_EXEMPT,
+        is_tenanted,
+    )
+
+    errors: list[Error] = []
+
+    def scoped_by_relation(model, field_names) -> bool:
+        """True when one of the fields points at an organization-owned table."""
+        for fname in field_names:
+            try:
+                field = model._meta.get_field(fname)
+            except Exception:  # noqa: BLE001 — expression, not a field
+                continue
+            related = getattr(field, "related_model", None)
+            if related is not None and is_tenanted(related):
+                return True
+        return False
+
+    for model in sorted(django_apps.get_models(), key=lambda m: m._meta.label):
+        if model._meta.app_label not in FIRST_PARTY_APP_LABELS:
+            continue
+        if not is_tenanted(model) or model._meta.label in TENANT_EXEMPT:
+            continue
+
+        for field in model._meta.local_fields:
+            if not getattr(field, "unique", False) or field.primary_key:
+                continue
+            label = f"{model._meta.label}.{field.name}"
+            if (
+                label in GLOBALLY_UNIQUE
+                or label in SCOPED_THROUGH_USER
+                or scoped_by_relation(model, [field.name])
+            ):
+                continue
+            errors.append(
+                Error(
+                    f"'{label}' is unique across every organization.",
+                    hint=(
+                        "Drop `unique=True` and add a UniqueConstraint over "
+                        "['organization', ...], or record it in "
+                        "GLOBALLY_UNIQUE with the reason it must span tenants."
+                    ),
+                    id="access.E008",
+                    obj=model,
+                )
+            )
+
+        for constraint in model._meta.constraints:
+            if not isinstance(constraint, UniqueConstraint):
+                continue
+            fields = list(constraint.fields or ())
+            if not fields or "organization" in fields:
+                continue
+            name = f"{model._meta.label}.{constraint.name}"
+            if name in GLOBALLY_UNIQUE or name in SCOPED_THROUGH_USER:
+                continue
+            if scoped_by_relation(model, fields):
+                continue
+            errors.append(
+                Error(
+                    f"'{model._meta.label}.{constraint.name}' is unique across "
+                    f"every organization (fields={fields}).",
+                    hint=(
+                        "Add 'organization' to its fields, or record it in "
+                        "GLOBALLY_UNIQUE with a reason."
+                    ),
+                    id="access.E008",
+                    obj=model,
+                )
+            )
+
+    return errors
+
+
 @register(Tags.urls)
 def check_all_api_views_are_mapped(app_configs, **kwargs):
     """Every DRF view under /api/ must declare access_resource or opt out."""

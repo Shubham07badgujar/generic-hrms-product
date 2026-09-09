@@ -55,6 +55,44 @@ TENANT_EXEMPT: dict[str, str] = {
 PENDING_TENANCY: frozenset[str] = frozenset()
 
 
+#: Values that are deliberately unique across the WHOLE platform, with the
+#: reason. Everything else on a tenant-owned table must be scoped -- either by
+#: naming `organization` in the constraint, or by being unique through a
+#: relation that is itself organization-owned.
+GLOBALLY_UNIQUE: dict[str, str] = {
+    "recruitment.JobOpening.application_token": (
+        "A capability: the token IS the authorisation for the public "
+        "application form. Two organizations sharing one would be a "
+        "cross-tenant hole, so global uniqueness is the requirement, not a "
+        "leftover."
+    ),
+    "recruitment.InterviewSlotInvite.token": "Same: a capability in a URL.",
+    "recruitment.CandidateNotification.dedupe_key": (
+        "Derived from the application id, which is already organization-owned."
+    ),
+    "organization.OrgSettings.organization": "IS the organization link.",
+}
+
+#: Unique through `User`, which is deliberately global.
+#:
+#: These are tenant-safe ONLY because of the V1 clamp: a user holds at most one
+#: ACTIVE OrganizationMembership, so "per user" and "per user per organization"
+#: are the same statement. That is a real dependency, not a coincidence.
+#:
+#: WHEN MULTI-ORGANIZATION MEMBERSHIP ARRIVES, EVERY ENTRY HERE BECOMES WRONG:
+#: one person in two companies would get one notification preference and one
+#: permission override across both, and could hold only a single Employee
+#: record. Revisit this list at the same time as
+#: `uniq_one_active_membership`, and not later.
+SCOPED_THROUGH_USER: frozenset[str] = frozenset(
+    {
+        "employees.Employee.user",
+        "accounts.UserPermissionOverride.uniq_override_user_res_act",
+        "notifications.NotificationPreference.uniq_preference_per_kind",
+    }
+)
+
+
 def is_tenanted(model) -> bool:
     """Whether this model actually carries an organization column."""
     return any(f.name == "organization" for f in model._meta.get_fields())

@@ -42,7 +42,7 @@ class AttendanceDevice(OrgOwnedModel):
     """One biometric device, addressed by the serial number the Web API uses."""
 
     name = models.CharField(max_length=120)
-    serial_number = models.CharField(max_length=64, unique=True)
+    serial_number = models.CharField(max_length=64, db_index=True)
     location = models.ForeignKey(
         "organization.Location",
         on_delete=models.PROTECT,
@@ -59,6 +59,11 @@ class AttendanceDevice(OrgOwnedModel):
     last_sync_error = models.CharField(max_length=2000, blank=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "serial_number"], name="uniq_device_org_serial"
+            ),
+        ]
         ordering = ["name"]
 
     def __str__(self) -> str:
@@ -86,7 +91,7 @@ class EsslEmployeeLink(OrgOwnedModel):
     unsupported — names on devices are freehand and collide.
     """
 
-    essl_user_id = models.CharField(max_length=32, unique=True, db_index=True)
+    essl_user_id = models.CharField(max_length=32, db_index=True)
     employee = models.ForeignKey(
         "employees.Employee", on_delete=models.CASCADE, related_name="essl_links"
     )
@@ -101,6 +106,11 @@ class EsslEmployeeLink(OrgOwnedModel):
     )
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "essl_user_id"], name="uniq_essllink_org_user_id"
+            ),
+        ]
         ordering = ["essl_user_id"]
         indexes = [models.Index(fields=["employee", "is_active"])]
 
@@ -268,7 +278,7 @@ class ShiftRule(OrgOwnedModel):
     editable by HR — policy is configuration here, never a constant.
     """
 
-    location = models.OneToOneField(
+    location = models.ForeignKey(
         "organization.Location",
         on_delete=models.CASCADE,
         null=True,
@@ -296,9 +306,19 @@ class ShiftRule(OrgOwnedModel):
     class Meta:
         ordering = ["location__name"]
         constraints = [
-            # Exactly one org-default row (location IS NULL).
+            # One rule per location, PER ORGANIZATION. `location` was a
+            # OneToOne, which is a global uniqueness claim -- fine when there
+            # was one company, wrong once a Location belongs to one of many.
             models.UniqueConstraint(
-                fields=["location"],
+                fields=["organization", "location"],
+                name="uniq_shift_rule_org_location",
+            ),
+            # Exactly one default row (location IS NULL) per organization.
+            # Note the fields are ORGANIZATION, not location: "one row where
+            # location is null" is uniqueness over the organization, and the
+            # old version made it a single default for the whole database.
+            models.UniqueConstraint(
+                fields=["organization"],
                 condition=Q(location__isnull=True),
                 name="uniq_default_shift_rule",
             ),

@@ -281,7 +281,7 @@ class LetterTemplate(OrgOwnedModel):
         ordering = ["letter_type", "name"]
         constraints = [
             models.UniqueConstraint(
-                fields=["letter_type"],
+                fields=["organization", "letter_type"],
                 condition=models.Q(is_default=True, is_active=True),
                 name="uniq_default_letter_template_per_type",
             ),

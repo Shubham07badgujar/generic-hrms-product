@@ -45,13 +45,18 @@ class AllocationStatus(models.TextChoices):
 
 class AssetCategory(OrgOwnedModel):
     name = models.CharField(max_length=120)
-    code = models.SlugField(max_length=40, unique=True)
+    code = models.SlugField(max_length=40, db_index=True)
     description = models.CharField(max_length=255, blank=True)
     requires_serial = models.BooleanField(default=True)
     #: Blocks an exit until returned. A laptop does; a branded mug does not.
     is_returnable = models.BooleanField(default=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "code"], name="uniq_assetcategory_org_code"
+            ),
+        ]
         ordering = ["name"]
         verbose_name_plural = "asset categories"
 
@@ -60,7 +65,7 @@ class AssetCategory(OrgOwnedModel):
 
 
 class Asset(OrgOwnedModel):
-    asset_tag = models.CharField(max_length=40, unique=True, db_index=True)
+    asset_tag = models.CharField(max_length=40, db_index=True)
     category = models.ForeignKey(AssetCategory, on_delete=models.PROTECT, related_name="assets")
     name = models.CharField(max_length=160)
     serial_number = models.CharField(max_length=120, blank=True)
@@ -85,6 +90,11 @@ class Asset(OrgOwnedModel):
     notes = models.TextField(blank=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "asset_tag"], name="uniq_asset_org_tag"
+            ),
+        ]
         ordering = ["asset_tag"]
         indexes = [models.Index(fields=["status", "category"])]
 

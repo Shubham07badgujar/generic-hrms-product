@@ -17,7 +17,9 @@ from rest_framework import serializers
 from apps.employees.models import Employee
 
 
-class EmployeeListSerializer(serializers.ModelSerializer):
+from core.api.serializers import OrgScopedUniqueMixin
+
+class EmployeeListSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True)
     designation_title = serializers.CharField(

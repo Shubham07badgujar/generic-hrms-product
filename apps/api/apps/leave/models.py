@@ -34,7 +34,7 @@ ZERO = Decimal("0")
 
 
 class LeaveType(OrgOwnedModel):
-    code = models.SlugField(max_length=40, unique=True)
+    code = models.SlugField(max_length=40, db_index=True)
     name = models.CharField(max_length=120)
     description = models.CharField(max_length=255, blank=True)
     #: Unpaid types are what payroll deducts — see `services.get_lop_days`.
@@ -42,6 +42,11 @@ class LeaveType(OrgOwnedModel):
     order = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "code"], name="uniq_leavetype_org_code"
+            ),
+        ]
         ordering = ["order", "name"]
 
     def __str__(self) -> str:

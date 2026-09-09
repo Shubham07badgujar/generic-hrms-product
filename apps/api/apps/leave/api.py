@@ -38,7 +38,9 @@ from .models import (
 # ---------------------------------------------------------------- serializers
 
 
-class LeaveTypeSerializer(serializers.ModelSerializer):
+from core.api.serializers import OrgScopedUniqueMixin
+
+class LeaveTypeSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     class Meta:
         model = LeaveType
         fields = ["id", "code", "name", "description", "is_paid", "order"]

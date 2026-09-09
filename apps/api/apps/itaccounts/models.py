@@ -43,7 +43,7 @@ class CompanyEmailAccount(OrgOwnedModel):
     employee = models.OneToOneField(
         "employees.Employee", on_delete=models.PROTECT, related_name="email_account"
     )
-    email_address = models.EmailField(unique=True, db_index=True)
+    email_address = models.EmailField(db_index=True)
     provider = models.CharField(
         max_length=30, choices=EmailProvider.choices, default=EmailProvider.GOOGLE_WORKSPACE
     )
@@ -71,6 +71,11 @@ class CompanyEmailAccount(OrgOwnedModel):
     notes = models.CharField(max_length=255, blank=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "email_address"], name="uniq_emailaccount_org_address"
+            ),
+        ]
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["status"])]
 

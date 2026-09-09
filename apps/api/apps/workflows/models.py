@@ -87,7 +87,7 @@ ADVISORY_DECISIONS = frozenset({Decision.RECOMMEND_SELECT, Decision.RECOMMEND_RE
 
 
 class HiringWorkflow(OrgOwnedModel):
-    name = models.CharField(max_length=120, unique=True)
+    name = models.CharField(max_length=120, db_index=True)
     description = models.CharField(max_length=255, blank=True)
     department_kind = models.CharField(
         max_length=20,
@@ -104,6 +104,11 @@ class HiringWorkflow(OrgOwnedModel):
     version = models.PositiveSmallIntegerField(default=1)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "name"], name="uniq_hiringworkflow_org_name"
+            ),
+        ]
         ordering = ["name"]
 
     def __str__(self) -> str:
@@ -257,10 +262,15 @@ class StageTransition(OrgOwnedModel):
 class FeedbackForm(OrgOwnedModel):
     """A structured assessment captured at an interview stage."""
 
-    name = models.CharField(max_length=120, unique=True)
+    name = models.CharField(max_length=120, db_index=True)
     description = models.CharField(max_length=255, blank=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "name"], name="uniq_feedbackform_org_name"
+            ),
+        ]
         ordering = ["name"]
 
     def __str__(self) -> str:

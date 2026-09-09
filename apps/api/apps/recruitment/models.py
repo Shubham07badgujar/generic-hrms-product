@@ -315,7 +315,7 @@ class Candidate(OrgOwnedModel):
             # Replaces uniq_active_candidate_email, which was case-SENSITIVE and
             # so admitted A@x.com alongside a@x.com as two people.
             models.UniqueConstraint(
-                fields=["email_normalized"],
+                fields=["organization", "email_normalized"],
                 condition=models.Q(is_active=True),
                 name="uniq_active_candidate_email_norm",
             ),
@@ -472,7 +472,7 @@ class CandidateExternalRef(OrgOwnedModel):
         ordering = ["source", "external_id"]
         constraints = [
             models.UniqueConstraint(
-                fields=["source", "external_id"],
+                fields=["organization", "source", "external_id"],
                 condition=models.Q(is_active=True),
                 name="uniq_active_external_ref",
             )
