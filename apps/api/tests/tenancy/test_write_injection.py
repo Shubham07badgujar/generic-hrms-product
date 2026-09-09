@@ -51,17 +51,6 @@ def _employee_payload(world, **overrides):
     return payload
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Cross-tenant writes are NOT blocked yet. DRF builds "
-        "PrimaryKeyRelatedField(queryset=Model.objects.all()) for every writable "
-        "FK, and that lookup spans organizations because models still use "
-        "OrgOwnedManager, which does not filter. Closed by ScopedModelSerializer "
-        "(plan layer C-prime). strict=True so this FAILS the day it starts "
-        "passing, forcing the marker off rather than leaving a stale xfail."
-    ),
-)
 def test_creating_an_employee_in_another_organizations_department_is_refused(
     org_a, org_b, api_for
 ):
@@ -94,17 +83,6 @@ def test_creating_an_employee_in_another_organizations_department_is_refused(
 
 
 @pytest.mark.parametrize("field", ["designation_id", "location_id", "level_id"])
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Cross-tenant writes are NOT blocked yet. DRF builds "
-        "PrimaryKeyRelatedField(queryset=Model.objects.all()) for every writable "
-        "FK, and that lookup spans organizations because models still use "
-        "OrgOwnedManager, which does not filter. Closed by ScopedModelSerializer "
-        "(plan layer C-prime). strict=True so this FAILS the day it starts "
-        "passing, forcing the marker off rather than leaving a stale xfail."
-    ),
-)
 def test_every_structural_reference_is_checked_not_just_the_first(
     org_a, org_b, api_for, field
 ):

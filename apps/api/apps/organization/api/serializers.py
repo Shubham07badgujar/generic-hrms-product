@@ -17,7 +17,9 @@ from apps.organization.models import (
 
 from core.api.serializers import OrgScopedUniqueMixin
 
-class DepartmentSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
+from core.api.serializers import ScopedRelationsMixin
+
+class DepartmentSerializer(ScopedRelationsMixin, OrgScopedUniqueMixin, serializers.ModelSerializer):
     head_employee_name = serializers.CharField(
         source="head_employee.full_name", read_only=True, default=None
     )
@@ -30,7 +32,7 @@ class DepartmentSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
         ]
 
 
-class DesignationSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
+class DesignationSerializer(ScopedRelationsMixin, OrgScopedUniqueMixin, serializers.ModelSerializer):
     department_name = serializers.CharField(
         source="department.name", read_only=True, default=None
     )
@@ -62,7 +64,7 @@ class EmployeeLevelSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer)
         fields = ["id", "name", "code", "layer", "rank"]
 
 
-class TeamSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
+class TeamSerializer(ScopedRelationsMixin, OrgScopedUniqueMixin, serializers.ModelSerializer):
     class Meta:
         model = Team
         fields = ["id", "name", "code", "department", "parent_team", "head_employee"]

@@ -40,7 +40,9 @@ SENSITIVE_ACTIONS = [
 ]
 
 
-class AuditLogSerializer(serializers.ModelSerializer):
+from core.api.serializers import ScopedRelationsMixin
+
+class AuditLogSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     actor_name = serializers.SerializerMethodField()
     subject_name = serializers.CharField(
         source="subject_employee.full_name", read_only=True, default=None

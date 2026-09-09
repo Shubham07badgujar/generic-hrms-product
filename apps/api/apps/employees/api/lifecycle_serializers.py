@@ -40,6 +40,8 @@ from apps.onboarding.models import (
 
 from core.api.serializers import OrgScopedUniqueMixin
 
+from core.api.serializers import ScopedRelationsMixin
+
 class DocumentTypeSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     class Meta:
         model = DocumentType
@@ -216,7 +218,7 @@ class ProbationDecisionSerializer(serializers.Serializer):
 # ===========================================================================
 
 
-class OnboardingTemplateItemSerializer(serializers.ModelSerializer):
+class OnboardingTemplateItemSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     document_type_name = serializers.CharField(
         source="document_type.name", read_only=True, default=None
     )
@@ -230,7 +232,7 @@ class OnboardingTemplateItemSerializer(serializers.ModelSerializer):
         ]
 
 
-class OnboardingTemplateSerializer(serializers.ModelSerializer):
+class OnboardingTemplateSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     items = OnboardingTemplateItemSerializer(many=True, read_only=True)
     department_name = serializers.CharField(
         source="department.name", read_only=True, default=None
@@ -358,7 +360,7 @@ class LetterGenerateSerializer(serializers.Serializer):
 # ===========================================================================
 
 
-class CompanyEmailAccountSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
+class CompanyEmailAccountSerializer(ScopedRelationsMixin, OrgScopedUniqueMixin, serializers.ModelSerializer):
     """
     Metadata only.
 
@@ -405,7 +407,7 @@ class AssetCategorySerializer(OrgScopedUniqueMixin, serializers.ModelSerializer)
         fields = ["id", "name", "code", "description", "requires_serial", "is_returnable"]
 
 
-class AssetSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
+class AssetSerializer(ScopedRelationsMixin, OrgScopedUniqueMixin, serializers.ModelSerializer):
     #: Optional on purpose. The register form asks HR for a name, a tag and
     #: little else — an omitted category lands in the "General" bucket rather
     #: than forcing a taxonomy on people who never asked for one.

@@ -49,6 +49,8 @@ from apps.workflows.models import (
 
 from core.api.serializers import OrgScopedUniqueMixin
 
+from core.api.serializers import ScopedRelationsMixin
+
 class FeedbackFieldSerializer(serializers.ModelSerializer):
     class Meta:
         model = FeedbackField
@@ -63,7 +65,7 @@ class FeedbackFormSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
         fields = ["id", "name", "description", "fields_"]
 
 
-class StageTransitionSerializer(serializers.ModelSerializer):
+class StageTransitionSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     to_stage_name = serializers.CharField(source="to_stage.name", read_only=True)
     to_stage_order = serializers.IntegerField(source="to_stage.order", read_only=True)
 
@@ -72,7 +74,7 @@ class StageTransitionSerializer(serializers.ModelSerializer):
         fields = ["id", "on_decision", "to_stage", "to_stage_name", "to_stage_order"]
 
 
-class WorkflowStageSerializer(serializers.ModelSerializer):
+class WorkflowStageSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     responsible_role_code = serializers.CharField(
         source="responsible_role.code", read_only=True, default=None
     )
@@ -148,7 +150,7 @@ class HiringWorkflowListSerializer(OrgScopedUniqueMixin, serializers.ModelSerial
 # --------------------------------------------------------------------------
 
 
-class JobOpeningSerializer(serializers.ModelSerializer):
+class JobOpeningSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     department_name = serializers.CharField(source="department.name", read_only=True)
     workflow_name = serializers.CharField(source="workflow.name", read_only=True)
     target_role_code = serializers.CharField(source="target_role.code", read_only=True)
@@ -347,7 +349,7 @@ class CandidateSerializer(serializers.ModelSerializer):
 # --------------------------------------------------------------------------
 
 
-class ApplicationListSerializer(serializers.ModelSerializer):
+class ApplicationListSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     candidate_name = serializers.CharField(source="candidate.full_name", read_only=True)
     job_title = serializers.CharField(source="job_opening.title", read_only=True)
     department_name = serializers.CharField(
@@ -513,7 +515,7 @@ class InterviewRejectTimeSerializer(serializers.Serializer):
     options = serializers.JSONField(required=False, allow_null=True)
 
 
-class ApplicationCreateSerializer(serializers.ModelSerializer):
+class ApplicationCreateSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     class Meta:
         model = Application
         fields = ["candidate", "job_opening"]
@@ -551,7 +553,7 @@ class ApplicationEventSerializer(serializers.ModelSerializer):
         ]
 
 
-class StageDecisionSerializer(serializers.ModelSerializer):
+class StageDecisionSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     stage_name = serializers.CharField(source="stage.name", read_only=True)
 
     class Meta:
@@ -559,7 +561,7 @@ class StageDecisionSerializer(serializers.ModelSerializer):
         fields = ["id", "stage", "stage_name", "decision", "decided_by", "decided_at", "rationale"]
 
 
-class CandidateRejectionSerializer(serializers.ModelSerializer):
+class CandidateRejectionSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     rejected_by_email = serializers.CharField(source="rejected_by.email", read_only=True)
     stage_name = serializers.CharField(source="rejection_stage.name", read_only=True)
 
@@ -572,7 +574,7 @@ class CandidateRejectionSerializer(serializers.ModelSerializer):
         ]
 
 
-class DecisionOverrideSerializer(serializers.ModelSerializer):
+class DecisionOverrideSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     overridden_by_email = serializers.CharField(source="overridden_by.email", read_only=True)
     #: Named rather than id'd: an override that reopens a candidate MOVES them,
     #: and "Rejected → HR Head final decision" is the fact a reader needs.
@@ -645,7 +647,7 @@ class OverrideSerializer(serializers.Serializer):
 # --------------------------------------------------------------------------
 
 
-class InterviewSerializer(serializers.ModelSerializer):
+class InterviewSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     candidate_name = serializers.CharField(
         source="application.candidate.full_name", read_only=True
     )
@@ -708,7 +710,7 @@ class FeedbackSubmitSerializer(serializers.Serializer):
     )
 
 
-class InterviewFeedbackSerializer(serializers.ModelSerializer):
+class InterviewFeedbackSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     submitted_by_name = serializers.CharField(source="submitted_by.full_name", read_only=True)
     stage_name = serializers.CharField(source="interview.stage.name", read_only=True)
 
@@ -726,7 +728,7 @@ class InterviewFeedbackSerializer(serializers.ModelSerializer):
 # --------------------------------------------------------------------------
 
 
-class OfferSerializer(serializers.ModelSerializer):
+class OfferSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     candidate_name = serializers.CharField(
         source="application.candidate.full_name", read_only=True
     )

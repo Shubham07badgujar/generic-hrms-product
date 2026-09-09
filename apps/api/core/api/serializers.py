@@ -146,3 +146,65 @@ class OrgScopedUniqueValidator(UniqueTogetherValidator):
             raise serializers.ValidationError(
                 {field: message for field in business}, code="unique"
             ) from None
+
+
+class _OrganizationOnly:
+    """Minimal stand-in for an AccessContext when there is no request."""
+
+    __slots__ = ("organization_id", "user_id")
+
+    def __init__(self, organization_id):
+        self.organization_id = organization_id
+        self.user_id = None
+
+
+def scope_relation_queryset(queryset, context):
+    """
+    Narrow a relation lookup to the acting organization.
+
+    Resolved at field-build time, which DRF performs per serializer INSTANCE,
+    so the queryset reflects the caller rather than whatever organization
+    happened to exist when the class was imported.
+    """
+    from core.access.context import get_context
+    from core.access.engine import apply_org_predicate
+    from core.middleware import get_current_org_id
+
+    request = context.get("request") if context else None
+    if request is not None:
+        return apply_org_predicate(queryset, get_context(request))
+    # No request: a service or a management command. `acting_as` binds the
+    # organization on those paths, and apply_org_predicate returns nothing when
+    # nothing is bound -- which is the right direction for a lookup that
+    # decides what a write may point at.
+    return apply_org_predicate(queryset, _OrganizationOnly(get_current_org_id()))
+
+
+class ScopedRelationsMixin:
+    """
+    Every auto-generated relation lookup is confined to one organization.
+
+    THE WRITE-SIDE HOLE. `ModelSerializer` builds a
+    `PrimaryKeyRelatedField(queryset=Model.objects.all())` for each writable
+    foreign key -- automatically, invisibly, and about 77 times in this
+    codebase. Grepping for `queryset=` finds a fraction of them, because the
+    dangerous ones are never written down anywhere.
+
+    Each is a lookup across EVERY organization's rows. Without this, a POST
+    naming another company's department id is accepted and the row is created
+    pointing across the tenant boundary: a person placed in a company that
+    never hired them, and -- since department drives department-scoped
+    visibility -- a stranger appearing in that company's headcount.
+
+    Reads were already isolated when this landed. Writes were not, and the two
+    are separate claims.
+    """
+
+    def build_relational_field(self, field_name, relation_info):
+        field_class, field_kwargs = super().build_relational_field(
+            field_name, relation_info
+        )
+        queryset = field_kwargs.get("queryset")
+        if queryset is not None:
+            field_kwargs["queryset"] = scope_relation_queryset(queryset, self.context)
+        return field_class, field_kwargs

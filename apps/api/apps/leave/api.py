@@ -40,13 +40,15 @@ from .models import (
 
 from core.api.serializers import OrgScopedUniqueMixin
 
+from core.api.serializers import ScopedRelationsMixin
+
 class LeaveTypeSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     class Meta:
         model = LeaveType
         fields = ["id", "code", "name", "description", "is_paid", "order"]
 
 
-class LeavePolicySerializer(serializers.ModelSerializer):
+class LeavePolicySerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     leave_type_name = serializers.CharField(source="leave_type.name", read_only=True)
     department_name = serializers.CharField(
         source="department.name", read_only=True, default=None
@@ -64,13 +66,13 @@ class LeavePolicySerializer(serializers.ModelSerializer):
         ]
 
 
-class HolidaySerializer(serializers.ModelSerializer):
+class HolidaySerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     class Meta:
         model = Holiday
         fields = ["id", "calendar", "date", "name", "is_optional"]
 
 
-class HolidayCalendarSerializer(serializers.ModelSerializer):
+class HolidayCalendarSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     location_name = serializers.CharField(source="location.name", read_only=True, default=None)
     holidays = HolidaySerializer(many=True, read_only=True)
 
@@ -79,7 +81,7 @@ class HolidayCalendarSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "location", "location_name", "weekly_off", "holidays"]
 
 
-class LeaveBalanceSerializer(serializers.ModelSerializer):
+class LeaveBalanceSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     leave_type_name = serializers.CharField(source="leave_type.name", read_only=True)
     leave_type_code = serializers.CharField(source="leave_type.code", read_only=True)
     is_paid = serializers.BooleanField(source="leave_type.is_paid", read_only=True)
@@ -486,7 +488,7 @@ class LeaveSettingsView(ScopedAPIView):
         return Response(LeaveSettingsSerializer(row).data)
 
 
-class ShortLeaveSerializer(serializers.ModelSerializer):
+class ShortLeaveSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
     employee_code = serializers.CharField(source="employee.employee_code", read_only=True)
 
@@ -529,7 +531,7 @@ class ShortLeaveViewSet(ScopedQuerysetMixin, viewsets.ModelViewSet):
         return Response(ShortLeaveSerializer(row).data, status=status.HTTP_201_CREATED)
 
 
-class HolidayWorkSerializer(serializers.ModelSerializer):
+class HolidayWorkSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
     employee_code = serializers.CharField(source="employee.employee_code", read_only=True)
     approved_by_email = serializers.CharField(

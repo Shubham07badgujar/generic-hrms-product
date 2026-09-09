@@ -265,6 +265,76 @@ def check_unique_constraints_are_organization_scoped(app_configs, **kwargs):
     return errors
 
 
+@register()
+def check_serializers_scope_their_relations(app_configs, **kwargs):
+    """
+    Every writable relation lookup is confined to one organization.
+
+    `ModelSerializer` builds a `PrimaryKeyRelatedField(queryset=Model.objects
+    .all())` for each writable foreign key -- automatically, invisibly, and
+    around 77 times here. Each is a lookup across every organization's rows, so
+    without scoping a POST naming another company's department id is accepted
+    and the row is created pointing across the tenant boundary.
+
+    The danger is that none of them is written down: `grep queryset=` finds a
+    fraction, because DRF generates the rest. So this asks the running
+    serializers rather than the source, and a new one cannot join without
+    either the mixin or a deliberate answer.
+    """
+    import importlib
+    import inspect
+    import pathlib
+
+    from rest_framework import serializers as drf
+
+    from core.api.serializers import ScopedRelationsMixin
+
+    errors: list[Error] = []
+    root = pathlib.Path(__file__).resolve().parents[2]
+
+    for path in sorted((root / "apps").rglob("*.py")):
+        if "__pycache__" in path.parts or "migrations" in path.parts:
+            continue
+        module_name = ".".join(path.relative_to(root).with_suffix("").parts)
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:  # noqa: BLE001 — a module that will not import is
+            continue       # someone else's check to fail
+        for name, obj in vars(module).items():
+            if not (
+                inspect.isclass(obj)
+                and issubclass(obj, drf.ModelSerializer)
+                and obj is not drf.ModelSerializer
+                and obj.__module__ == module_name
+            ):
+                continue
+            try:
+                fields = obj().get_fields()
+            except Exception:  # noqa: BLE001 — needs context to build
+                continue
+            writable_relation = any(
+                isinstance(f, (drf.PrimaryKeyRelatedField, drf.SlugRelatedField))
+                and not f.read_only
+                and getattr(f, "queryset", None) is not None
+                for f in fields.values()
+            )
+            if writable_relation and not issubclass(obj, ScopedRelationsMixin):
+                errors.append(
+                    Error(
+                        f"Serializer '{module_name}.{name}' has a writable "
+                        f"relation whose lookup spans every organization.",
+                        hint=(
+                            "Add ScopedRelationsMixin to its bases, or declare "
+                            "the field explicitly with a scoped queryset."
+                        ),
+                        id="access.E010",
+                        obj=obj,
+                    )
+                )
+
+    return errors
+
+
 @register(Tags.urls)
 def check_all_api_views_are_mapped(app_configs, **kwargs):
     """Every DRF view under /api/ must declare access_resource or opt out."""

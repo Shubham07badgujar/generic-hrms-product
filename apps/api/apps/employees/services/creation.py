@@ -109,9 +109,17 @@ def create_employee(
     require(actor, Resource.USER, Action.CREATE)
     require(actor, Resource.EMPLOYEE, Action.CREATE)
 
+    # Everything this hire touches belongs to the organization its creator acts
+    # in. Resolved BEFORE the references below are looked up, because those
+    # lookups have to be confined to it: a department id from another company
+    # must not resolve at all.
+    organization_id = get_context(actor).organization_id
+
     # --- 2. Resolve and validate references ------------------------------
-    role = _get_or_400(Role, code=role_code, label="role")
-    department = _get_or_400(Department, pk=department_id, label="department")
+    role = _get_or_400(Role, code=role_code, label="role", organization_id=organization_id)
+    department = _get_or_400(
+        Department, pk=department_id, label="department", organization_id=organization_id
+    )
 
     # Every employee created here should carry a job title: it is what the
     # welcome email announces, what appears against them in every directory,
@@ -128,17 +136,20 @@ def create_employee(
         raise ValidationError({"designation": "Designation is required."})
 
     designation = (
-        _get_or_400(Designation, pk=designation_id, label="designation")
+        _get_or_400(Designation, pk=designation_id, label="designation", organization_id=organization_id)
         if designation_id
         else None
     )
     location = (
-        _get_or_400(Location, pk=location_id, label="location") if location_id else None
+        _get_or_400(Location, pk=location_id, label="location", organization_id=organization_id) if location_id else None
     )
-    level = _get_or_400(EmployeeLevel, pk=level_id, label="level") if level_id else None
-    team = _get_or_400(Team, pk=team_id, label="team") if team_id else None
+    level = _get_or_400(EmployeeLevel, pk=level_id, label="level", organization_id=organization_id) if level_id else None
+    team = _get_or_400(Team, pk=team_id, label="team", organization_id=organization_id) if team_id else None
     manager = (
-        _get_or_400(Employee, pk=reporting_manager_id, label="reporting_manager")
+        _get_or_400(
+            Employee, pk=reporting_manager_id, label="reporting_manager",
+            organization_id=organization_id,
+        )
         if reporting_manager_id
         else None
     )
@@ -197,12 +208,6 @@ def create_employee(
     )
     user.must_change_password = True
     user.save(update_fields=["must_change_password"])
-
-    # Everything this hire creates belongs to the organization its creator
-    # acts in. Resolved once, from the actor's own context, and then passed
-    # explicitly -- never re-read per use, so the employee, their login and
-    # their employee code cannot end up in different companies.
-    organization_id = get_context(actor).organization_id
 
     # This membership is the ONLY thing `resolve_context()` reads to decide a
     # principal's tenant, so an account created without one resolves to
@@ -299,9 +304,24 @@ def create_employee(
     return result
 
 
-def _get_or_400(model, *, label: str, **lookup):
-    """Resolve a reference, or raise a field-attributed validation error."""
-    obj = model.objects.filter(**lookup).first()
+def _get_or_400(model, *, label: str, organization_id=None, **lookup):
+    """
+    Resolve a reference within one organization, or raise a field-attributed
+    validation error.
+
+    The organization is part of the LOOKUP, not a check afterwards. Without it
+    this resolved any company's department by id and the hire was created
+    pointing at it -- placing a person in a company that never hired them and,
+    because department drives department-scoped visibility, showing that
+    company's head a stranger.
+
+    The message deliberately does not distinguish "no such row" from "belongs
+    to someone else", for the same reason an out-of-scope read answers 404.
+    """
+    queryset = model.objects.all()
+    if organization_id is not None:
+        queryset = queryset.filter(organization_id=organization_id)
+    obj = queryset.filter(**lookup).first()
     if obj is None:
         raise ValidationError({label: f"No {label} matches {lookup}."})
     return obj

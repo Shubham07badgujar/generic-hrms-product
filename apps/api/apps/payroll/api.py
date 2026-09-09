@@ -51,6 +51,8 @@ from .models import (
 
 from core.api.serializers import OrgScopedUniqueMixin
 
+from core.api.serializers import ScopedRelationsMixin
+
 def _call(fn, **kwargs):
     """Run a service, translating its Django exceptions into DRF responses."""
     try:
@@ -85,7 +87,7 @@ class SalaryStructureLineSerializer(serializers.Serializer):
     monthly_amount = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
 
 
-class SalaryStructureSerializer(serializers.ModelSerializer):
+class SalaryStructureSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
     employee_code = serializers.CharField(source="employee.employee_code", read_only=True)
     lines = SalaryStructureLineSerializer(many=True, read_only=True)
@@ -140,7 +142,7 @@ class StatutoryContributionSerializer(serializers.ModelSerializer):
         ]
 
 
-class PayslipSummarySerializer(serializers.ModelSerializer):
+class PayslipSummarySerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
     employee_code = serializers.CharField(source="employee.employee_code", read_only=True)
     period_month = serializers.IntegerField(source="payroll_run.period_month", read_only=True)
@@ -179,7 +181,7 @@ class PayslipDetailSerializer(PayslipSummarySerializer):
         ]
 
 
-class PayrollRunSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
+class PayrollRunSerializer(ScopedRelationsMixin, OrgScopedUniqueMixin, serializers.ModelSerializer):
     location_code = serializers.CharField(source="location.code", read_only=True, default=None)
     payslip_count = serializers.IntegerField(source="payslips.count", read_only=True)
     financial_year = serializers.CharField(read_only=True)
@@ -237,7 +239,7 @@ class PayrollRunDetailSerializer(PayrollRunSerializer):
         )
 
 
-class PayrollAdjustmentSerializer(serializers.ModelSerializer):
+class PayrollAdjustmentSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
     employee_code = serializers.CharField(source="employee.employee_code", read_only=True)
 
@@ -251,7 +253,7 @@ class PayrollAdjustmentSerializer(serializers.ModelSerializer):
         read_only_fields = ["status", "approved_at"]
 
 
-class InvestmentDeclarationSerializer(serializers.ModelSerializer):
+class InvestmentDeclarationSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
     employee_code = serializers.CharField(source="employee.employee_code", read_only=True)
 
@@ -794,7 +796,7 @@ class PackageDeferralSerializer(serializers.ModelSerializer):
                             "decision_reason", "released_in_adjustment"]
 
 
-class EmployeePackageSerializer(serializers.ModelSerializer):
+class EmployeePackageSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
     employee_code = serializers.CharField(source="employee.employee_code", read_only=True)
     periods = PackagePeriodSerializer(many=True, read_only=True)

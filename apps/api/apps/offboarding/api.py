@@ -39,6 +39,8 @@ from .models import (
 )
 
 
+from core.api.serializers import ScopedRelationsMixin
+
 def _call(fn, **kwargs):
     """Run a service, translating its Django ValidationError into a DRF 400."""
     try:
@@ -53,7 +55,7 @@ def _call(fn, **kwargs):
 # ===========================================================================
 
 
-class ResignationRequestSerializer(serializers.ModelSerializer):
+class ResignationRequestSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
     employee_code = serializers.CharField(source="employee.employee_code", read_only=True)
     department_name = serializers.CharField(
@@ -124,7 +126,7 @@ class ExitClearanceItemSerializer(serializers.ModelSerializer):
         return bool(obj.evidence)
 
 
-class FinalSettlementSerializer(serializers.ModelSerializer):
+class FinalSettlementSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     gross_earnings = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     total_deductions = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     net_payable = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
@@ -145,7 +147,7 @@ class FinalSettlementSerializer(serializers.ModelSerializer):
         read_only_fields = ["status", "prepared_by", "cleared_by", "cleared_at", "paid_at"]
 
 
-class ExitInterviewSerializer(serializers.ModelSerializer):
+class ExitInterviewSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     conducted_by_email = serializers.CharField(
         source="conducted_by.email", read_only=True, default=None
     )
@@ -162,7 +164,7 @@ class ExitInterviewSerializer(serializers.ModelSerializer):
         read_only_fields = ["conducted_by", "conducted_at", "is_conducted"]
 
 
-class ExitWorkflowListSerializer(serializers.ModelSerializer):
+class ExitWorkflowListSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
     employee_code = serializers.CharField(source="employee.employee_code", read_only=True)
     department_name = serializers.CharField(
@@ -266,7 +268,7 @@ class CompleteExitSerializer(serializers.Serializer):
     actual_last_working_date = serializers.DateField(required=False, allow_null=True)
 
 
-class ClearanceTemplateSerializer(serializers.ModelSerializer):
+class ClearanceTemplateSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     item_count = serializers.IntegerField(source="items.count", read_only=True)
 
     class Meta:

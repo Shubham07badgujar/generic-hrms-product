@@ -52,6 +52,8 @@ from .models import (
 
 from core.api.serializers import OrgScopedUniqueMixin
 
+from core.api.serializers import ScopedRelationsMixin
+
 def _call(func, **kwargs):
     try:
         return func(**kwargs)
@@ -524,7 +526,7 @@ class RegularizationViewSet(ScopedModelViewSet):
 # ------------------------------------------------------- eSSL integration
 
 
-class DeviceSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
+class DeviceSerializer(ScopedRelationsMixin, OrgScopedUniqueMixin, serializers.ModelSerializer):
     location_name = serializers.CharField(source="location.name", read_only=True)
 
     class Meta:
@@ -536,7 +538,7 @@ class DeviceSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
         read_only_fields = ["id", "last_synced_at", "last_sync_status", "last_sync_error"]
 
 
-class MappingSerializer(serializers.ModelSerializer):
+class MappingSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     """
     One device ID for one employee, at one site.
 
