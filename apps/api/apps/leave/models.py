@@ -27,13 +27,13 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import models
 
-from core.models import BaseModel
+from core.models import OrgOwnedModel
 from core.validators import STORED_PATH_MAX, scoped_storage_path
 
 ZERO = Decimal("0")
 
 
-class LeaveType(BaseModel):
+class LeaveType(OrgOwnedModel):
     code = models.SlugField(max_length=40, unique=True)
     name = models.CharField(max_length=120)
     description = models.CharField(max_length=255, blank=True)
@@ -55,7 +55,7 @@ class ApprovalAuthority(models.TextChoices):
     REPORTING_MANAGER = "reporting_manager", "Reporting manager"
 
 
-class LeavePolicy(BaseModel):
+class LeavePolicy(OrgOwnedModel):
     """
     The rules for one leave type, optionally narrowed to a department and/or
     employment type. Resolution picks the most specific active policy.
@@ -107,7 +107,7 @@ class LeavePolicy(BaseModel):
         return self.name
 
 
-class HolidayCalendar(BaseModel):
+class HolidayCalendar(OrgOwnedModel):
     """
     Working-day rules for a location. `location` empty = the organisation
     default. `weekly_off` holds weekday numbers (Monday=0 … Sunday=6) — NOT
@@ -128,7 +128,7 @@ class HolidayCalendar(BaseModel):
         return self.name
 
 
-class Holiday(BaseModel):
+class Holiday(OrgOwnedModel):
     calendar = models.ForeignKey(HolidayCalendar, on_delete=models.CASCADE, related_name="holidays")
     date = models.DateField(db_index=True)
     name = models.CharField(max_length=140)
@@ -144,7 +144,7 @@ class Holiday(BaseModel):
         return f"{self.date} {self.name}"
 
 
-class LeaveBalance(BaseModel):
+class LeaveBalance(OrgOwnedModel):
     """
     One employee's balance for one type in one calendar year. Every figure is
     the SUM of ledger rows — the ledger is the truth, this is the running total.
@@ -193,7 +193,7 @@ def leave_attachment_path(instance, filename: str) -> str:
     return scoped_storage_path("leave", instance.employee_id, filename)
 
 
-class LeaveRequest(BaseModel):
+class LeaveRequest(OrgOwnedModel):
     employee = models.ForeignKey(
         "employees.Employee", on_delete=models.CASCADE, related_name="leave_requests"
     )
@@ -281,7 +281,7 @@ class TransactionKind(models.TextChoices):
     ADJUSTMENT = "adjustment", "Manual adjustment"
 
 
-class LeaveTransaction(BaseModel):
+class LeaveTransaction(OrgOwnedModel):
     """
     Append-only. The ledger is what makes every balance auditable: each row
     says what moved, why, on whose authority, and for which request.
@@ -309,7 +309,7 @@ class LeaveTransaction(BaseModel):
         indexes = [models.Index(fields=["employee", "leave_type", "year"])]
 
 
-class LeaveSettings(BaseModel):
+class LeaveSettings(OrgOwnedModel):
     """
     The organisation's leave POLICY KNOBS, editable by HR — one row.
 
@@ -365,7 +365,7 @@ class LeaveSettings(BaseModel):
         return row
 
 
-class ShortLeave(BaseModel):
+class ShortLeave(OrgOwnedModel):
     """
     An early departure / short absence the employee informed HR about.
 
@@ -392,7 +392,7 @@ class ShortLeave(BaseModel):
         return f"{self.employee.employee_code} {self.date} {self.hours}h"
 
 
-class ShortLeaveConversion(BaseModel):
+class ShortLeaveConversion(OrgOwnedModel):
     """
     The month's short-leave hours settled into days — the auditable record of
     the conversion. `deducted_days` came off the paid balance (ledger rows
@@ -422,7 +422,7 @@ class ShortLeaveConversion(BaseModel):
         return f"{self.employee.employee_code} {self.year}-{self.month:02d}: {self.days}d"
 
 
-class HolidayWork(BaseModel):
+class HolidayWork(OrgOwnedModel):
     """
     An approved day of work on a declared public holiday.
 

@@ -17,7 +17,7 @@ from __future__ import annotations
 from django.core.exceptions import ValidationError
 from django.db import models
 
-from core.models import BaseModel
+from core.models import OrgOwnedModel
 
 
 class AssetStatus(models.TextChoices):
@@ -43,7 +43,7 @@ class AllocationStatus(models.TextChoices):
     WRITTEN_OFF = "written_off", "Written off"
 
 
-class AssetCategory(BaseModel):
+class AssetCategory(OrgOwnedModel):
     name = models.CharField(max_length=120)
     code = models.SlugField(max_length=40, unique=True)
     description = models.CharField(max_length=255, blank=True)
@@ -59,7 +59,7 @@ class AssetCategory(BaseModel):
         return self.name
 
 
-class Asset(BaseModel):
+class Asset(OrgOwnedModel):
     asset_tag = models.CharField(max_length=40, unique=True, db_index=True)
     category = models.ForeignKey(AssetCategory, on_delete=models.PROTECT, related_name="assets")
     name = models.CharField(max_length=160)
@@ -103,7 +103,7 @@ class Asset(BaseModel):
         return self.allocations.filter(status=AllocationStatus.ACTIVE).first()
 
 
-class AssetAllocation(BaseModel):
+class AssetAllocation(OrgOwnedModel):
     """
     One asset in one person's hands, for one period.
 
@@ -165,7 +165,7 @@ class AssetAllocation(BaseModel):
         return self.status == AllocationStatus.ACTIVE
 
 
-class AssetMaintenanceLog(BaseModel):
+class AssetMaintenanceLog(OrgOwnedModel):
     asset = models.ForeignKey(Asset, on_delete=models.CASCADE, related_name="maintenance_logs")
     event = models.CharField(max_length=160)
     performed_at = models.DateTimeField()

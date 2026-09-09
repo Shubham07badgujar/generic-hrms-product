@@ -36,12 +36,19 @@ def _sole_org(slug, name, **kw):
     """
     Make `name` the only organization in the database.
 
-    The session fixture commits one outside the per-test transaction, so a test
-    about single-organization behaviour has to clear the field first. The
-    delete rolls back with the test like any other write.
+    Renames the session organization rather than deleting it and creating
+    another. Deleting is no longer possible: every tenant-owned table now
+    references Organization with PROTECT, and the session organization owns the
+    seeded role catalogue -- which is the constraint working exactly as
+    intended. The rename rolls back with the test like any other write.
     """
-    Organization.objects.all().delete()
-    return _org(slug, name, **kw)
+    organization = Organization.objects.get()
+    organization.slug = slug
+    organization.name = name
+    for field, value in kw.items():
+        setattr(organization, field, value)
+    organization.save()
+    return organization
 
 
 def test_a_lone_organization_needs_no_slug(db):

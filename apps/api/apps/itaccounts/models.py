@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from django.db import models
 
-from core.models import BaseModel
+from core.models import OrgOwnedModel
 
 
 class EmailProvider(models.TextChoices):
@@ -39,7 +39,7 @@ class AccountStatus(models.TextChoices):
     DEPROVISIONED = "deprovisioned", "Deprovisioned"
 
 
-class CompanyEmailAccount(BaseModel):
+class CompanyEmailAccount(OrgOwnedModel):
     employee = models.OneToOneField(
         "employees.Employee", on_delete=models.PROTECT, related_name="email_account"
     )

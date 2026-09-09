@@ -51,6 +51,22 @@ class AuditLog(models.Model):
 
     # Nullable: pre-authentication events (failed logins, bootstrap) have no
     # actor, and we still want them recorded.
+    #: The organization this event belongs to. NULLABLE on purpose: a failed
+    #: login for an unknown address, a platform-admin action and the creation
+    #: of an organization itself genuinely have none.
+    #:
+    #: NULL means "platform-owned", NOT "everyone's". Any predicate over this
+    #: column is `= X`, never `= X OR IS NULL` -- the second reading is how an
+    #: audit trail becomes a cross-tenant read.
+    organization = models.ForeignKey(
+        "organization.Organization",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        db_index=True,
+    )
+
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

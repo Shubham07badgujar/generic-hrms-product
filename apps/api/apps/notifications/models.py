@@ -18,7 +18,7 @@ from __future__ import annotations
 from django.conf import settings
 from django.db import models
 
-from core.models import BaseModel
+from core.models import OrgOwnedModel
 
 
 class NotificationKind(models.TextChoices):
@@ -98,7 +98,7 @@ class Priority(models.TextChoices):
     CRITICAL = "critical", "Critical"
 
 
-class Notification(BaseModel):
+class Notification(OrgOwnedModel):
     """One thing one person needs to know about."""
 
     recipient = models.ForeignKey(
@@ -138,7 +138,7 @@ class Notification(BaseModel):
         return f"{self.recipient_id}: {self.title}"
 
 
-class NotificationPreference(BaseModel):
+class NotificationPreference(OrgOwnedModel):
     """
     Per-user, per-kind delivery choice.
 
@@ -171,7 +171,7 @@ class DeliveryStatus(models.TextChoices):
     SUPPRESSED = "suppressed", "Suppressed by preference"
 
 
-class NotificationDelivery(BaseModel):
+class NotificationDelivery(OrgOwnedModel):
     """
     One attempt to get a notification to someone through one channel.
 

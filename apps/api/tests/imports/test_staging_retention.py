@@ -217,8 +217,22 @@ def test_the_scheduled_task_runs_the_purge(attested_batch, workindia_xlsx):
 
 
 def test_the_nightly_schedule_is_registered():
-    """A policy nobody schedules is a policy nobody enforces."""
+    """
+    A policy nobody schedules is a policy nobody enforces.
+
+    The schedule used to be created by a data migration, so it simply existed
+    in any migrated database. It is now asserted by `sync_beat_schedule`, run
+    on every deploy -- because a schedule that lives in migration history
+    disappears the moment that history is regenerated, silently, which is
+    exactly what happened here.
+
+    So the test runs the command: that is the real path, and running it is the
+    only way this test still proves the purge would actually fire.
+    """
+    from django.core.management import call_command
     from django_celery_beat.models import PeriodicTask
+
+    call_command("sync_beat_schedule", verbosity=0)
 
     task = PeriodicTask.objects.filter(task="imports.purge_staging_pii").first()
 

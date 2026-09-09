@@ -21,7 +21,9 @@ import pytest
 from core.access import context as access_context
 from core.middleware import acting_as, get_current_org_id
 
-pytestmark = pytest.mark.django_db
+#: These are ABOUT binding, so they must start unbound -- see the autouse
+#: fixture in tests/conftest.py.
+pytestmark = [pytest.mark.django_db, pytest.mark.unbound_organization]
 
 
 @pytest.fixture

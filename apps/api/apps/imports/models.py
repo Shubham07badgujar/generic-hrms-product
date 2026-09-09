@@ -32,7 +32,7 @@ from __future__ import annotations
 from django.db import models
 from django.utils import timezone
 
-from core.models import BaseModel, TimestampedModel
+from core.models import OrgOwnedModel, OrgOwnedTimestampedModel
 
 
 class BatchStatus(models.TextChoices):
@@ -74,7 +74,7 @@ class MatchRule(models.TextChoices):
     NONE = "none", "No match — created"
 
 
-class ImportBatch(BaseModel):
+class ImportBatch(OrgOwnedModel):
     """One uploaded file, targeted at one job opening."""
 
     platform = models.CharField(max_length=40, db_index=True)
@@ -178,7 +178,7 @@ class ImportBatch(BaseModel):
         return bool(self.attested_by_id and self.attested_at and self.legal_basis)
 
 
-class ImportRow(TimestampedModel):
+class ImportRow(OrgOwnedTimestampedModel):
     """
     One spreadsheet row, parsed and normalised.
 
@@ -186,6 +186,10 @@ class ImportRow(TimestampedModel):
     actor of their own and no soft-delete semantics — the batch owns them, and
     the retention job removes them outright.
     """
+
+    #: Inherits its organization from `batch` rather than from the
+    #: acting context, so a child can never disagree with its parent.
+    org_source = "batch"
 
     batch = models.ForeignKey(
         ImportBatch, on_delete=models.CASCADE, related_name="rows"

@@ -203,20 +203,38 @@ class TenantManager(models.Manager.from_queryset(TenantQuerySet)):
         return super().get_queryset()
 
 
-class OrgOwnedModel(BaseModel):
+class OrgStampingQuerySetMixin:
     """
-    Abstract base for every organization-owned table.
+    `bulk_create` stamps the organization as well.
 
-    Carries `organization` on the row itself rather than resolving it through a
-    relationship. That is a deliberate denormalization: with the column on every
-    table the tenant predicate is one literal string everywhere, so no per-model
-    path can be mistyped into an open filter, and the system check that proves
-    coverage becomes decidable ("does this model have the column?") instead of a
-    path-validation exercise.
+    `bulk_create` deliberately does not call `save()`, so every model that
+    fills its organization in `save()` inserts NULL through it and dies on the
+    not-null constraint. That is how 132 payroll failures arrived from a single
+    `bulk_create` of salary-structure lines, and 176 more from import staging
+    rows.
 
-    The drift that denormalization usually invites is closed on the write path:
-    a derived model names its parent in `org_source`, and `save()` copies the
-    organization from it, so a Payslip cannot disagree with its PayrollRun.
+    Failing on the constraint beats inserting unowned rows, but the caller
+    should not have to care which write path they used.
+    """
+
+    def bulk_create(self, objs, *args, **kwargs):
+        objs = list(objs)
+        for obj in objs:
+            if getattr(obj, "organization_id", None) is None:
+                obj._stamp_organization({})
+        return super().bulk_create(objs, *args, **kwargs)
+
+
+class OrgStampingMixin:
+    """
+    Fills in `organization` on the way to the database, and refuses drift.
+
+    Shared by both org-owned bases. It lived on `OrgOwnedModel` alone at first,
+    which meant the two `OrgOwnedTimestampedModel` tables -- biometric punches
+    and candidate-import staging rows, both high-volume and both full of PII --
+    carried the column but never populated it, and every insert failed on the
+    not-null constraint. Two bases with one behaviour between them is one base
+    too few.
     """
 
     #: Name of the FK this row inherits its organization from. `None` means the
@@ -224,19 +242,20 @@ class OrgOwnedModel(BaseModel):
     #: takes the organization from the acting context.
     org_source: str | None = None
 
-    organization = models.ForeignKey(
-        "organization.Organization",
-        on_delete=models.PROTECT,
-        related_name="+",
-        db_index=True,
-        editable=False,
-    )
+    def _parent_organization_id(self):
+        """The organization this row inherits, or None if it is a root."""
+        if not self.org_source:
+            return None
+        parent = getattr(self, self.org_source, None)
+        return getattr(parent, "organization_id", None) if parent else None
 
-    class Meta:
-        abstract = True
-        ordering = ["-created_at"]
+    @staticmethod
+    def _also_write_organization(kwargs) -> None:
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            kwargs["update_fields"] = set(update_fields) | {"organization"}
 
-    def save(self, *args, **kwargs):
+    def _stamp_organization(self, kwargs) -> None:
         parent_org_id = self._parent_organization_id()
 
         if parent_org_id is not None:
@@ -250,7 +269,9 @@ class OrgOwnedModel(BaseModel):
                     f"({parent_org_id}). A child row cannot belong to a "
                     f"different organization than its parent."
                 )
-        elif self.organization_id is None:
+            return
+
+        if self.organization_id is None:
             from core.middleware import get_current_org_id
 
             self.organization_id = get_current_org_id()
@@ -268,30 +289,36 @@ class OrgOwnedModel(BaseModel):
                 )
             self._also_write_organization(kwargs)
 
-        super().save(*args, **kwargs)
 
-    def _parent_organization_id(self):
-        """The organization this row inherits, or None if it is a root."""
-        if not self.org_source:
-            return None
-        parent = getattr(self, self.org_source, None)
-        return getattr(parent, "organization_id", None) if parent else None
-
-    @staticmethod
-    def _also_write_organization(kwargs) -> None:
-        update_fields = kwargs.get("update_fields")
-        if update_fields is not None:
-            kwargs["update_fields"] = set(update_fields) | {"organization"}
+class OrgOwnedQuerySet(OrgStampingQuerySetMixin, SoftDeleteQuerySet):
+    """Soft-delete semantics, plus organization stamping on bulk writes."""
 
 
-class OrgOwnedTimestampedModel(TimestampedModel):
+class OrgOwnedManager(models.Manager.from_queryset(OrgOwnedQuerySet)):
     """
-    `OrgOwnedModel` for the append-only, high-volume tables that deliberately
-    skip soft delete and actor attribution -- biometric punches and import
-    staging rows. They hold PII and must be tenant-scoped like everything else.
+    Default manager for organization-owned models.
+
+    Does NOT filter by organization -- that is `TenantManager`, rolled out per
+    app once every creation path reliably binds a context. This one only
+    ensures writes carry an organization.
     """
 
-    org_source: str | None = None
+
+class OrgOwnedModel(OrgStampingMixin, BaseModel):
+    """
+    Abstract base for every organization-owned table.
+
+    Carries `organization` on the row itself rather than resolving it through a
+    relationship. That is a deliberate denormalization: with the column on every
+    table the tenant predicate is one literal string everywhere, so no per-model
+    path can be mistyped into an open filter, and the system check that proves
+    coverage becomes decidable ("does this model have the column?") instead of a
+    path-validation exercise.
+
+    The drift that denormalization usually invites is closed on the write path:
+    a derived model names its parent in `org_source`, and `save()` copies the
+    organization from it, so a Payslip cannot disagree with its PayrollRun.
+    """
 
     organization = models.ForeignKey(
         "organization.Organization",
@@ -301,8 +328,43 @@ class OrgOwnedTimestampedModel(TimestampedModel):
         editable=False,
     )
 
-    objects = models.Manager()
+    objects = OrgOwnedManager()
 
     class Meta:
         abstract = True
         ordering = ["-created_at"]
+
+    def save(self, *args, **kwargs):
+        self._stamp_organization(kwargs)
+        super().save(*args, **kwargs)
+
+
+class OrgOwnedTimestampedModel(OrgStampingMixin, TimestampedModel):
+    """
+    `OrgOwnedModel` for the append-only, high-volume tables that deliberately
+    skip soft delete and actor attribution -- biometric punches and import
+    staging rows. They hold PII and must be tenant-scoped like everything else.
+    """
+
+    organization = models.ForeignKey(
+        "organization.Organization",
+        on_delete=models.PROTECT,
+        related_name="+",
+        db_index=True,
+        editable=False,
+    )
+
+    #: Stamps the organization on bulk writes. These two tables are exactly
+    #: the ones written in bulk -- punches arrive from a device sync, import
+    #: rows from a spreadsheet -- so `save()` alone would never run.
+    objects = models.Manager.from_queryset(
+        type("_OrgStampingQuerySet", (OrgStampingQuerySetMixin, models.QuerySet), {})
+    )()
+
+    class Meta:
+        abstract = True
+        ordering = ["-created_at"]
+
+    def save(self, *args, **kwargs):
+        self._stamp_organization(kwargs)
+        super().save(*args, **kwargs)

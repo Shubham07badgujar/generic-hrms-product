@@ -30,7 +30,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 
-from core.models import BaseModel
+from core.models import OrgOwnedModel
 
 MONEY = {"max_digits": 14, "decimal_places": 2}
 RATE = {"max_digits": 9, "decimal_places": 4}
@@ -62,7 +62,7 @@ class Rounding(models.TextChoices):
     DOWN = "down", "Round down"
 
 
-class SalaryComponent(BaseModel):
+class SalaryComponent(OrgOwnedModel):
     """
     A nameable part of pay — BASIC, HRA, a transport allowance.
 
@@ -108,7 +108,7 @@ class SalaryComponent(BaseModel):
             raise ValidationError({"percent_of_code": "A component cannot reference itself."})
 
 
-class SalaryStructure(BaseModel):
+class SalaryStructure(OrgOwnedModel):
     """
     What an employee is paid, effective-dated.
 
@@ -191,7 +191,11 @@ class SalaryStructure(BaseModel):
         return (self.monthly_wage / gross) if gross else ZERO
 
 
-class SalaryStructureLine(BaseModel):
+class SalaryStructureLine(OrgOwnedModel):
+
+    #: Inherits its organization from `salary_structure` rather than from the
+    #: acting context, so a child can never disagree with its parent.
+    org_source = "salary_structure"
     component = models.ForeignKey(SalaryComponent, on_delete=models.PROTECT, related_name="+")
     salary_structure = models.ForeignKey(
         SalaryStructure, on_delete=models.CASCADE, related_name="lines"
@@ -232,7 +236,7 @@ class TaxRegimeChoice(models.TextChoices):
     NEW = "new", "New regime"
 
 
-class InvestmentDeclaration(BaseModel):
+class InvestmentDeclaration(OrgOwnedModel):
     """
     The employee's tax election and Chapter VI-A declarations for a year.
 
@@ -318,7 +322,7 @@ class PayrollRunLocked(Exception):
     """Raised when something tries to change a locked run's substance."""
 
 
-class PayrollRun(BaseModel):
+class PayrollRun(OrgOwnedModel):
     """
     One payroll cycle for a period, optionally scoped to a location.
 
@@ -447,7 +451,7 @@ _SUBSTANTIVE_FIELDS = (
 # ---------------------------------------------------------------------------
 
 
-class Payslip(BaseModel):
+class Payslip(OrgOwnedModel):
     """
     One employee's pay for one run.
 
@@ -455,6 +459,10 @@ class Payslip(BaseModel):
     paid, and recomputing them later from live components would silently
     restate history the moment a component's configuration changed.
     """
+
+    #: Inherits its organization from `payroll_run` rather than from the
+    #: acting context, so a child can never disagree with its parent.
+    org_source = "payroll_run"
 
     payroll_run = models.ForeignKey(
         PayrollRun, on_delete=models.CASCADE, related_name="payslips"
@@ -516,13 +524,17 @@ class Payslip(BaseModel):
         return super().save(*args, **kwargs)
 
 
-class PayslipLine(BaseModel):
+class PayslipLine(OrgOwnedModel):
     """
     One line on a payslip.
 
     `label` is stored rather than read from the component, so a payslip reads
     the same in five years even if the component has since been renamed.
     """
+
+    #: Inherits its organization from `payslip` rather than from the
+    #: acting context, so a child can never disagree with its parent.
+    org_source = "payslip"
 
     payslip = models.ForeignKey(Payslip, on_delete=models.CASCADE, related_name="lines")
     component = models.ForeignKey(
@@ -551,7 +563,7 @@ class StatutoryKind(models.TextChoices):
     GRATUITY = "gratuity", "Gratuity provision"
 
 
-class StatutoryContribution(BaseModel):
+class StatutoryContribution(OrgOwnedModel):
     """
     Per-payslip statutory position, in the shape the returns and challans want.
 
@@ -559,6 +571,10 @@ class StatutoryContribution(BaseModel):
     filing is prepared per statute across all employees, and deriving it by
     parsing line labels would break the first time a label changed.
     """
+
+    #: Inherits its organization from `payslip` rather than from the
+    #: acting context, so a child can never disagree with its parent.
+    org_source = "payslip"
 
     payslip = models.ForeignKey(
         Payslip, on_delete=models.CASCADE, related_name="statutory_contributions"
@@ -612,7 +628,7 @@ class AdjustmentStatus(models.TextChoices):
     REJECTED = "rejected", "Rejected"
 
 
-class PayrollAdjustment(BaseModel):
+class PayrollAdjustment(OrgOwnedModel):
     """
     A one-off amount for a period — a bonus, an arrear, a recovery.
 
@@ -675,7 +691,7 @@ class LoanStatus(models.TextChoices):
     WRITTEN_OFF = "written_off", "Written off"
 
 
-class EmployeeLoan(BaseModel):
+class EmployeeLoan(OrgOwnedModel):
     """
     A salary advance or loan recovered through payroll.
 
@@ -727,7 +743,7 @@ class ReimbursementStatus(models.TextChoices):
     REJECTED = "rejected", "Rejected"
 
 
-class ReimbursementClaim(BaseModel):
+class ReimbursementClaim(OrgOwnedModel):
     """An expense claim paid out through payroll rather than separately."""
 
     employee = models.ForeignKey(
@@ -804,7 +820,7 @@ class DeferralStatus(models.TextChoices):
     CANCELLED = "cancelled", "Cancelled"
 
 
-class EmployeePackage(BaseModel):
+class EmployeePackage(OrgOwnedModel):
     """
     An employee's agreed TOTAL package, when it is not simply CTC / 12.
 
@@ -879,8 +895,12 @@ class EmployeePackage(BaseModel):
         return periods + deferrals
 
 
-class PackagePeriod(BaseModel):
+class PackagePeriod(OrgOwnedModel):
     """One slice of the package paid through NORMAL monthly payroll."""
+
+    #: Inherits its organization from `package` rather than from the
+    #: acting context, so a child can never disagree with its parent.
+    org_source = "package"
 
     package = models.ForeignKey(EmployeePackage, on_delete=models.CASCADE, related_name="periods")
     order = models.PositiveSmallIntegerField(default=1)
@@ -917,7 +937,7 @@ class PackagePeriod(BaseModel):
         return (self.amount / Decimal(months)).quantize(Decimal("0.01"))
 
 
-class PackageDeferral(BaseModel):
+class PackageDeferral(OrgOwnedModel):
     """
     A portion of the package NOT paid monthly, scheduled for future release.
 
@@ -926,6 +946,10 @@ class PackageDeferral(BaseModel):
     period — from there the ordinary run machinery (separate payslip line,
     statutory treatment per the configured rules, locking) applies unchanged.
     """
+
+    #: Inherits its organization from `package` rather than from the
+    #: acting context, so a child can never disagree with its parent.
+    org_source = "package"
 
     package = models.ForeignKey(EmployeePackage, on_delete=models.CASCADE, related_name="deferrals")
     label = models.CharField(max_length=120, default="Deferred amount")

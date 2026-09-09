@@ -24,7 +24,7 @@ from django.db import models
 from django.utils import timezone
 
 from core.access.catalog import Action, DashboardKey, DepartmentKind, Layer, Resource, Scope
-from core.models import BaseModel
+from core.models import OrgOwnedModel
 
 
 class UserManager(BaseUserManager):
@@ -150,7 +150,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.locked_until is not None and self.locked_until > timezone.now()
 
 
-class Role(BaseModel):
+class Role(OrgOwnedModel):
     """
     A named bundle of authority.
 
@@ -226,7 +226,7 @@ class Role(BaseModel):
         return self.name
 
 
-class RolePermission(BaseModel):
+class RolePermission(OrgOwnedModel):
     """
     One cell of the permission matrix: `(role, resource, action) -> scope`.
 
@@ -291,7 +291,7 @@ class RolePermission(BaseModel):
             )
 
 
-class UserRole(BaseModel):
+class UserRole(OrgOwnedModel):
     """A grant of a role to a user."""
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="user_roles")
@@ -340,7 +340,7 @@ class UserRole(BaseModel):
             )
 
 
-class UserPermissionOverride(BaseModel):
+class UserPermissionOverride(OrgOwnedModel):
     """
     A per-user exception to the role-derived permission.
 

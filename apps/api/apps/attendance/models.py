@@ -29,7 +29,7 @@ from decimal import Decimal
 from django.db import models
 from django.db.models import Q
 
-from core.models import BaseModel, TimestampedModel
+from core.models import OrgOwnedModel, OrgOwnedTimestampedModel
 
 
 class SyncStatus(models.TextChoices):
@@ -38,7 +38,7 @@ class SyncStatus(models.TextChoices):
     FAILED = "failed", "Failed"
 
 
-class AttendanceDevice(BaseModel):
+class AttendanceDevice(OrgOwnedModel):
     """One biometric device, addressed by the serial number the Web API uses."""
 
     name = models.CharField(max_length=120)
@@ -65,7 +65,7 @@ class AttendanceDevice(BaseModel):
         return f"{self.name} ({self.serial_number})"
 
 
-class EsslEmployeeLink(BaseModel):
+class EsslEmployeeLink(OrgOwnedModel):
     """
     The employee <-> eSSL user-ID mapping. MANY ids may point at ONE employee.
 
@@ -109,7 +109,7 @@ class EsslEmployeeLink(BaseModel):
         return f"{self.essl_user_id}{where} -> {self.employee.employee_code}"
 
 
-class RawPunch(TimestampedModel):
+class RawPunch(OrgOwnedTimestampedModel):
     """
     One punch, exactly as the device reported it. Append-only, high volume.
 
@@ -117,6 +117,10 @@ class RawPunch(TimestampedModel):
     overlapping window and inserts with ignore_conflicts, so a punch can be
     seen any number of times and exist once.
     """
+
+    #: Inherits its organization from `device` rather than from the
+    #: acting context, so a child can never disagree with its parent.
+    org_source = "device"
 
     device = models.ForeignKey(
         AttendanceDevice, on_delete=models.CASCADE, related_name="punches"
@@ -170,7 +174,7 @@ class RecordSource(models.TextChoices):
     REGULARIZED = "regularized", "Regularized"
 
 
-class AttendanceRecord(BaseModel):
+class AttendanceRecord(OrgOwnedModel):
     """One employee-day, computed or corrected. The payroll-facing truth."""
 
     employee = models.ForeignKey(
@@ -224,7 +228,7 @@ class RegularizationStatus(models.TextChoices):
     REJECTED = "rejected", "Rejected"
 
 
-class RegularizationRequest(BaseModel):
+class RegularizationRequest(OrgOwnedModel):
     """
     An employee's request to correct their own day.
 
@@ -257,7 +261,7 @@ class RegularizationRequest(BaseModel):
         return f"{self.employee.employee_code} {self.date} ({self.status})"
 
 
-class ShiftRule(BaseModel):
+class ShiftRule(OrgOwnedModel):
     """
     The attendance policy for one location (or the org default when
     location is NULL). Values seeded from the company's timing chart and
@@ -318,7 +322,7 @@ class RunStatus(models.TextChoices):
     FAILED = "failed", "Failed"
 
 
-class EsslSyncRun(BaseModel):
+class EsslSyncRun(OrgOwnedModel):
     """One sync attempt — the history HR reads when something looks off."""
 
     kind = models.CharField(max_length=12, choices=SyncKind.choices)

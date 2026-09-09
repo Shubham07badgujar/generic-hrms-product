@@ -278,6 +278,13 @@ def test_the_scheduled_task_runs_the_purge(staff, settings):
 
 def test_the_nightly_schedule_is_registered():
     """A task nobody schedules is a policy nobody enforces."""
+    from django.core.management import call_command
+
+    # Registered by `sync_beat_schedule`, not by a data migration -- a schedule
+    # that lives in migration history disappears when that history is
+    # regenerated, silently. See tests/imports/test_staging_retention.py.
+    call_command("sync_beat_schedule", verbosity=0)
+
     from django_celery_beat.models import PeriodicTask
 
     task = PeriodicTask.objects.filter(

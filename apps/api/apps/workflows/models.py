@@ -18,7 +18,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 
 from core.access.catalog import DepartmentKind
-from core.models import BaseModel
+from core.models import OrgOwnedModel
 
 
 class StageKind(models.TextChoices):
@@ -86,7 +86,7 @@ TERMINAL_DECISIONS = frozenset({Decision.SELECT, Decision.REJECT})
 ADVISORY_DECISIONS = frozenset({Decision.RECOMMEND_SELECT, Decision.RECOMMEND_REJECT})
 
 
-class HiringWorkflow(BaseModel):
+class HiringWorkflow(OrgOwnedModel):
     name = models.CharField(max_length=120, unique=True)
     description = models.CharField(max_length=255, blank=True)
     department_kind = models.CharField(
@@ -119,7 +119,7 @@ class HiringWorkflow(BaseModel):
             raise ValidationError({"is_published": "A workflow needs stages before publishing."})
 
 
-class WorkflowStage(BaseModel):
+class WorkflowStage(OrgOwnedModel):
     """
     One step. Everything the engine needs to run it is a field here.
 
@@ -215,7 +215,7 @@ class WorkflowStage(BaseModel):
             )
 
 
-class StageTransition(BaseModel):
+class StageTransition(OrgOwnedModel):
     """
     `(from_stage, decision) -> to_stage`.
 
@@ -254,7 +254,7 @@ class StageTransition(BaseModel):
                 raise ValidationError({"to_stage": "A stage cannot transition to itself."})
 
 
-class FeedbackForm(BaseModel):
+class FeedbackForm(OrgOwnedModel):
     """A structured assessment captured at an interview stage."""
 
     name = models.CharField(max_length=120, unique=True)
@@ -274,7 +274,7 @@ class FeedbackFieldKind(models.TextChoices):
     CHOICE = "choice", "Single choice"
 
 
-class FeedbackField(BaseModel):
+class FeedbackField(OrgOwnedModel):
     form = models.ForeignKey(FeedbackForm, on_delete=models.CASCADE, related_name="fields")
     key = models.SlugField(max_length=50)
     label = models.CharField(max_length=200)

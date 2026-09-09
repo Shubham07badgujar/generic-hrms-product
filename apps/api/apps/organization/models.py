@@ -18,7 +18,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 
 from core.access.catalog import DepartmentKind, Layer
-from core.models import BaseModel
+from core.models import BaseModel, OrgOwnedModel
 from core.validators import STORED_PATH_MAX
 
 
@@ -282,7 +282,7 @@ def current_org_settings():
     return OrgSettings.for_org(organization) if organization is not None else None
 
 
-class Location(BaseModel):
+class Location(OrgOwnedModel):
     name = models.CharField(max_length=120)
     code = models.CharField(max_length=20, unique=True)
     address = models.TextField(blank=True)
@@ -300,7 +300,7 @@ class Location(BaseModel):
         return self.name
 
 
-class Department(BaseModel):
+class Department(OrgOwnedModel):
     """
     A department. `kind` groups it into one of the four functional areas the
     role hierarchy is built around.
@@ -377,7 +377,7 @@ class Department(BaseModel):
         return found
 
 
-class Designation(BaseModel):
+class Designation(OrgOwnedModel):
     """A job title. Distinct from Role: a title describes the work, a role
     grants authority. 'Senior Physiotherapist' is a designation; `therapist`
     is the role."""
@@ -400,7 +400,7 @@ class Designation(BaseModel):
         return self.title
 
 
-class EmployeeLevel(BaseModel):
+class EmployeeLevel(OrgOwnedModel):
     """
     Seniority band, aligned to the five-layer hierarchy.
 
@@ -422,7 +422,7 @@ class EmployeeLevel(BaseModel):
         return self.name
 
 
-class Team(BaseModel):
+class Team(OrgOwnedModel):
     name = models.CharField(max_length=120)
     code = models.CharField(max_length=20, unique=True)
     department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name="teams")

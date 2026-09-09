@@ -41,106 +41,18 @@ TENANT_EXEMPT: dict[str, str] = {
     ),
 }
 
-#: NOT YET CONVERTED. Each entry is a table whose rows are tenant data but
-#: which does not carry the column yet, so queries against it are NOT scoped by
-#: organization. Delete entries as apps are converted; the list is the backlog
-#: and the honest statement of what is currently unprotected.
-PENDING_TENANCY: frozenset[str] = frozenset(
-    {
-        "accounts.Role",
-        "accounts.RolePermission",
-        "accounts.UserRole",
-        "accounts.UserPermissionOverride",
-        "organization.Department",
-        "organization.Designation",
-        "organization.Location",
-        "organization.EmployeeLevel",
-        "organization.Team",
-        "employees.Employee",
-        "employees.EmployeeAddress",
-        "employees.EmergencyContact",
-        "employees.EmployeeEducation",
-        "employees.EmployeeExperience",
-        "employees.DocumentType",
-        "employees.EmployeeDocument",
-        "employees.ProbationReview",
-        "assets.AssetCategory",
-        "assets.Asset",
-        "assets.AssetAllocation",
-        "assets.AssetMaintenanceLog",
-        "itaccounts.CompanyEmailAccount",
-        "attendance.AttendanceDevice",
-        "attendance.EsslEmployeeLink",
-        "attendance.RawPunch",
-        "attendance.AttendanceRecord",
-        "attendance.RegularizationRequest",
-        "attendance.ShiftRule",
-        "attendance.EsslSyncRun",
-        "leave.LeaveType",
-        "leave.LeavePolicy",
-        "leave.HolidayCalendar",
-        "leave.Holiday",
-        "leave.LeaveBalance",
-        "leave.LeaveRequest",
-        "leave.LeaveTransaction",
-        "leave.LeaveSettings",
-        "leave.ShortLeave",
-        "leave.ShortLeaveConversion",
-        "leave.HolidayWork",
-        "payroll.SalaryComponent",
-        "payroll.SalaryStructure",
-        "payroll.SalaryStructureLine",
-        "payroll.InvestmentDeclaration",
-        "payroll.PayrollRun",
-        "payroll.Payslip",
-        "payroll.PayslipLine",
-        "payroll.StatutoryContribution",
-        "payroll.PayrollAdjustment",
-        "payroll.EmployeeLoan",
-        "payroll.ReimbursementClaim",
-        "payroll.EmployeePackage",
-        "payroll.PackagePeriod",
-        "payroll.PackageDeferral",
-        "recruitment.JobOpening",
-        "recruitment.Candidate",
-        "recruitment.ConsentRecord",
-        "recruitment.CandidateExternalRef",
-        "recruitment.Application",
-        "recruitment.ApplicationEvent",
-        "recruitment.Interview",
-        "recruitment.InterviewFeedback",
-        "recruitment.StageDecision",
-        "recruitment.CandidateRejection",
-        "recruitment.DecisionOverride",
-        "recruitment.Offer",
-        "recruitment.CandidateNotification",
-        "recruitment.InterviewSlotInvite",
-        "workflows.HiringWorkflow",
-        "workflows.WorkflowStage",
-        "workflows.StageTransition",
-        "workflows.FeedbackForm",
-        "workflows.FeedbackField",
-        "onboarding.OnboardingTemplate",
-        "onboarding.OnboardingTemplateItem",
-        "onboarding.EmployeeOnboarding",
-        "onboarding.OnboardingItem",
-        "onboarding.LetterTemplate",
-        "onboarding.EmployeeLetter",
-        "offboarding.ResignationRequest",
-        "offboarding.ClearanceTemplate",
-        "offboarding.ClearanceTemplateItem",
-        "offboarding.ExitWorkflow",
-        "offboarding.ExitClearanceItem",
-        "offboarding.FinalSettlement",
-        "offboarding.ExitInterview",
-        "notifications.Notification",
-        "notifications.NotificationPreference",
-        "notifications.NotificationDelivery",
-        "imports.ImportBatch",
-        "imports.ImportRow",
-        "reporting.MetricSnapshot",
-    }
-)
+#: NOT YET CONVERTED -- and now empty.
+#:
+#: This held 91 tables whose rows are tenant data but which did not yet carry
+#: the column, so queries against them were NOT organization-scoped. It existed
+#: so that "unprotected" was a list somebody had to delete rather than an
+#: absence nobody noticed, and `access.E005` made it impossible for a new model
+#: to join the set by accident.
+#:
+#: It is empty because every one of them was converted. Keep the mechanism: it
+#: costs nothing, and it is what will catch the next model added without a
+#: tenancy decision.
+PENDING_TENANCY: frozenset[str] = frozenset()
 
 
 def is_tenanted(model) -> bool:

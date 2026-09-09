@@ -14,10 +14,10 @@ from __future__ import annotations
 
 from django.db import models
 
-from core.models import BaseModel
+from core.models import OrgOwnedModel
 
 
-class MetricSnapshot(BaseModel):
+class MetricSnapshot(OrgOwnedModel):
     metric_key = models.CharField(max_length=80, db_index=True)
     #: The grouping this row belongs to, e.g. {"department": "<uuid>"}.
     #: Empty for an organisation-wide total.

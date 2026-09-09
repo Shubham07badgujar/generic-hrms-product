@@ -35,6 +35,14 @@ python manage.py migrate --noinput
 echo "[entrypoint] collecting static files..."
 python manage.py collectstatic --noinput --clear
 
+# The periodic-task rows used to be created by data migrations, which made the
+# schedule a property of the migration history: regenerating that history
+# silently dropped every scheduled job, and nothing failed -- leave accrual and
+# the candidate PII purge would simply have stopped. Asserting the schedule on
+# every deploy makes it a property of the deployment instead. Idempotent.
+echo "[entrypoint] syncing beat schedule..."
+python manage.py sync_beat_schedule
+
 # The system check fails the boot on any API view that is not RBAC-mapped.
 # Running it here means a route someone forgot to secure stops the deploy
 # rather than reaching production unguarded.

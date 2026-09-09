@@ -9,6 +9,7 @@ markers = [
     "compliance: asserts lawful values (requires a VERIFIED rule set)",
     "meta: structural test that guards an architectural rule",
     "rbac: permission and scope enforcement",
+    "unbound_organization: starts with NO organization bound (tests about tenancy binding itself)",
     # Expected to FAIL while any statutory question is unresolved. Run
     # `-m 'not dispute'` day to day; the full suite is the release gate.
     "dispute: unresolved statutory interpretation question",

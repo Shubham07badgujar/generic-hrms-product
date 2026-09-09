@@ -75,6 +75,40 @@ def _no_throttling(settings):
 SESSION_ORG_ID = uuid.UUID("00000000-0000-0000-0000-0000000000a1")
 
 
+@pytest.fixture(autouse=True)
+def _bind_session_organization(request):
+    """
+    Bind the session organization for the duration of every test.
+
+    Tenant-owned models take their organization from the acting context when
+    they are created, and in production that context is bound by the access
+    layer on every authenticated request. Tests build rows directly, outside
+    any request, so without this they hit `OrgContextMissing` -- correctly, and
+    uselessly, in hundreds of places that are not about tenancy at all.
+
+    Uses the fixed id rather than querying, so it costs nothing and works in
+    tests that never touch the database.
+
+    The cross-tenant suites deliberately do NOT rely on this: they bind their
+    own organizations explicitly with `acting_as`, because a test about
+    isolation must not inherit its tenant from a fixture.
+    """
+    from core.middleware import _current_org
+
+    if request.node.get_closest_marker("unbound_organization"):
+        # Tests ABOUT the binding must not be handed one. Marked rather than
+        # opted into, so the default stays "bound" for the hundreds of tests
+        # that are not about tenancy.
+        yield
+        return
+
+    token = _current_org.set(SESSION_ORG_ID)
+    try:
+        yield
+    finally:
+        _current_org.reset(token)
+
+
 @pytest.fixture(scope="session")
 def _platform_seed(django_db_setup, django_db_blocker):
     """
@@ -109,7 +143,7 @@ def organization(db, _platform_seed):
 
 
 @pytest.fixture(scope="session")
-def _seeded_roles(django_db_setup, django_db_blocker):
+def _seeded_roles(django_db_setup, django_db_blocker, _platform_seed):
     """
     Seed the role catalogue ONCE for the whole session.
 
@@ -119,8 +153,9 @@ def _seeded_roles(django_db_setup, django_db_blocker):
     while its own writes roll back as usual.
     """
     from apps.accounts.services.roles import seed_roles
+    from core.middleware import acting_as
 
-    with django_db_blocker.unblock():
+    with django_db_blocker.unblock(), acting_as(None, organization=SESSION_ORG_ID):
         seed_roles()
 
 

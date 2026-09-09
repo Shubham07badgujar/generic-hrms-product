@@ -20,7 +20,7 @@ from django.db import models
 from django.db.models.functions import Length
 from django.utils import timezone
 
-from core.models import BaseModel
+from core.models import OrgOwnedModel
 from core.validators import STORED_PATH_MAX
 from core.phone import to_e164_in
 
@@ -65,7 +65,7 @@ class ApplicationStatus(models.TextChoices):
     WITHDRAWN = "withdrawn", "Withdrawn"
 
 
-class JobOpening(BaseModel):
+class JobOpening(OrgOwnedModel):
     title = models.CharField(max_length=160)
     #: The workflow this job runs. The ONLY thing that differs between a
     #: Therapist pipeline and an Office Boy pipeline.
@@ -250,7 +250,7 @@ class LegalBasis(models.TextChoices):
     LEGACY_UNRECORDED = "legacy_unrecorded", "Legacy — basis not recorded"
 
 
-class Candidate(BaseModel):
+class Candidate(OrgOwnedModel):
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100, blank=True)
 
@@ -374,7 +374,7 @@ class Candidate(BaseModel):
         return f"{self.first_name} {self.last_name}".strip()
 
 
-class ConsentRecord(BaseModel):
+class ConsentRecord(OrgOwnedModel):
     """
     Per-candidate ledger of what we relied on to hold their data, and when.
 
@@ -450,7 +450,7 @@ class ConsentRecord(BaseModel):
         return self.withdrawn_at is None
 
 
-class CandidateExternalRef(BaseModel):
+class CandidateExternalRef(OrgOwnedModel):
     """
     A platform's own identifier for a candidate.
 
@@ -482,7 +482,7 @@ class CandidateExternalRef(BaseModel):
         return f"{self.source}:{self.external_id}"
 
 
-class Application(BaseModel):
+class Application(OrgOwnedModel):
     """A candidate's progress through one job's workflow."""
 
     candidate = models.ForeignKey(Candidate, on_delete=models.PROTECT, related_name="applications")
@@ -532,7 +532,7 @@ class Application(BaseModel):
         return self.status == ApplicationStatus.ACTIVE
 
 
-class ApplicationEvent(BaseModel):
+class ApplicationEvent(OrgOwnedModel):
     """
     The candidate journey, append-only.
 
@@ -595,7 +595,7 @@ class InterviewStatus(models.TextChoices):
 BLOCKING_INTERVIEW_STATUSES = (InterviewStatus.SCHEDULED, InterviewStatus.RESCHEDULED)
 
 
-class Interview(BaseModel):
+class Interview(OrgOwnedModel):
     application = models.ForeignKey(
         Application, on_delete=models.CASCADE, related_name="interviews"
     )
@@ -689,7 +689,7 @@ class Recommendation(models.TextChoices):
     NO_HIRE = "no hire", "No hire"
 
 
-class InterviewFeedback(BaseModel):
+class InterviewFeedback(OrgOwnedModel):
     """
     Structured assessment from one interview.
 
@@ -729,7 +729,7 @@ class InterviewFeedback(BaseModel):
         return f"{self.interview} · {self.recommendation}"
 
 
-class StageDecision(BaseModel):
+class StageDecision(OrgOwnedModel):
     """
     A decision recorded at a stage.
 
@@ -760,7 +760,7 @@ class StageDecision(BaseModel):
         return f"{self.application_id} · {self.stage.name} · {self.decision}"
 
 
-class CandidateRejection(BaseModel):
+class CandidateRejection(OrgOwnedModel):
     """
     The FINAL rejection. HR Head only.
 
@@ -801,7 +801,7 @@ class CandidateRejection(BaseModel):
         return f"Rejected: {self.candidate.full_name}"
 
 
-class DecisionOverride(BaseModel):
+class DecisionOverride(OrgOwnedModel):
     """
     An Admin override of a decision Admin does not normally own.
 
@@ -858,7 +858,7 @@ class OfferStatus(models.TextChoices):
     WITHDRAWN = "withdrawn", "Withdrawn"
 
 
-class Offer(BaseModel):
+class Offer(OrgOwnedModel):
     application = models.OneToOneField(
         Application, on_delete=models.PROTECT, related_name="offer"
     )
@@ -934,7 +934,7 @@ class CandidateNotificationStatus(models.TextChoices):
     SKIPPED = "skipped", "Skipped — no email address"
 
 
-class CandidateNotification(BaseModel):
+class CandidateNotification(OrgOwnedModel):
     """
     One email to one candidate about one application: the communication log.
 
@@ -1003,7 +1003,7 @@ class SlotInviteStatus(models.TextChoices):
     CANCELLED = "cancelled", "Withdrawn"
 
 
-class InterviewSlotInvite(BaseModel):
+class InterviewSlotInvite(OrgOwnedModel):
     """
     One round's invitation to pick an interview time.
 

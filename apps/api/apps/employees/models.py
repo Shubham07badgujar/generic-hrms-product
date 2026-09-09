@@ -21,7 +21,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 
 from core.fields import EncryptedCharField, mask_aadhaar, mask_bank_account, mask_pan
-from core.models import BaseModel
+from core.models import OrgOwnedModel
 from core.validators import STORED_PATH_MAX, scoped_storage_path
 
 
@@ -81,7 +81,7 @@ class Gender(models.TextChoices):
     OTHER = "O", "Other"
 
 
-class Employee(BaseModel):
+class Employee(OrgOwnedModel):
     employee_code = models.CharField(max_length=20, unique=True, db_index=True)
 
     #: The login, when one exists. SET_NULL rather than CASCADE: deleting an
@@ -294,7 +294,7 @@ class Employee(BaseModel):
         return found
 
 
-class EmployeeAddress(BaseModel):
+class EmployeeAddress(OrgOwnedModel):
     class Kind(models.TextChoices):
         CURRENT = "current", "Current"
         PERMANENT = "permanent", "Permanent"
@@ -314,7 +314,7 @@ class EmployeeAddress(BaseModel):
         ]
 
 
-class EmergencyContact(BaseModel):
+class EmergencyContact(OrgOwnedModel):
     employee = models.ForeignKey(
         Employee, on_delete=models.CASCADE, related_name="emergency_contacts"
     )
@@ -324,7 +324,7 @@ class EmergencyContact(BaseModel):
     email = models.EmailField(blank=True)
 
 
-class EmployeeEducation(BaseModel):
+class EmployeeEducation(OrgOwnedModel):
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="education")
     degree = models.CharField(max_length=150)
     institution = models.CharField(max_length=200)
@@ -332,7 +332,7 @@ class EmployeeEducation(BaseModel):
     grade = models.CharField(max_length=40, blank=True)
 
 
-class EmployeeExperience(BaseModel):
+class EmployeeExperience(OrgOwnedModel):
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="experience")
     company = models.CharField(max_length=200)
     designation = models.CharField(max_length=150)
@@ -396,7 +396,7 @@ class DocumentCategory(models.TextChoices):
     OTHER = "other", "Other"
 
 
-class DocumentType(BaseModel):
+class DocumentType(OrgOwnedModel):
     """
     The catalogue of documents the organisation asks for.
 
@@ -443,7 +443,7 @@ def employee_document_path(instance, filename: str) -> str:
     return scoped_storage_path("employee-documents", instance.employee_id, filename)
 
 
-class EmployeeDocument(BaseModel):
+class EmployeeDocument(OrgOwnedModel):
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="documents")
     document_type = models.ForeignKey(
         DocumentType, on_delete=models.PROTECT, related_name="documents"
@@ -530,7 +530,7 @@ class ProbationDecision(models.TextChoices):
     TERMINATE = "terminate", "Terminate"
 
 
-class ProbationReview(BaseModel):
+class ProbationReview(OrgOwnedModel):
     """
     The record of a probation being assessed and decided.
 

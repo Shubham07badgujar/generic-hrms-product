@@ -95,29 +95,39 @@ def create_admin(
     if User.objects.filter(email=email).exists():
         raise BootstrapError(f"A user with email {email!r} already exists.")
 
-    user = User.objects.create_user(
-        email=email,
-        password=None,  # unusable; set out of band
-        first_name=first_name,
-        last_name=last_name,
-        is_staff=True,  # Django-admin access for the founding operator
-    )
-    user.must_change_password = True
-    user.save(update_fields=["must_change_password"])
-
-    UserRole.objects.create(user=user, role=admin_role, assigned_by=actor)
-
-    # Without this the founding Admin resolves to DENY_ALL and cannot use the
-    # system they were created to administer: tenant identity comes from a
-    # membership and nowhere else. Same transaction as the account and the role
-    # grant, so bootstrap either produces a usable Admin or nothing at all.
     from apps.organization.models import OrganizationMembership
+    from core.middleware import acting_as
 
-    OrganizationMembership.objects.create(
-        organization=organization or _bootstrap_organization(), user=user
-    )
+    organization = organization or _bootstrap_organization()
 
-    _audit_bootstrap(user, actor=actor)
+    # Bootstrap is reachable over HTTP, and that route is `access_exempt` --
+    # so RBACPermission short-circuits and the access layer never resolves a
+    # context, which means nothing binds an organization for the writes below.
+    # Every tenant-owned row created here would otherwise fail with
+    # OrgContextMissing. Binding explicitly is right regardless: this service
+    # KNOWS which organization it is provisioning, and a service that knows
+    # should never depend on ambient state.
+    with acting_as(actor, organization=organization):
+        user = User.objects.create_user(
+            email=email,
+            password=None,  # unusable; set out of band
+            first_name=first_name,
+            last_name=last_name,
+            is_staff=True,  # Django-admin access for the founding operator
+        )
+        user.must_change_password = True
+        user.save(update_fields=["must_change_password"])
+
+        UserRole.objects.create(user=user, role=admin_role, assigned_by=actor)
+
+        # Without this the founding Admin resolves to DENY_ALL and cannot use
+        # the system they were created to administer: tenant identity comes
+        # from a membership and nowhere else. Same transaction as the account
+        # and the role grant, so bootstrap either produces a usable Admin or
+        # nothing at all.
+        OrganizationMembership.objects.create(organization=organization, user=user)
+
+        _audit_bootstrap(user, actor=actor)
     return user
 
 

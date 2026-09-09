@@ -123,8 +123,17 @@ def test_the_sync_is_audited_as_one_import_event(essl_settings, device, worker, 
 
 
 def test_the_beat_schedule_is_registered():
-    """A sync nobody schedules is a sync nobody runs."""
+    """
+    A sync nobody schedules is a sync nobody runs.
+
+    Registered by `sync_beat_schedule` rather than by a data migration, so the
+    command is what this test exercises -- see the note in
+    tests/imports/test_staging_retention.py.
+    """
+    from django.core.management import call_command
     from django_celery_beat.models import PeriodicTask
+
+    call_command("sync_beat_schedule", verbosity=0)
 
     task = PeriodicTask.objects.filter(task="attendance.sync_essl").first()
     assert task is not None

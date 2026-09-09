@@ -91,6 +91,15 @@ def acting_as(user, request_id=None, organization=None):
     from core.access import context as access_context
 
     org_id = getattr(organization, "pk", organization)
+    if org_id is None and user is not None:
+        # Derived from the principal, never guessed. Without this,
+        # `acting_as(user)` -- the pre-tenancy signature, still used wherever
+        # only attribution was wanted -- would bind None and actively UNBIND
+        # whatever organization was in force, turning a helper that adds
+        # context into one that silently removes it.
+        from core.access.context import get_context
+
+        org_id = get_context(user).organization_id
 
     user_token = _current_user.set(user)
     rid_token = _request_id.set(request_id or uuid.uuid4())

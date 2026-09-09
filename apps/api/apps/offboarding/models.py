@@ -24,7 +24,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
-from core.models import BaseModel
+from core.models import OrgOwnedModel
 from core.validators import STORED_PATH_MAX, scoped_storage_path
 
 
@@ -76,7 +76,7 @@ class ResignationReason(models.TextChoices):
     OTHER = "other", "Other"
 
 
-class ResignationRequest(BaseModel):
+class ResignationRequest(OrgOwnedModel):
     """
     An employee's resignation, as a REQUEST.
 
@@ -173,7 +173,7 @@ class ClearanceCategory(models.TextChoices):
     ASSETS = "assets", "Company property"
 
 
-class ClearanceTemplate(BaseModel):
+class ClearanceTemplate(OrgOwnedModel):
     name = models.CharField(max_length=140)
     description = models.CharField(max_length=255, blank=True)
     department = models.ForeignKey(
@@ -190,7 +190,7 @@ class ClearanceTemplate(BaseModel):
         return self.name
 
 
-class ClearanceTemplateItem(BaseModel):
+class ClearanceTemplateItem(OrgOwnedModel):
     template = models.ForeignKey(
         ClearanceTemplate, on_delete=models.CASCADE, related_name="items"
     )
@@ -232,7 +232,7 @@ def clearance_evidence_path(instance, filename: str) -> str:
     )
 
 
-class ExitWorkflow(BaseModel):
+class ExitWorkflow(OrgOwnedModel):
     """
     One employee's exit.
 
@@ -356,7 +356,7 @@ class ExitWorkflow(BaseModel):
         return done, items.count()
 
 
-class ExitClearanceItem(BaseModel):
+class ExitClearanceItem(OrgOwnedModel):
     """
     One clearance line, copied from a template at exit time.
 
@@ -425,7 +425,7 @@ class SettlementStatus(models.TextChoices):
     DISPUTED = "disputed", "Disputed"
 
 
-class FinalSettlement(BaseModel):
+class FinalSettlement(OrgOwnedModel):
     """
     Full and final settlement — the FOUNDATION only.
 
@@ -510,7 +510,7 @@ class RehireEligibility(models.TextChoices):
     UNDECIDED = "undecided", "Not decided"
 
 
-class ExitInterview(BaseModel):
+class ExitInterview(OrgOwnedModel):
     """
     The exit conversation.
 

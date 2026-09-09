@@ -21,6 +21,8 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from core.middleware import acting_as
+
 from apps.recruitment.services import public_intake
 
 
@@ -78,21 +80,28 @@ class PublicApplyView(APIView):
     def post(self, request, token: str):
         job = public_intake.job_for_token(token)
         incoming = _normalise_multipart(request.data)
+        # The token names one job opening, and that job belongs to exactly one
+        # organization -- so the candidate does too. Bound explicitly because
+        # this route is `access_exempt`: RBACPermission short-circuits, the
+        # access layer never resolves a context, and nothing else would give
+        # these writes an owner. An anonymous applicant has no principal to
+        # derive one from, which is precisely why the TOKEN has to carry it.
         if hasattr(request, "FILES") and request.FILES.get("resume") is not None:
             incoming = {**incoming, "resume": request.FILES["resume"]}
         payload = PublicApplicationSerializer(data=incoming)
         payload.is_valid(raise_exception=True)
         data = payload.validated_data
         try:
-            result = public_intake.public_apply(
-                job=job,
-                submission_id=data["submission_id"],
-                answers=data["answers"],
-                consented=data["consent"],
-                source="hosted_form",
-                remote_meta={"user_agent": request.META.get("HTTP_USER_AGENT", "")[:200]},
-                resume_file=data.get("resume"),
-            )
+            with acting_as(None, organization=job.organization_id):
+                result = public_intake.public_apply(
+                    job=job,
+                    submission_id=data["submission_id"],
+                    answers=data["answers"],
+                    consented=data["consent"],
+                    source="hosted_form",
+                    remote_meta={"user_agent": request.META.get("HTTP_USER_AGENT", "")[:200]},
+                    resume_file=data.get("resume"),
+                )
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}
             raise DRFValidationError(detail) from exc
@@ -138,11 +147,14 @@ class PublicSlotView(APIView):
         payload = SlotSelectionSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         try:
-            invite = slots.select_slot(
-                invite=invite,
-                start=payload.validated_data["start"],
-                end=payload.validated_data["end"],
-            )
+            # Same as the application form above: anonymous route, so the token
+            # is the only thing that knows which organization this belongs to.
+            with acting_as(None, organization=invite.organization_id):
+                invite = slots.select_slot(
+                    invite=invite,
+                    start=payload.validated_data["start"],
+                    end=payload.validated_data["end"],
+                )
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}
             raise DRFValidationError(detail) from exc

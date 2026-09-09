@@ -133,6 +133,21 @@ def check_tenancy_coverage(app_configs, **kwargs):
             )
         )
 
+    # An entry still on the backlog for a model that has since been converted
+    # makes the backlog read longer than it is, which is how a list like this
+    # stops being believed.
+    for label in sorted(PENDING_TENANCY):
+        if label in real_labels and is_tenanted(django_apps.get_model(*label.split("."))):
+            errors.append(
+                Error(
+                    f"'{label}' is on the tenancy backlog but already carries "
+                    f"an organization.",
+                    hint="Remove it from PENDING_TENANCY.",
+                    id="access.E007",
+                    obj="core.access.tenancy",
+                )
+            )
+
     # A backlog entry naming a model that no longer exists hides the fact that
     # the real one is unprotected -- and leaves a dead name in a security list,
     # which is how `CredentialHandoff` sat in the view allow-list for a view

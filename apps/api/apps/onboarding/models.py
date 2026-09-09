@@ -20,7 +20,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
-from core.models import BaseModel
+from core.models import OrgOwnedModel
 from core.validators import STORED_PATH_MAX, scoped_storage_path
 
 
@@ -48,7 +48,7 @@ class ItemOwner(models.TextChoices):
     ADMIN = "admin", "Administrator"
 
 
-class OnboardingTemplate(BaseModel):
+class OnboardingTemplate(OrgOwnedModel):
     name = models.CharField(max_length=140)
     description = models.CharField(max_length=255, blank=True)
     #: Optional narrowing. A template with neither is the organisation default.
@@ -66,7 +66,7 @@ class OnboardingTemplate(BaseModel):
         return self.name
 
 
-class OnboardingTemplateItem(BaseModel):
+class OnboardingTemplateItem(OrgOwnedModel):
     template = models.ForeignKey(
         OnboardingTemplate, on_delete=models.CASCADE, related_name="items"
     )
@@ -109,7 +109,7 @@ class OnboardingStatus(models.TextChoices):
     CANCELLED = "cancelled", "Cancelled"
 
 
-class EmployeeOnboarding(BaseModel):
+class EmployeeOnboarding(OrgOwnedModel):
     employee = models.OneToOneField(
         "employees.Employee", on_delete=models.CASCADE, related_name="onboarding"
     )
@@ -172,7 +172,7 @@ def onboarding_item_path(instance, filename: str) -> str:
     return scoped_storage_path("onboarding", instance.onboarding.employee_id, filename)
 
 
-class OnboardingItem(BaseModel):
+class OnboardingItem(OrgOwnedModel):
     """
     One line of one employee's checklist.
 
@@ -260,7 +260,7 @@ class LetterType(models.TextChoices):
     OTHER = "other", "Other"
 
 
-class LetterTemplate(BaseModel):
+class LetterTemplate(OrgOwnedModel):
     """
     A letter as a template, not a hand-written document.
 
@@ -302,7 +302,7 @@ def letter_path(instance, filename: str) -> str:
     return scoped_storage_path("letters", instance.employee_id, filename)
 
 
-class EmployeeLetter(BaseModel):
+class EmployeeLetter(OrgOwnedModel):
     employee = models.ForeignKey(
         "employees.Employee", on_delete=models.CASCADE, related_name="letters"
     )
