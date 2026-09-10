@@ -33,10 +33,9 @@ against.
 
 from __future__ import annotations
 
-import re
-
 import pytest
-from django.urls import URLPattern, URLResolver, clear_url_caches, get_resolver
+
+from core.access.routewalk import concretize, detail_routes, model_of, rows_for
 
 pytestmark = [pytest.mark.django_db, pytest.mark.unbound_organization]
 
@@ -57,54 +56,6 @@ EXCLUDED = (
 REFUSED = {403, 404, 405}
 
 
-def _detail_routes():
-    """(path template, view class) for every route under /api/."""
-    found = []
-
-    def walk(resolver, prefix=""):
-        for entry in resolver.url_patterns:
-            if isinstance(entry, URLResolver):
-                walk(entry, prefix + str(entry.pattern))
-            elif isinstance(entry, URLPattern):
-                full = prefix + str(entry.pattern)
-                if not full.startswith("api/"):
-                    continue
-                callback = getattr(entry, "callback", None)
-                view = getattr(callback, "cls", None) or getattr(
-                    callback, "view_class", None
-                )
-                if view is not None:
-                    found.append((full, view))
-
-    walk(get_resolver())
-    clear_url_caches()
-    return found
-
-
-def _concrete(template: str, pk) -> str | None:
-    """
-    Turn a route pattern into a walkable path, or None.
-
-    Order matters. DRF's router emits `(?P<pk>[^/.]+)`, and a substitution for
-    Django's `<pk>` converter syntax matches the `<pk>` INSIDE that named group
-    -- rewriting it to `(?PXXXX[^/.]+)` and leaving a pattern that never
-    resolves. The named group therefore has to go first. Getting this backwards
-    silently produced zero walkable routes, which the guard below caught.
-    """
-    if "format" in template:
-        return None  # the `.json` suffix variants are the same routes twice
-    path = re.sub(r"\(\?P<pk>[^)]*\)", str(pk), template)  # DRF router first
-    path = re.sub(r"<[^:>]*:?pk>", str(pk), path)          # then path() converters
-    path = path.replace("^", "").replace("$", "")
-    if "<" in path or any(ch in path for ch in "[]*+|()?"):
-        return None
-    return "/" + path
-
-
-def _model_of(view):
-    return getattr(getattr(view, "queryset", None), "model", None)
-
-
 def _probe_pairs(org_a, org_b):
     """
     (A's path, B's path, description) for each detail route.
@@ -113,23 +64,18 @@ def _probe_pairs(org_a, org_b):
     exactly one thing: whose row the id names.
     """
     pairs = []
-    for template, view in _detail_routes():
+    for template, view in detail_routes():
         if "pk" not in template:
             continue
-        model = _model_of(view)
+        model = model_of(view)
         if model is None or not hasattr(model, "organization_id"):
             continue
-        # Deliberately-exempt tables keep a plain manager, so the escape hatch
-        # may not exist. Falling back is safe only because nothing filters
-        # those yet.
-        manager = model.objects
-        rows = manager.all_orgs() if hasattr(manager, "all_orgs") else manager.all()
-        mine = rows.filter(organization_id=org_a.organization.pk).first()
-        theirs = rows.filter(organization_id=org_b.organization.pk).first()
+        mine = rows_for(model, org_a.organization.pk).first()
+        theirs = rows_for(model, org_b.organization.pk).first()
         if mine is None or theirs is None:
             continue
-        my_path = _concrete(template, mine.pk)
-        their_path = _concrete(template, theirs.pk)
+        my_path = concretize(template, mine.pk)
+        their_path = concretize(template, theirs.pk)
         if not my_path or not their_path or my_path in EXCLUDED:
             continue
         pairs.append((my_path, their_path, f"{view.__name__} -> {model._meta.label}"))
@@ -183,7 +129,7 @@ def test_the_walker_finds_routes_that_can_answer(org_a, org_b, api_for, capsys):
 
     A collector that silently found nothing would make the assertion below pass
     forever while probing no routes at all. Not hypothetical: an earlier
-    `_concrete` substituted in the wrong order, produced zero walkable routes,
+    `concretize` substituted in the wrong order, produced zero walkable routes,
     and would have reported the entire API surface clean.
 
     The counts are printed rather than only asserted, because "the walker
@@ -200,7 +146,7 @@ def test_the_walker_finds_routes_that_can_answer(org_a, org_b, api_for, capsys):
         print(
             f"\n  cross-tenant walk: {len(discriminating)} discriminating routes"
             f" / {len(viewsets)} viewsets / {len(reached)} apps"
-            f"  (of {len(pairs)} probeable, {len(_detail_routes())} total)"
+            f"  (of {len(pairs)} probeable, {len(detail_routes())} total)"
         )
 
     assert len(discriminating) >= MIN_ROUTES, (

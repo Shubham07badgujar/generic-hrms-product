@@ -14,6 +14,14 @@ was on its way into a document that would have claimed it was. So this module
 exists to make the walker's coverage a function of the fixture rather than of
 what anyone remembered to list.
 
+`scripts/verify_tenant_isolation.py` imports this too, and that is deliberate.
+Both need the same thing -- an organization populated broadly enough that the
+walk asks about payroll, recruitment and offboarding rather than about
+departments six times -- and two definitions of it would drift. The one that
+drifted would be the script, because the suite runs on every commit and the
+script does not, which would leave the customer-facing report quietly claiming
+more than it covered.
+
 Rows are created straight through the ORM, deliberately: a service call would
 apply business rules, refuse half of these states as invalid transitions, and
 turn the fixture into an argument about workflow correctness instead of a
