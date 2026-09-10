@@ -1,20 +1,22 @@
 """Seed the approved hiring workflow configurations."""
 
-from django.core.management.base import BaseCommand
-
-from apps.workflows.seeds import seed_workflows
+from core.management.orgcommand import OrganizationCommand
 
 
-class Command(BaseCommand):
+class Command(OrganizationCommand):
     help = "Create or update the approved hiring workflows (idempotent)."
 
-    def handle(self, *args, **options):
-        workflows = seed_workflows()
-        for workflow in workflows:
+    def handle_for_organization(self, organization, *args, **options):
+        from apps.workflows.seeds import seed_workflows
+
+        for workflow in seed_workflows():
             stages = workflow.stages.count()
-            transitions = sum(s.outgoing_transitions.count() for s in workflow.stages.all())
+            transitions = sum(
+                s.outgoing_transitions.count() for s in workflow.stages.all()
+            )
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"  {workflow.name}: {stages} stages, {transitions} transitions"
+                    f"  {workflow.name}: {stages} stages, "
+                    f"{transitions} transitions"
                 )
             )

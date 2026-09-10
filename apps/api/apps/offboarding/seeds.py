@@ -11,9 +11,15 @@ from __future__ import annotations
 
 from django.db import transaction
 
+from core.models import org_scoped
+
 from .models import (
     ClearanceCategory as C,
+)
+from .models import (
     ClearanceOwner as O,
+)
+from .models import (
     ClearanceTemplate,
     ClearanceTemplateItem,
 )
@@ -48,7 +54,7 @@ DEFAULT_ITEMS = [
 
 @transaction.atomic
 def seed_default_clearance_template() -> ClearanceTemplate:
-    template, _ = ClearanceTemplate.objects.update_or_create(
+    template, _ = org_scoped(ClearanceTemplate).update_or_create(
         name="Standard exit clearance",
         defaults={
             "description": "Applies to any exit without a more specific template.",
@@ -57,7 +63,7 @@ def seed_default_clearance_template() -> ClearanceTemplate:
     )
 
     for title, category, owner, required, evidence, offset, order in DEFAULT_ITEMS:
-        ClearanceTemplateItem.objects.update_or_create(
+        org_scoped(ClearanceTemplateItem).update_or_create(
             template=template,
             order=order,
             defaults={

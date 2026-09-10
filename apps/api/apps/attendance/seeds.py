@@ -22,6 +22,8 @@ from decimal import Decimal
 
 from django.db import transaction
 
+from core.models import org_scoped
+
 from .models import ShiftRule
 
 DEFAULT = {
@@ -53,17 +55,21 @@ def seed_shift_rules() -> int:
     count = 0
     # get_or_create, never update: HR's edits to an existing rule outlive
     # every re-seed. Only genuinely missing rules are written.
-    ShiftRule.objects.get_or_create(location=None, defaults=_with_full_day(DEFAULT))
+    org_scoped(ShiftRule).get_or_create(
+        location=None, defaults=_with_full_day(DEFAULT)
+    )
     count += 1
 
-    for location in Location.objects.active():
+    # Scoped: unscoped, this created shift rules against every other
+    # organization's locations.
+    for location in org_scoped(Location).filter(is_active=True):
         values = dict(DEFAULT)
         for name, override in OVERRIDES.items():
             if name.lower() in location.name.lower() or (
                 name == "Head Office" and location.is_head_office
             ):
                 values.update(override)
-        ShiftRule.objects.get_or_create(
+        org_scoped(ShiftRule).get_or_create(
             location=location, defaults=_with_full_day(values)
         )
         count += 1

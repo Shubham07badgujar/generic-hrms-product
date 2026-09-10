@@ -34,18 +34,24 @@ from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
+from django.utils.text import slugify
 
-#: Configuration seeds, in dependency order. Roles first — everything else
-#: needs an actor who holds one.
-CONFIG_SEEDS = [
-    ("seed_roles", "roles and the permission matrix"),
-    ("seed_leave", "leave types, policies and a holiday calendar"),
-    ("seed_statutory", "statutory rate sets (as drafts, for you to certify)"),
-    ("seed_onboarding", "document types, checklist items, letter templates"),
-    ("seed_workflows", "hiring workflows"),
-    ("seed_offboarding", "exit clearance template"),
-    ("seed_attendance", "shift rules"),
-]
+from apps.platform.services.provisioning import CONFIG_SEEDS
+from core.middleware import acting_as
+
+#: Configuration seeds come from the PROVISIONING SERVICE, not from a list kept
+#: here.
+#:
+#: They used to be a list in this file, which is a developer convenience
+#: command. A real customer, created through the platform, would then have
+#: silently lacked whatever somebody added here and not there -- and the
+#: absence would surface months later as "why does this company have no exit
+#: clearance template". One statement of what an organization needs, imported
+#: by both.
+#:
+#: `seed_statutory` is not in it and is run separately below: India's PF, ESI
+#: and Professional Tax tables are facts about the Republic of India, seeded
+#: once per deployment, not once per customer.
 
 
 class Command(BaseCommand):
@@ -96,9 +102,18 @@ class Command(BaseCommand):
             )
 
         self._banner("1/3  Configuration")
-        for name, what in CONFIG_SEEDS:
-            self.stdout.write(f"  {name:<20} {what}")
-            call_command(name, verbosity=0)
+        # The organization has to exist and be BOUND before any of this runs.
+        # Org-owned rows take their organization from the acting context, so
+        # without it the first `LeaveType` raises `OrgContextMissing` -- which
+        # is exactly what this command did after the tenancy conversion, on
+        # every run, undetected because no test drives a seed command.
+        organization = self._ensure_organization(options)
+        call_command("seed_statutory", verbosity=0)
+        self.stdout.write(f"  {'statutory':<20} rate sets (drafts, for you to certify)")
+        with acting_as(None, organization=organization):
+            for _key, what, seed in CONFIG_SEEDS:
+                self.stdout.write(f"  {_key:<20} {what}")
+                seed(organization)
 
         self._banner("2/3  Company and people")
         self._ensure_bootstrap_admin()
@@ -121,6 +136,33 @@ class Command(BaseCommand):
         self._finish()
 
     # ---------------------------------------------------------------- pieces
+    def _ensure_organization(self, options):
+        """
+        The organization this demo lives in, adopted or created.
+
+        Adopts the sole existing one -- the single-company self-hosted case --
+        and otherwise creates one for the demo. Refuses to choose between
+        several, for the same reason every other org-scoped command does:
+        seeding one customer's configuration into another's account is silent.
+        """
+        from apps.organization.models import Organization, OrgStatus
+
+        existing = list(Organization.objects.all()[:2])
+        if len(existing) == 1:
+            return existing[0]
+        if existing:
+            raise CommandError(
+                "Several organizations exist, so there is no single one to "
+                "seed the demo into. Provision a dedicated organization and "
+                "seed it explicitly."
+            )
+        return Organization.objects.create(
+            name=self.company,
+            legal_name=options["legal_name"] or f"{self.company}.",
+            slug=slugify(self.company) or "demo",
+            status=OrgStatus.ACTIVE,
+        )
+
     def _banner(self, text):
         self.stdout.write(self.style.MIGRATE_HEADING(f"\n{text}"))
 

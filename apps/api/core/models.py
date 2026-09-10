@@ -395,3 +395,41 @@ class OrgOwnedTimestampedModel(OrgStampingMixin, TimestampedModel):
     def save(self, *args, **kwargs):
         self._stamp_organization(kwargs)
         super().save(*args, **kwargs)
+
+
+def org_scoped(model, organization=None):
+    """
+    Rows of `model` belonging to ONE organization -- the bound one by default.
+
+    For the seed and configuration code that runs OUTSIDE a request, where the
+    read-path predicate in `core.access.engine` never applies. `OrgOwnedManager`
+    deliberately does not filter (that is the eventual `TenantManager`), so a
+    bare `Model.objects.update_or_create(code=...)` there matches on a code that
+    is unique only per organization -- and finds somebody else's row.
+
+    That is not hypothetical. Every configuration seed except `seed_roles` did
+    exactly this, so provisioning a second customer UPDATED the first
+    customer's leave types, document types, letter templates, asset categories,
+    hiring workflows and clearance template, and left the second customer with
+    none of them. `update_or_create` reports success either way, so the only
+    symptom was a new company whose configuration screens were empty.
+
+    Raises rather than returning everything when no organization is bound: an
+    unscoped write here is the failure this exists to prevent, and a silent
+    fallback to "all rows" would reintroduce it at the first call site that
+    forgot to bind.
+    """
+    from core.middleware import get_current_org_id
+
+    organization_id = (
+        getattr(organization, "pk", organization)
+        if organization is not None
+        else get_current_org_id()
+    )
+    if organization_id is None:
+        raise OrgContextMissing(
+            f"Cannot scope {model._meta.label} to an organization: none is "
+            f"bound. Wrap the call in acting_as(user, organization=...), or "
+            f"pass the organization explicitly."
+        )
+    return model.objects.filter(organization_id=organization_id)

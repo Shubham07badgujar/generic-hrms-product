@@ -19,6 +19,8 @@ from decimal import Decimal
 
 from django.db import transaction
 
+from core.models import org_scoped
+
 from .models import Holiday, HolidayCalendar, LeavePolicy, LeaveSettings, LeaveType
 
 # (code, name, is_paid, order)
@@ -70,28 +72,34 @@ PUBLIC_HOLIDAYS_2026 = [
 def seed_leave() -> dict:
     types = {}
     for code, name, is_paid, order in LEAVE_TYPES:
-        row, _ = LeaveType.objects.update_or_create(
+        row, _ = org_scoped(LeaveType).update_or_create(
             code=code,
             defaults={"name": name, "is_paid": is_paid, "order": order, "is_active": True},
         )
         types[code] = row
 
-    LeaveType.objects.filter(code__in=RETIRED_TYPES).update(is_active=False)
-    LeavePolicy.objects.filter(leave_type__code__in=RETIRED_TYPES).update(is_active=False)
+    # Scoped: an unscoped bulk update here DEACTIVATED every other
+    # organization's leave types and policies of the same code.
+    org_scoped(LeaveType).filter(code__in=RETIRED_TYPES).update(is_active=False)
+    org_scoped(LeavePolicy).filter(
+        leave_type__code__in=RETIRED_TYPES
+    ).update(is_active=False)
 
     for code, defaults in POLICIES.items():
-        LeavePolicy.objects.update_or_create(
+        org_scoped(LeavePolicy).update_or_create(
             leave_type=types[code], department=None, employment_type="",
             defaults={**defaults, "is_active": True},
         )
 
     # The org default calendar: Sunday off (six-day week). Editable, never
     # assumed in code.
-    calendar, _ = HolidayCalendar.objects.get_or_create(
+    calendar, _ = org_scoped(HolidayCalendar).get_or_create(
         location=None, defaults={"name": "Standard calendar", "weekly_off": [6]}
     )
     for date, name in PUBLIC_HOLIDAYS_2026:
-        Holiday.objects.get_or_create(calendar=calendar, date=date, defaults={"name": name})
+        org_scoped(Holiday).get_or_create(
+            calendar=calendar, date=date, defaults={"name": name}
+        )
 
     LeaveSettings.get_solo()
 

@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from django.db import transaction
 
+from core.models import org_scoped
+
 from .models import (
     ItemKind,
     ItemOwner,
@@ -150,7 +152,7 @@ def seed_document_types() -> int:
     from apps.employees.models import DocumentType
 
     for order, (code, name, category, mandatory, expiry) in enumerate(DOCUMENT_TYPES):
-        DocumentType.objects.update_or_create(
+        org_scoped(DocumentType).update_or_create(
             code=code,
             defaults={
                 "name": name,
@@ -167,7 +169,7 @@ def seed_document_types() -> int:
 def seed_default_template() -> OnboardingTemplate:
     from apps.employees.models import DocumentType
 
-    template, _ = OnboardingTemplate.objects.update_or_create(
+    template, _ = org_scoped(OnboardingTemplate).update_or_create(
         name="Standard onboarding",
         defaults={
             "description": "Applies to any joiner without a more specific template.",
@@ -175,9 +177,12 @@ def seed_default_template() -> OnboardingTemplate:
         },
     )
 
-    documents = {d.code: d for d in DocumentType.objects.all()}
+    # Scoped: unscoped, a checklist item could point at ANOTHER
+    # organization's document type -- a cross-tenant foreign key that
+    # nothing downstream would catch.
+    documents = {d.code: d for d in org_scoped(DocumentType)}
     for title, kind, owner, document_code, mandatory, offset, order in DEFAULT_ITEMS:
-        OnboardingTemplateItem.objects.update_or_create(
+        org_scoped(OnboardingTemplateItem).update_or_create(
             template=template,
             order=order,
             defaults={
@@ -199,7 +204,7 @@ def seed_default_template() -> OnboardingTemplate:
 @transaction.atomic
 def seed_letter_templates() -> int:
     for letter_type, name, subject, body in LETTER_TEMPLATES:
-        LetterTemplate.objects.update_or_create(
+        org_scoped(LetterTemplate).update_or_create(
             letter_type=letter_type,
             name=name,
             defaults={"subject": subject, "body_html": body.strip(), "is_default": True},
@@ -212,7 +217,7 @@ def seed_asset_categories() -> int:
     from apps.assets.models import AssetCategory
 
     for code, name, requires_serial, returnable in ASSET_CATEGORIES:
-        AssetCategory.objects.update_or_create(
+        org_scoped(AssetCategory).update_or_create(
             code=code,
             defaults={
                 "name": name,

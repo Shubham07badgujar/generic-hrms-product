@@ -15,6 +15,7 @@ from __future__ import annotations
 from django.db import transaction
 
 from core.access.catalog import DepartmentKind, RoleCode
+from core.models import org_scoped
 
 from .models import (
     Decision,
@@ -186,11 +187,11 @@ ALL_FORMS = (CLINICAL_ASSESSMENT, OPERATIONS_ASSESSMENT)
 
 @transaction.atomic
 def build_feedback_form(spec: dict) -> FeedbackForm:
-    form, _ = FeedbackForm.objects.update_or_create(
+    form, _ = org_scoped(FeedbackForm).update_or_create(
         name=spec["name"], defaults={"description": spec.get("description", "")}
     )
     for index, (key, label, kind, required) in enumerate(spec["fields"]):
-        FeedbackField.objects.update_or_create(
+        org_scoped(FeedbackField).update_or_create(
             form=form,
             key=key,
             defaults={
@@ -213,7 +214,7 @@ def build_workflow(spec: dict) -> HiringWorkflow:
     """
     from apps.accounts.models import Role
 
-    workflow, _ = HiringWorkflow.objects.update_or_create(
+    workflow, _ = org_scoped(HiringWorkflow).update_or_create(
         name=spec["name"],
         defaults={
             "description": spec.get("description", ""),
@@ -222,12 +223,15 @@ def build_workflow(spec: dict) -> HiringWorkflow:
         },
     )
 
-    roles = {r.code: r for r in Role.objects.all()}
-    forms = {f.name: f for f in FeedbackForm.objects.all()}
+    # Scoped: unscoped, a stage's responsible_role could be another
+    # organization's Role -- and `Role.code` is unique only per
+    # organization, so the wrong one matches silently.
+    roles = {r.code: r for r in org_scoped(Role)}
+    forms = {f.name: f for f in org_scoped(FeedbackForm)}
 
     stages: dict[int, WorkflowStage] = {}
     for order, name, kind, role_code, decisions, needs_interview, form_name in spec["stages"]:
-        stage, _ = WorkflowStage.objects.update_or_create(
+        stage, _ = org_scoped(WorkflowStage).update_or_create(
             workflow=workflow,
             order=order,
             defaults={
@@ -247,7 +251,7 @@ def build_workflow(spec: dict) -> HiringWorkflow:
         stages[order] = stage
 
     for from_order, decision, to_order in spec["transitions"]:
-        StageTransition.objects.update_or_create(
+        org_scoped(StageTransition).update_or_create(
             from_stage=stages[from_order],
             on_decision=decision,
             defaults={"to_stage": stages[to_order]},
