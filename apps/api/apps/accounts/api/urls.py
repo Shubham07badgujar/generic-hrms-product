@@ -10,6 +10,7 @@ from .views import (
     LogoutView,
     MeView,
     MyPermissionsView,
+    PlatformTokenObtainView,
     TokenObtainView,
     TokenRefreshView,
 )
@@ -17,6 +18,9 @@ from .views import (
 auth_patterns = [
     path("login/", TokenObtainView.as_view(), name="login"),
     path("login/admin/", AdminTokenObtainView.as_view(), name="login-admin"),
+    path(
+        "login/platform/", PlatformTokenObtainView.as_view(), name="login-platform"
+    ),
     path("refresh/", TokenRefreshView.as_view(), name="token-refresh"),
     path("logout/", LogoutView.as_view(), name="logout"),
     path("change-password/", ChangePasswordView.as_view(), name="change-password"),

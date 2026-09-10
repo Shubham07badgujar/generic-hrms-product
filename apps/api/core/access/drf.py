@@ -129,3 +129,54 @@ class ScopedListAPIView(ScopedQuerysetMixin, mixins.ListModelMixin, GenericAPIVi
 
     def get(self, request, *args, **kwargs):
         return self.list(request, *args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# The platform surface
+# ---------------------------------------------------------------------------
+
+
+class PlatformOnlyMixin:
+    """
+    Declares a view to be part of the PLATFORM domain, not the organization one.
+
+    `platform_only = True` is the whole declaration, and `RBACPermission` reads
+    it before anything else: the view is reachable only by a principal holding
+    `User.is_platform_admin`, and no organization principal reaches it whatever
+    roles their Admin invents at runtime.
+
+    NOT `access_resource`, deliberately. Putting PLAN or ORGANIZATION in the
+    permission catalogue would make them rows in the runtime-editable matrix,
+    and an organization Admin editing their own roles could then grant
+    themselves platform authority. The platform surface is therefore outside
+    the matrix entirely -- the same reasoning that makes `is_read_only` a
+    column on User rather than a role.
+
+    NOT `access_exempt` either. That means "no RBAC at all", so a platform view
+    that forgot its permission would be wide open AND invisible to the system
+    check. `manage.py check` fails for a view declaring both.
+
+    These bases carry NO tenant scoping, which is the point of the domain
+    split: a platform view legitimately reads across organizations, because
+    organizations are what it administers. It gets nowhere near their HR data,
+    because none of those models is reachable from here without a resource
+    grant the principal does not hold.
+    """
+
+    platform_only = True
+
+
+class PlatformAPIView(PlatformOnlyMixin, APIView):
+    """Base for platform endpoints that are not CRUD."""
+
+
+class PlatformGenericAPIView(PlatformOnlyMixin, GenericAPIView):
+    """Base for single-purpose platform list/detail endpoints."""
+
+
+class PlatformReadOnlyModelViewSet(PlatformOnlyMixin, viewsets.ReadOnlyModelViewSet):
+    """Read-only platform CRUD."""
+
+
+class PlatformModelViewSet(PlatformOnlyMixin, viewsets.ModelViewSet):
+    """Platform CRUD."""

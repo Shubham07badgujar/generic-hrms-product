@@ -106,6 +106,22 @@ PASSWORD_GATE_ALLOWED_PREFIXES = (
     "/api/v1/me/",
 )
 
+#: Where the platform domain lives, and the only place it may live.
+#:
+#: Two disjoint URL trees is the cheapest way to make the domain split legible
+#: outside Python -- in a route table, a log line, an access log, a proxy rule.
+#: `access.E011` and `access.E012` keep the tree and the `platform_only`
+#: declaration in agreement in both directions.
+#:
+#: Note what is deliberately NOT here: the platform sign-in entrance. It lives
+#: at /api/v1/auth/login/platform/ beside the other entrances, because a login
+#: view cannot be `platform_only` -- there is no principal yet to hold the flag
+#: -- and because that keeps this rule absolute, with no allowlist of platform
+#: URLs that are somehow not platform views. It also means a freshly
+#: bootstrapped platform admin carrying `must_change_password` can still reach
+#: change-password, which is already inside the password gate's allowed prefix.
+PLATFORM_PATH_PREFIX = "/api/v1/platform/"
+
 
 class PasswordChangeRequired(BasePermission):
     """
@@ -234,8 +250,42 @@ class RBACPermission(BasePermission):
     """
 
     def has_permission(self, request, view) -> bool:
+        user = request.user
+        platform_view = getattr(view, "platform_only", False)
+        platform_user = bool(getattr(user, "is_platform_admin", False))
+
+        # Checked BEFORE `access_exempt`, so a platform view that also declared
+        # itself exempt -- which `manage.py check` rejects, but belt and braces
+        # -- is still gated rather than public.
+        if platform_view:
+            if not (user and user.is_authenticated and platform_user):
+                logger.warning(
+                    "access.platform_denied user=%s path=%s",
+                    getattr(user, "pk", None),
+                    request.path,
+                )
+                return False
+            return True
+
         if getattr(view, "access_exempt", False):
             return True
+
+        # A platform operator on an ORGANIZATION route.
+        #
+        # `resolve_context` already returns a context with no grants and no
+        # organization for them, so `scope_for` below would refuse anyway and
+        # every tenant queryset would resolve to nothing. This says it a second
+        # time on purpose: "holds no grants" is a property somebody could
+        # change by handing them a role, and the brief's rule -- a Platform
+        # Admin gets no implicit access to customer HR data -- should not
+        # depend on nobody ever doing that.
+        if platform_user:
+            logger.warning(
+                "access.platform_admin_on_tenant_route user=%s path=%s",
+                getattr(user, "pk", None),
+                request.path,
+            )
+            return False
 
         resource = resolve_resource(view, request)
         if not resource:

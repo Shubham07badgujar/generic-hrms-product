@@ -57,6 +57,10 @@ SAMPLE = {
 EXCLUDED_ROUTES = (
     "/api/v1/auth/login/",
     "/api/v1/auth/login/admin/",
+    # The SaaS operator's entrance. Session lifecycle like the two above, and
+    # it refuses the CEO twice over: they hold no platform flag, and every
+    # organization principal is refused here by construction.
+    "/api/v1/auth/login/platform/",
     "/api/v1/auth/logout/",
     "/api/v1/auth/refresh/",
     "/api/v1/bootstrap/admin/",

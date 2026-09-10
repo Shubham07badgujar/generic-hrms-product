@@ -23,6 +23,7 @@ from apps.employees.api.urls import employee_patterns
 from apps.offboarding.api import offboarding_patterns
 from apps.organization.api.urls import organization_patterns
 from apps.payroll.api import MyPayrollView, payroll_patterns
+from apps.platform.api.urls import platform_patterns
 from apps.attendance.api import attendance_patterns
 from apps.imports.urls import urlpatterns as import_patterns
 from apps.leave.api import leave_patterns
@@ -56,6 +57,9 @@ api_v1 = [
     ),
     *notification_patterns,
     *audit_patterns,
+    # The platform domain, on its own prefix and nothing else on it.
+    # `access.E011` and `access.E012` keep that true in both directions.
+    path("platform/", include(platform_patterns)),
 ]
 
 urlpatterns = [

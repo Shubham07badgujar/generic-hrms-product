@@ -77,6 +77,10 @@ LOCAL_APPS = [
     "apps.policies",
     "apps.notifications",
     "apps.reporting",
+    # The SaaS operator's own surface. Deliberately a separate app from
+    # every other one here: the two security domains are disjoint, and a
+    # reader should be able to see that in the directory listing.
+    "apps.platform",
     # Staging for externally sourced candidate data. Before `audit`, like every
     # other app, so its models are registered when audit connects its signals.
     "apps.imports",

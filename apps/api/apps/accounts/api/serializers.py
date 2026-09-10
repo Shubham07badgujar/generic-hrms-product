@@ -31,6 +31,7 @@ class TokenObtainSerializer(TokenObtainPairSerializer):
     """
 
     require_admin = False
+    require_platform_admin = False
 
     @classmethod
     def get_token(cls, user):
@@ -106,6 +107,20 @@ class TokenObtainSerializer(TokenObtainPairSerializer):
             self._register_failure(user)
             raise generic_error
 
+        # One door per domain, and the test is an equality rather than a
+        # one-way gate: the platform entrance refuses organization users, and
+        # every organization entrance refuses the operator.
+        #
+        # The second half is not decoration. Authority is re-derived from the
+        # flag on every request whichever door minted the token, so letting an
+        # operator in here would not grant them anything -- it would hand them
+        # a session that 403s on every screen the organization SPA renders,
+        # which is a confusing dead end rather than a refusal. Failing at the
+        # door says which door they wanted.
+        if bool(authenticated.is_platform_admin) != bool(self.require_platform_admin):
+            self._register_failure(user)
+            raise generic_error
+
         self._register_success(authenticated)
 
         # Mint the pair directly rather than delegating to SimpleJWT's
@@ -151,6 +166,26 @@ class TokenObtainSerializer(TokenObtainPairSerializer):
 
 class AdminTokenObtainSerializer(TokenObtainSerializer):
     require_admin = True
+
+
+class PlatformTokenObtainSerializer(TokenObtainSerializer):
+    """
+    The platform operator's entrance, refusing everybody else.
+
+    Separate from `/login/admin/` because they gate on different things and
+    mean different things: that one asks whether you hold the Admin role in
+    your organization, this one asks whether you are the SaaS operator. A
+    customer's Admin failing here, and an operator failing at the organization
+    entrance, are both correct outcomes.
+
+    An organization user who authenticates correctly still gets the generic
+    "Invalid email or password", so this never confirms which addresses belong
+    to the operator -- the same reasoning as the admin entrance, and it matters
+    more here, since there are only a handful of these accounts on the whole
+    deployment.
+    """
+
+    require_platform_admin = True
 
 
 def _is_admin(user) -> bool:

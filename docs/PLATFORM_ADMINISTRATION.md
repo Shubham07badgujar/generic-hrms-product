@@ -1,0 +1,241 @@
+# Platform Administration
+
+**Status:** current as of 2026-09-10. Covers the platform security domain: what
+it is, who may enter it, and what they may and may not do.
+
+---
+
+## 0. The governing sentence
+
+> The system consists of two clearly separated security domains: **Platform**
+> and **Organization**. Platform functionality manages the SaaS itself.
+> Organization functionality manages customer HRMS data. No organization role
+> may access another organization's data, and **Platform Admin does not
+> receive implicit access to customer HR data.**
+
+Everything in this document is an implementation of that sentence. Where a
+question is not answered here, it is the tie-breaker.
+
+```
+                         HRMS SaaS
+                             │
+              ┌──────────────┴──────────────┐
+              │                             │
+       Platform Layer                Organization Layer
+              │                             │
+       Platform Admin              Organization Admin
+                                            │
+                            ┌───────────────┼───────────────┐
+                            │               │               │
+                        HR roles      Finance roles      Employees
+```
+
+The two domains are **disjoint**, not nested. A Platform Admin is not a
+super-user of the organization layer; they are a principal of a different
+system that happens to share a deployment.
+
+---
+
+## 1. The principals
+
+### Platform Admin — exactly one principal type
+
+| | |
+|---|---|
+| How it exists | `User.is_platform_admin`, a boolean column |
+| How it is granted | `manage.py bootstrap_platform_admin` and nothing else |
+| Roles held in any organization | **None.** Not "few" — none |
+| Organization membership | **None**, and the command refuses to promote an account that has one |
+| Signs in at | `/api/v1/auth/login/platform/` |
+| Reaches | `/api/v1/platform/**` |
+
+**Why a column and not a role.** Roles are rows, and rows are editable at
+runtime by an organization's own Admin through the permission matrix. If
+platform authority were a role, or if PLAN and ORGANIZATION were resources in
+the matrix, a customer's Admin could grant themselves platform authority by
+editing their own roles. It is a column for the same reason `is_read_only`
+is a column: it is a property of the account, not a preference of the tenant.
+
+### Organization roles — defaults, not system roles
+
+Each organization is provisioned with a starting role set **which it then
+owns**:
+
+| Default role | Purpose |
+|---|---|
+| Organization Admin | The customer's own top-level administrator |
+| HR Head / HR Admin | People operations |
+| Finance Head / Finance Admin | Payroll and compliance |
+| Employee | Self-service baseline |
+| *anything else* | Created and configured by the Organization Admin at runtime |
+
+The load-bearing property: **these are seeded defaults, not hard-coded system
+roles.** No code path tests for `role.code == "hr_head"`. An organization may
+rename them, deactivate them, edit their permission scopes, or create entirely
+different ones, and the authorization engine keeps working because it reads
+rows rather than constants.
+
+What stays in code, deliberately, is the five-layer authority *number* and the
+segregation-of-duties invariants — hiring and paying disjoint, a payroll run's
+preparer never its approver. Those are control design, not preference, and a
+customer must not be able to configure them away.
+
+---
+
+## 2. Who may do what
+
+| | **Platform Admin** | **Organization Admin** |
+|---|---|---|
+| Belongs to | The SaaS operator; **no organization** | Exactly one organization |
+| Creates organizations | **Yes** | No |
+| Manages plans and subscriptions | **Yes** | No (reads own plan and usage) |
+| Enables/disables features | **Yes** (per plan, or per-org override with a reason) | No |
+| Suspends / restores / cancels an organization | **Yes** | No |
+| Platform-level support access | **Yes**, only via an approved, time-limited, audited grant | n/a |
+| Employees, payroll, attendance, leave, recruitment, documents | **No implicit access — none** | **Yes**, own organization only |
+| Departments, designations, locations, levels | No | **Yes** |
+| Roles and permissions | No | **Yes** (create, rename, deactivate, edit scopes) |
+| Organization settings, branding, integrations, email | No | **Yes** |
+| Another organization's anything | **No** | **No** |
+
+The two "no implicit access" cells are the ones that matter, and they are
+enforced structurally rather than by policy. A platform admin resolves to a
+context with **no grants and no organization**, so `RBACPermission` refuses
+every organization route and every tenant queryset resolves to nothing. There
+is no matrix edit, in any organization, that changes this.
+
+### What a Platform Admin *can* see about a customer
+
+Commercial metadata, and only that:
+
+- the organization's identity and contact details, as the customer entered them
+- its lifecycle status
+- **how many** employees and user accounts it has
+
+A seat count is what a plan's limit is measured against, and an operator who
+cannot see it cannot answer "is this customer about to exceed their plan".
+Knowing that a customer employs 118 people tells you nothing about any of them.
+
+---
+
+## 3. How the boundary is enforced
+
+Four mechanisms, deliberately independent. Any one of them failing leaves the
+others standing.
+
+| # | Mechanism | Enforces |
+|---|---|---|
+| 1 | `platform_only = True` on the view, checked by `RBACPermission` **before anything else** | Only a platform admin reaches a platform route |
+| 2 | An explicit refusal in `RBACPermission` for a platform principal on an organization route | A platform admin reaches no organization route, even if somebody later hands them a role |
+| 3 | `resolve_context()` returning a context with no grants and no organization | Every tenant queryset resolves to nothing for them, and every permission check fails |
+| 4 | Build-time system checks `access.E011` / `E012` / `E013` | A future view cannot join the platform tree without the declaration, or carry the declaration outside it, or disable RBAC on it |
+
+Mechanism 2 is redundant with 3 **on purpose**. "Holds no grants" is a property
+somebody could change by giving an operator a role; the brief's rule should not
+depend on nobody ever doing that.
+
+### The URL split
+
+Everything platform lives under `/api/v1/platform/`, and nothing else does.
+`access.E011` fails the build for a view mounted there without the declaration;
+`access.E012` fails it for the declaration outside that tree. Two disjoint URL
+trees make the domain split legible outside Python — in a route table, an
+access log, a proxy rule.
+
+**The one thing under `/auth/` rather than `/platform/`** is the platform
+sign-in entrance, `/api/v1/auth/login/platform/`. A login view cannot be
+`platform_only`, because the flag it would check lives on a principal that does
+not exist until the view succeeds. Putting it under the platform prefix would
+force an allowlist of platform URLs that are not platform views, and an
+absolute rule is worth more than a rule with one exception. It also means a
+newly created operator carrying `must_change_password` can still reach
+change-password, which is already inside the password gate's allowed prefixes.
+
+### One door per domain
+
+The entrances test an **equality**, not a one-way gate: the platform entrance
+refuses organization users, and every organization entrance refuses the
+operator. The second half grants nothing either way — authority is re-derived
+from the flag on every request, whichever door minted the token — but without
+it an operator signing in at the organization door would receive a session that
+fails on every screen the customer SPA renders. That is a confusing dead end
+rather than a refusal.
+
+Both entrances return the **same generic error as a wrong password**, so
+neither confirms which addresses belong to the operator.
+
+---
+
+## 4. Creating an operator
+
+```bash
+manage.py bootstrap_platform_admin --email ops@example.com --first-name Asha
+manage.py changepassword ops@example.com
+```
+
+Then sign in at `/api/v1/auth/login/platform/`.
+
+To remove platform authority:
+
+```bash
+manage.py bootstrap_platform_admin --email ops@example.com --revoke
+```
+
+**There is no HTTP equivalent, deliberately.** `bootstrap_admin` has one
+because the approved plan called for a Postman-callable route to create a
+customer's first Admin. This command creates the operator of the entire
+deployment, and the right number of network-reachable ways to do that is zero.
+The field is `editable=False`, so it reaches no form and no writable
+serializer — a `ModelSerializer` over `User` with `fields = "__all__"` emits it
+read-only, which a test asserts.
+
+**Promoting an account that belongs to a customer is refused.** One person
+holding both a membership and platform authority is the single principal the
+domain split exists to prevent — and it would not even work: context resolution
+short-circuits to the platform context, so their own organization would
+silently go dark.
+
+---
+
+## 5. Support access to customer data
+
+Designed, and deliberately not yet shipped.
+
+When an operator genuinely needs to see a customer's configuration to answer a
+support question, the mechanism is a **SupportGrant**:
+
+- requires a written reason of at least 20 characters;
+- is approved by an **Admin of that organization**, not by the operator;
+- expires after 24 hours;
+- resolves to a **read-only** context whose grants come from a **code
+  constant** listing configuration resources only — no employees, no salaries,
+  no payslips, no candidates;
+- is audited at request, approval, each use, and revocation.
+
+Because the grant list is a code constant, no admin panel can widen it, and the
+read-only principal middleware blocks writes as a second mechanism for free.
+
+**Full-read support access is deferred** until there is a named need and a
+customer-facing consent screen. An operator who needs to see a payslip today
+asks the customer to send it.
+
+---
+
+## 6. What is not built yet
+
+Stated so the table above is not read as a description of shipped software.
+
+| Area | Status |
+|---|---|
+| Platform boundary, sign-in, organization list and summary | **Built** |
+| `SupportGrant` | Designed (§5), not implemented |
+| Organization provisioning as one atomic service | Not implemented; organizations are created by script and by the isolation-verification harness |
+| Plans, subscriptions, feature gating, seat limits | Not implemented |
+| Lifecycle transitions (suspend, cancel, archive, purge) and their retention rules | Not implemented |
+| The setup wizard a new Organization Admin walks through | Not implemented |
+| Platform console UI | Not implemented |
+
+The boundary was built first on purpose. Every item above adds routes to the
+platform tree, and adding them to a tree whose entry rule is already enforced
+at build time is a different proposition from adding them and then trying to
+secure them.

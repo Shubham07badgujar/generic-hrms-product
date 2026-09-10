@@ -26,6 +26,7 @@ from .serializers import (
     ChangePasswordSerializer,
     AdminTokenObtainSerializer,
     MeSerializer,
+    PlatformTokenObtainSerializer,
     TokenObtainSerializer,
 )
 
@@ -98,6 +99,20 @@ class AdminTokenObtainView(_BaseLoginView):
     """
 
     serializer_class = AdminTokenObtainSerializer
+
+
+class PlatformTokenObtainView(_BaseLoginView):
+    """
+    POST /api/v1/auth/login/platform/ — the SaaS operator's entrance.
+
+    Under /auth/ rather than /platform/ on purpose. A login view cannot declare
+    `platform_only`, because the flag it would check lives on a principal that
+    does not exist until this view succeeds -- so putting it under the platform
+    prefix would force an allowlist of platform URLs that are not platform
+    views, and an absolute rule is worth more than a rule with one exception.
+    """
+
+    serializer_class = PlatformTokenObtainSerializer
 
 
 class TokenRefreshView(APIView):

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from django.core.checks import Error, Tags, register
 
+from .permissions import PLATFORM_PATH_PREFIX
+
 #: Views legitimately reachable without a permission mapping — login, token
 #: refresh, the one-time credential handoff, health checks. Every entry needs a
 #: comment justifying it.
@@ -57,8 +59,64 @@ def check_one_view(view_class, path: str) -> list[Error]:
     from .registry import RESOURCE_SPECS
 
     name = view_class.__name__
+    platform_only = getattr(view_class, "platform_only", False)
+    access_exempt = getattr(view_class, "access_exempt", False)
+    under_platform = f"/{path}".startswith(PLATFORM_PATH_PREFIX)
 
-    if getattr(view_class, "access_exempt", False):
+    if platform_only and access_exempt:
+        return [
+            Error(
+                f"API view '{name}' (/{path}) declares both `platform_only` "
+                f"and `access_exempt`.",
+                hint=(
+                    "`access_exempt` means no RBAC at all. A platform view "
+                    "carrying it would be reachable by anyone if the platform "
+                    "branch were ever reordered, and would be invisible to "
+                    "this check. Drop `access_exempt`."
+                ),
+                id="access.E013",
+                obj=view_class,
+            )
+        ]
+
+    if under_platform and not platform_only:
+        return [
+            Error(
+                f"API view '{name}' (/{path}) is under {PLATFORM_PATH_PREFIX} "
+                f"but does not declare `platform_only = True`.",
+                hint=(
+                    "Inherit a Platform* base from core.access.drf. The URL "
+                    "prefix is not the boundary -- the declaration is -- so a "
+                    "view that sits there without it is an organization view "
+                    "wearing a platform URL, and RBACPermission would look for "
+                    "an `access_resource` it does not have."
+                ),
+                id="access.E011",
+                obj=view_class,
+            )
+        ]
+
+    if platform_only and not under_platform:
+        return [
+            Error(
+                f"API view '{name}' (/{path}) declares `platform_only` but is "
+                f"not under {PLATFORM_PATH_PREFIX}.",
+                hint=(
+                    "Keeping the two domains on disjoint URL prefixes is what "
+                    "makes the boundary legible in a route table, a log line "
+                    "and a proxy rule -- not only in Python. Move the route."
+                ),
+                id="access.E012",
+                obj=view_class,
+            )
+        ]
+
+    if platform_only:
+        # Deliberately declares no resource: see PlatformOnlyMixin. The
+        # authorization is the flag, and it was enforced above.
+        return []
+
+    if access_exempt:
         return []
 
     resource = getattr(view_class, "access_resource", None)
