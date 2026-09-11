@@ -10,6 +10,7 @@ from .views import (
     EmployeeLevelViewSet,
     LocationViewSet,
     OrgBrandingView,
+    MyPlanView,
     OrgSettingsView,
     RoleViewSet,
     SetupStateView,
@@ -32,4 +33,5 @@ organization_patterns = [
     # to advance, and it has none -- every step is computed from the real
     # tables each time it is asked.
     path("org/setup/", SetupStateView.as_view(), name="org-setup"),
+    path("org/plan/", MyPlanView.as_view(), name="org-plan"),
 ] + router.urls

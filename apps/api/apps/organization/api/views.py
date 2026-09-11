@@ -417,3 +417,79 @@ class SetupStateView(APIView):
             # validation error on a field.
             raise BusinessRuleError(str(exc)) from exc
         return Response(setup_state(organization))
+
+
+class MyPlanView(APIView):
+    """
+    GET /org/plan/ — what this organization is on, and how much of it is used.
+
+    READ ONLY, and that is the product decision rather than an omission. A
+    customer does not change their own plan through the HR product: that is a
+    commercial conversation, and an endpoint that let an Organization Admin
+    upgrade themselves would be a billing decision made by whoever happened to
+    hold the role.
+
+    `ORG_SETTINGS/VIEW` rather than a new resource: this is the same screen
+    family as the rest of organization settings, and a PLAN resource in the
+    runtime-editable matrix would be one an Admin could grant themselves and
+    one more row in a catalogue that deliberately stays small.
+    """
+
+    access_resource = Resource.ORG_SETTINGS
+    access_actions = {"GET": Action.VIEW}
+
+    def get(self, request):
+        require(request.user, Resource.ORG_SETTINGS, Action.VIEW)
+
+        from apps.platform.models import Subscription
+        from apps.platform.services.subscriptions import active_employee_count
+        from core.access.context import get_context
+        from core.access.features import FeatureCode
+
+        organization_id = get_context(request).organization_id
+        subscription = (
+            Subscription.objects.filter(
+                organization_id=organization_id, is_active=True
+            )
+            .select_related("plan")
+            .first()
+        )
+        used = active_employee_count(organization_id)
+
+        if subscription is None:
+            # A deployment that sells nothing. Reported as unlimited rather
+            # than as an error, because that is what it is.
+            return Response(
+                {
+                    "plan": None,
+                    "status": None,
+                    "features": sorted(str(f) for f in FeatureCode),
+                    "employees_used": used,
+                    "employee_limit": None,
+                    "seats_remaining": None,
+                    "storage_limit_mb": None,
+                }
+            )
+
+        limit = subscription.employee_limit
+        return Response(
+            {
+                "plan": {
+                    "code": subscription.plan.code,
+                    "name": subscription.plan.name,
+                    "description": subscription.plan.description,
+                    "support_level": subscription.plan.support_level,
+                },
+                "status": subscription.status,
+                "features": subscription.enabled_features,
+                "employees_used": used,
+                "employee_limit": limit,
+                "seats_remaining": None if limit is None else max(limit - used, 0),
+                # Surfaced, not enforced. A storage cap that silently broke a
+                # payroll run's PDF generation would be worse than no cap, so
+                # this is a number the customer can see and act on rather than
+                # a wall they hit.
+                "storage_limit_mb": subscription.plan.storage_limit_mb,
+                "trial_ends_at": subscription.ends_at,
+            }
+        )
