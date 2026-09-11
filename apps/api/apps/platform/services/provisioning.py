@@ -29,10 +29,9 @@ told before anything was attempted.
 
 WHAT THIS IS NOT DOING YET
 
-No Subscription. Plans do not exist until Stage 4, and inventing a placeholder
-row now would mean writing the migration twice. `_start_subscription` is the
-seam, and it is a named function rather than a comment so the call site is
-already in the right place and the diff that fills it in is one function body.
+Nothing. The subscription seam left here in Stage 3 is filled: a new
+organization starts on a trial of the cheapest public plan, or on no
+subscription at all where the deployment sells none.
 """
 
 from __future__ import annotations
@@ -64,6 +63,8 @@ class ProvisionResult:
     #: mail failure must not undo a correct provisioning, and nobody should be
     #: told credentials were sent when they were not.
     invitation_sent: bool = False
+    #: None on a deployment with no plans -- see `_start_subscription`.
+    subscription: object = None
     seeded: dict = field(default_factory=dict)
 
 
@@ -170,16 +171,27 @@ def _validate(*, name, slug, admin_email, actor):
     return slug, admin_email
 
 
-def _start_subscription(organization):
+def _start_subscription(organization, *, plan=None, actor=None):
     """
-    SEAM: the trial subscription, once plans exist (Stage 4).
+    The trial this organization starts on.
 
-    A named no-op rather than a comment, so the call site is already in the
-    right place and in the right order -- inside the transaction, after the
-    organization and before the administrator, which is where a seat-limit
-    check would have to run.
+    Returns None when no plan is named and none is marked default -- a
+    self-hosted single-company deployment has no plans at all, and provisioning
+    must not require a commercial concept that installation never bought.
+    Everything downstream treats "no subscription" as unlimited.
     """
-    return None
+    from apps.platform.models import Plan
+    from apps.platform.services.subscriptions import start_subscription
+
+    if plan is None:
+        plan = (
+            Plan.objects.filter(is_active=True, is_public=True)
+            .order_by("display_order", "name")
+            .first()
+        )
+    if plan is None:
+        return None
+    return start_subscription(organization, plan=plan, actor=actor)
 
 
 @transaction.atomic
@@ -201,6 +213,9 @@ def provision_organization(
     country: str = "",
     timezone_name: str = "",
     currency: str = "",
+    #: The plan to start on. Omitted, the cheapest public plan is used, or
+    #: none at all where the deployment sells nothing.
+    plan=None,
     actor=None,
 ) -> ProvisionResult:
     """
@@ -261,7 +276,9 @@ def provision_organization(
     # here a forgotten binding is a loud exception.
     with acting_as(actor, organization=organization):
         OrgSettings.for_org(organization)
-        _start_subscription(organization)
+        result.subscription = _start_subscription(
+            organization, plan=plan, actor=actor
+        )
 
         for key, _description, seed in CONFIG_SEEDS:
             result.seeded[key] = seed(organization)

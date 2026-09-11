@@ -29,6 +29,11 @@ TENANT_EXEMPT: dict[str, str] = {
         "Login identity is global: email is the USERNAME_FIELD and must be "
         "unique platform-wide. A user's tenant comes from their membership."
     ),
+    "platform.Plan": (
+        "A description of what the SaaS offers, shared by every customer "
+        "on it. One copy per organization would mean changing a plan's "
+        "terms required rewriting N rows and hoping they agreed."
+    ),
     "statutory.StatutoryRuleSet": (
         "PF/ESI/PT/income-tax tables are facts about the Republic of India, "
         "not about a customer. Duplicating them per organization would mean N "
@@ -89,6 +94,11 @@ GLOBALLY_UNIQUE: dict[str, str] = {
         "Derived from the application id, which is already organization-owned."
     ),
     "organization.OrgSettings.organization": "IS the organization link.",
+    "platform.Subscription.organization": "IS the organization link.",
+    "platform.Plan.code": (
+        "Plans are platform-owned, not tenant data, so there is no "
+        "organization to scope the code to."
+    ),
 }
 
 #: Unique through `User`, which is deliberately global.

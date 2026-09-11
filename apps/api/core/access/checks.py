@@ -26,6 +26,10 @@ FIRST_PARTY_APP_LABELS = frozenset(
         "workflows", "recruitment", "onboarding", "offboarding", "attendance",
         "leave", "payroll", "policies", "notifications", "reporting",
         "imports", "audit", "statutory",
+        # The SaaS operator's own tables. First-party like the rest, so
+        # `access.E005` makes a new platform model state whether it is
+        # tenant data -- Subscription is, Plan is not.
+        "platform",
     }
 )
 
@@ -483,3 +487,66 @@ def check_role_invariants(app_configs, **kwargs):
             id="access.E004",
         )
     ]
+
+
+@register()
+def check_every_resource_has_a_feature(app_configs, **kwargs):
+    """
+    The feature map is TOTAL over `Resource`, and names only real features.
+
+    This is what makes "nobody writes a feature check anywhere" safe. The gate
+    reads one dictionary, so a resource missing from it would be a module that
+    every plan gets for free -- silently, and discovered by a customer rather
+    than by the build.
+
+    A defaulting lookup would have hidden exactly that, which is why
+    `FEATURE_OF_RESOURCE` is a plain dict and why this check exists rather than
+    a `.get(resource, CORE)`.
+    """
+    from .catalog import Resource
+    from .features import FEATURE_OF_RESOURCE, FeatureCode
+
+    errors: list[Error] = []
+    known = {str(f) for f in FeatureCode}
+    mapped = {str(k) for k in FEATURE_OF_RESOURCE}
+    declared = {str(r) for r in Resource}
+
+    for resource in sorted(declared - mapped):
+        errors.append(
+            Error(
+                f"Resource '{resource}' is not mapped to a plan feature.",
+                hint=(
+                    "Add it to FEATURE_OF_RESOURCE in core/access/features.py. "
+                    "An unmapped resource is a module every plan gets for "
+                    "free, and nothing else would report it."
+                ),
+                id="access.E014",
+                obj="core.access.features",
+            )
+        )
+
+    for resource in sorted(mapped - declared):
+        errors.append(
+            Error(
+                f"FEATURE_OF_RESOURCE names '{resource}', which is not a "
+                f"Resource.",
+                hint="Remove the stale entry -- a dead name in a gating map "
+                     "reads as coverage that is not there.",
+                id="access.E015",
+                obj="core.access.features",
+            )
+        )
+
+    for resource, feature in sorted(FEATURE_OF_RESOURCE.items()):
+        if str(feature) not in known:
+            errors.append(
+                Error(
+                    f"Resource '{resource}' is mapped to unknown feature "
+                    f"'{feature}'.",
+                    hint="Add it to FeatureCode, or fix the mapping.",
+                    id="access.E016",
+                    obj="core.access.features",
+                )
+            )
+
+    return errors

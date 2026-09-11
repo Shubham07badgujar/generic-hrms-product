@@ -1,0 +1,320 @@
+"""
+Subscription transitions, and the seat check.
+
+THE ONE WRITE PATH TO `Organization.status`
+
+`Subscription.status` is commercial state and `Organization.status` is
+authoritative for access. Keeping them from diverging is not a matter of
+remembering: every commercial transition goes through `_apply_to_organization`
+below, which is the only place in this app that writes the organization's
+status. A second writer is how the two fields start disagreeing, and a customer
+starts being locked out for a reason nobody can find.
+
+WHAT A DOWNGRADE DOES NOT DO
+
+It does not delete anything. Every PayrollRun, Payslip, SalaryStructure and
+statutory record of an organization that leaves a payroll-enabled plan remains
+stored, intact and unmodified. The module's WRITES stop; reads and exports keep
+working for a defined window, because a customer must be able to retrieve
+records they are statutorily obliged to keep. That window is enforced by
+`FeatureEnabled`, and it starts at `features_narrowed_at`, which this module
+stamps.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from django.db import transaction
+from django.utils import timezone
+
+logger = logging.getLogger("hrms.platform")
+
+
+class SubscriptionError(Exception):
+    """A refusal the operator can act on."""
+
+
+class SeatLimitReached(Exception):
+    """
+    The organization is at its plan's seat limit.
+
+    Its own exception rather than a ValidationError so the API layer can turn
+    it into 422 -- "the system will not allow this" -- rather than 400, which
+    would suggest the caller typed something wrong. Nobody typed anything
+    wrong; they ran out of seats.
+    """
+
+    def __init__(self, *, limit: int, current: int, requested: int = 1):
+        self.limit = limit
+        self.current = current
+        self.requested = requested
+        super().__init__(
+            f"This plan allows {limit} active employees and the organization "
+            f"has {current}."
+            + (
+                f" This would add {requested}."
+                if requested > 1
+                else ""
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
+# Seats
+# ---------------------------------------------------------------------------
+
+
+def active_employee_count(organization) -> int:
+    from apps.employees.models import Employee
+    from core.models import org_scoped
+
+    return org_scoped(Employee, organization).filter(is_active=True).count()
+
+
+@transaction.atomic
+def reserve_seats(organization, *, count: int = 1):
+    """
+    Refuse if adding `count` employees would exceed the plan's seat limit.
+
+    LOCKS THE SUBSCRIPTION ROW, and that is the whole reason this is a service
+    rather than a `count()` at the call site. A bare count is a TOCTOU hole:
+    two concurrent hires both read limit-1, both decide there is room, and both
+    commit. The lock serialises the decision, and because the caller is already
+    inside a transaction the lock is held until the employee exists.
+
+    An organization with no subscription is UNLIMITED, not refused. Self-hosted
+    single-company deployments have no plans at all, and a seat check that
+    bricked them would be enforcing a SaaS concern on an installation that
+    never bought one.
+    """
+    from apps.platform.models import Subscription
+
+    subscription = (
+        Subscription.objects.select_for_update()
+        .filter(organization=organization)
+        .select_related("plan")
+        .first()
+    )
+    if subscription is None:
+        return None
+
+    limit = subscription.employee_limit
+    if limit is None:
+        return subscription
+
+    current = active_employee_count(organization)
+    if current + count > limit:
+        raise SeatLimitReached(limit=limit, current=current, requested=count)
+    return subscription
+
+
+# ---------------------------------------------------------------------------
+# Transitions
+# ---------------------------------------------------------------------------
+
+#: Commercial state -> the organization status it implies, or None to leave the
+#: organization alone.
+#:
+#: PAST_DUE maps to None deliberately. Locking an HR department out of payroll
+#: on the 30th because an invoice is late punishes the employees rather than the
+#: buyer; the warning belongs in the snapshot, and the conversation happens out
+#: of band.
+_ORG_STATUS_FOR = {
+    "trialing": "trial",
+    "active": "active",
+    "past_due": None,
+    "cancelled": "cancelled",
+    "expired": "cancelled",
+}
+
+
+def _apply_to_organization(subscription, *, actor=None):
+    """The ONLY write to `Organization.status` in this app."""
+    from apps.organization.models import OrgStatus
+
+    implied = _ORG_STATUS_FOR.get(str(subscription.status))
+    if implied is None:
+        return None
+
+    organization = subscription.organization
+    # An organization still walking the setup wizard stays in PENDING_SETUP:
+    # it is a working state the administrator is in the middle of, and a
+    # subscription going ACTIVE underneath them must not skip it.
+    if organization.status == OrgStatus.PENDING_SETUP and implied in (
+        OrgStatus.ACTIVE,
+        OrgStatus.TRIAL,
+    ):
+        return None
+    if organization.status == implied:
+        return None
+
+    before = organization.status
+    organization.status = implied
+    organization.save(update_fields=["status", "updated_at"])
+    logger.info(
+        "platform.org_status org=%s %s -> %s (subscription %s)",
+        organization.slug, before, implied, subscription.status,
+    )
+    return before
+
+
+@transaction.atomic
+def start_subscription(organization, *, plan, actor=None, trial_days: int | None = 14):
+    """The trial a newly provisioned organization starts on."""
+    from apps.audit.events import record_event
+    from apps.platform.models import Subscription, SubscriptionStatus
+    from core.middleware import acting_as
+
+    if Subscription.objects.filter(organization=organization).exists():
+        raise SubscriptionError(
+            f"{organization.slug} already has a subscription. Change the plan "
+            f"instead of starting a second one."
+        )
+
+    subscription = Subscription.objects.create(
+        organization=organization,
+        plan=plan,
+        status=SubscriptionStatus.TRIALING,
+        ends_at=(
+            timezone.now() + timezone.timedelta(days=trial_days)
+            if trial_days
+            else None
+        ),
+    )
+    with acting_as(actor, organization=organization):
+        record_event(
+            subscription,
+            actor=actor,
+            entity_type="platform.Subscription",
+            verb="create",
+            resource="",
+            after={"plan": plan.code, "status": subscription.status},
+        )
+    return subscription
+
+
+@transaction.atomic
+def change_plan(organization, *, plan, actor=None, reason: str = "", force: bool = False):
+    """
+    Move a customer to a different plan.
+
+    A DOWNGRADE BELOW THE SEAT LIMIT IS REFUSED AT THE POINT OF CHANGE, with
+    the numbers in the message, rather than accepted and then enforced by
+    breaking the customer's next hire. `force` exists because a platform admin
+    sometimes has an agreement the system does not know about -- it requires a
+    reason, and the reason is audited.
+
+    Narrowing features stamps `features_narrowed_at`, which starts the
+    read-and-export grace window. Widening does not: gaining a module should
+    never shorten the window protecting a different one.
+    """
+    from apps.audit.events import record_event
+    from apps.platform.models import Subscription
+    from core.middleware import acting_as
+
+    subscription = (
+        Subscription.objects.select_for_update()
+        .filter(organization=organization)
+        .select_related("plan")
+        .first()
+    )
+    if subscription is None:
+        raise SubscriptionError(f"{organization.slug} has no subscription.")
+
+    previous = subscription.plan
+    if previous.pk == plan.pk:
+        return subscription
+
+    limit = plan.employee_limit
+    if limit is not None:
+        current = active_employee_count(organization)
+        if current > limit and not force:
+            raise SubscriptionError(
+                f"{plan.name} allows {limit} active employees and "
+                f"{organization.name} has {current}. Reduce the headcount "
+                f"first, or override with a reason."
+            )
+    if force and not reason.strip():
+        raise SubscriptionError("An override needs a reason.")
+
+    lost = sorted(set(previous.enabled_features) - set(plan.enabled_features))
+    subscription.plan = plan
+    fields = ["plan", "updated_at"]
+    if lost:
+        subscription.features_narrowed_at = timezone.now()
+        fields.append("features_narrowed_at")
+    subscription.save(update_fields=fields)
+
+    with acting_as(actor, organization=organization):
+        record_event(
+            subscription,
+            actor=actor,
+            entity_type="platform.Subscription",
+            verb="update",
+            resource="",
+            before={"plan": previous.code},
+            after={
+                "plan": plan.code,
+                "features_lost": lost,
+                "forced": bool(force),
+            },
+            reason=reason or None,
+        )
+    return subscription
+
+
+@transaction.atomic
+def set_status(organization, *, status, actor=None, reason: str = ""):
+    """
+    Move the commercial state, and let it write the access state.
+
+    One function rather than `suspend()`, `cancel()`, `reactivate()`: the
+    interesting part is the mapping, and three wrappers around one mapping is
+    three places for it to drift.
+    """
+    from apps.audit.events import record_event
+    from apps.platform.models import Subscription, SubscriptionStatus
+    from core.middleware import acting_as
+
+    subscription = (
+        Subscription.objects.select_for_update()
+        .filter(organization=organization)
+        .select_related("plan", "organization")
+        .first()
+    )
+    if subscription is None:
+        raise SubscriptionError(f"{organization.slug} has no subscription.")
+
+    status = str(status)
+    if status not in {str(s) for s in SubscriptionStatus}:
+        raise SubscriptionError(f"{status!r} is not a subscription status.")
+
+    before = subscription.status
+    if before == status:
+        return subscription
+
+    subscription.status = status
+    fields = ["status", "updated_at"]
+    if status in (SubscriptionStatus.CANCELLED, SubscriptionStatus.EXPIRED):
+        subscription.cancelled_at = timezone.now()
+        fields.append("cancelled_at")
+    subscription.save(update_fields=fields)
+
+    org_before = _apply_to_organization(subscription, actor=actor)
+
+    with acting_as(actor, organization=organization):
+        record_event(
+            subscription,
+            actor=actor,
+            entity_type="platform.Subscription",
+            verb="update",
+            resource="",
+            before={"status": before, "organization_status": org_before},
+            after={
+                "status": status,
+                "organization_status": subscription.organization.status,
+            },
+            reason=reason or None,
+        )
+    return subscription

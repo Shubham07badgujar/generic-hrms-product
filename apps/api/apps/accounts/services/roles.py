@@ -54,6 +54,7 @@ def seed_roles(*, organization, prune: bool = True) -> SeedResult:
     be removed before removing it.
     """
     result = SeedResult()
+    pending: list[RolePermission] = []
 
     for spec in ROLE_SPECS:
         role, created = Role.objects.update_or_create(
@@ -79,13 +80,39 @@ def seed_roles(*, organization, prune: bool = True) -> SeedResult:
         else:
             result.roles_updated += 1
 
-        _sync_permissions(role, spec, result, prune=prune)
+        pending.extend(_sync_permissions(role, spec, result, prune=prune))
+
+    # ONE insert for the whole matrix, not one per cell.
+    #
+    # Eighteen roles times the matrix is ~1009 rows, and creating them
+    # individually took 14 seconds -- inside the provisioning transaction,
+    # holding its locks, on every new customer. It also made every test that
+    # provisions an organization cost 14 seconds it did not need to.
+    #
+    # `bulk_create` skips `save()`, so the two things `save()` would have done
+    # are done here instead: `OrgStampingQuerySetMixin` fills the organization,
+    # and the actor is stamped below. Dropping attribution silently would have
+    # been the easy way to make this fast and the wrong one.
+    if pending:
+        from core.middleware import get_current_user
+
+        actor = get_current_user()
+        if actor is not None and getattr(actor, "pk", None):
+            for row in pending:
+                row.created_by = actor
+                row.updated_by = actor
+        RolePermission.objects.bulk_create(pending)
 
     logger.info("access.roles_seeded %s", result)
     return result
 
 
-def _sync_permissions(role, spec, result: SeedResult, *, prune: bool) -> None:
+def _sync_permissions(role, spec, result: SeedResult, *, prune: bool) -> list:
+    """
+    Reconcile one role's cells, RETURNING the rows to insert rather than
+    inserting them -- so the caller can do the whole matrix in one statement.
+    """
+    to_create: list[RolePermission] = []
     existing = {
         (perm.resource, perm.action): perm
         for perm in RolePermission.objects.filter(role=role)
@@ -99,8 +126,13 @@ def _sync_permissions(role, spec, result: SeedResult, *, prune: bool) -> None:
             perm = existing.get(key)
 
             if perm is None:
-                RolePermission.objects.create(
-                    role=role, resource=str(resource), action=str(action), scope=scope
+                to_create.append(
+                    RolePermission(
+                        role=role,
+                        resource=str(resource),
+                        action=str(action),
+                        scope=scope,
+                    )
                 )
                 result.permissions_created += 1
                 continue
@@ -117,7 +149,7 @@ def _sync_permissions(role, spec, result: SeedResult, *, prune: bool) -> None:
                 result.permissions_updated += 1
 
     if not prune:
-        return
+        return to_create
 
     for key, perm in existing.items():
         if key in desired:
@@ -129,6 +161,8 @@ def _sync_permissions(role, spec, result: SeedResult, *, prune: bool) -> None:
             continue
         perm.delete(hard=True)
         result.permissions_removed += 1
+
+    return to_create
 
 
 def matrix_report() -> list[dict]:
