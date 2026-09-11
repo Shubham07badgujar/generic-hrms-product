@@ -28,6 +28,8 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 
+from core.api.exceptions import BusinessRuleError
+
 logger = logging.getLogger("hrms.platform")
 
 
@@ -35,15 +37,22 @@ class SubscriptionError(Exception):
     """A refusal the operator can act on."""
 
 
-class SeatLimitReached(Exception):
+class SeatLimitReached(BusinessRuleError):
     """
     The organization is at its plan's seat limit.
 
-    Its own exception rather than a ValidationError so the API layer can turn
-    it into 422 -- "the system will not allow this" -- rather than 400, which
-    would suggest the caller typed something wrong. Nobody typed anything
-    wrong; they ran out of seats.
+    A `BusinessRuleError` -- 422 -- and not a 400 or a 403. Nobody typed
+    anything wrong, so it is not a validation error; and the caller is fully
+    entitled to hire, so it is not a permission denial. The system will not
+    allow it YET, which is exactly what 422 means here and what the SPA already
+    renders differently.
+
+    Its own subclass, with its own code, so the client can offer an upgrade
+    rather than the generic "not permitted by a business rule" -- running out
+    of seats is the one business rule with an obvious next action.
     """
+
+    default_code = "seat_limit_reached"
 
     def __init__(self, *, limit: int, current: int, requested: int = 1):
         self.limit = limit
@@ -72,6 +81,11 @@ def active_employee_count(organization) -> int:
     return org_scoped(Employee, organization).filter(is_active=True).count()
 
 
+def _organization_id(organization):
+    """Accept an Organization or its id, so callers use whichever they hold."""
+    return getattr(organization, "pk", organization)
+
+
 @transaction.atomic
 def reserve_seats(organization, *, count: int = 1):
     """
@@ -90,9 +104,15 @@ def reserve_seats(organization, *, count: int = 1):
     """
     from apps.platform.models import Subscription
 
+    # `is_active=True` matters: `Subscription` is a BaseModel, so `.delete()`
+    # is a SOFT delete. Without this filter a deleted subscription still
+    # enforced its seat limit while `_plan_state` -- which does filter --
+    # granted the organization every feature. A row that is gone for one
+    # question and present for another is the kind of disagreement nobody
+    # finds until a customer is stuck.
     subscription = (
         Subscription.objects.select_for_update()
-        .filter(organization=organization)
+        .filter(organization_id=_organization_id(organization), is_active=True)
         .select_related("plan")
         .first()
     )
@@ -103,7 +123,7 @@ def reserve_seats(organization, *, count: int = 1):
     if limit is None:
         return subscription
 
-    current = active_employee_count(organization)
+    current = active_employee_count(_organization_id(organization))
     if current + count > limit:
         raise SeatLimitReached(limit=limit, current=current, requested=count)
     return subscription
@@ -166,7 +186,9 @@ def start_subscription(organization, *, plan, actor=None, trial_days: int | None
     from apps.platform.models import Subscription, SubscriptionStatus
     from core.middleware import acting_as
 
-    if Subscription.objects.filter(organization=organization).exists():
+    if Subscription.objects.filter(
+        organization=organization, is_active=True
+    ).exists():
         raise SubscriptionError(
             f"{organization.slug} already has a subscription. Change the plan "
             f"instead of starting a second one."
@@ -215,7 +237,7 @@ def change_plan(organization, *, plan, actor=None, reason: str = "", force: bool
 
     subscription = (
         Subscription.objects.select_for_update()
-        .filter(organization=organization)
+        .filter(organization=organization, is_active=True)
         .select_related("plan")
         .first()
     )
@@ -279,7 +301,7 @@ def set_status(organization, *, status, actor=None, reason: str = ""):
 
     subscription = (
         Subscription.objects.select_for_update()
-        .filter(organization=organization)
+        .filter(organization=organization, is_active=True)
         .select_related("plan", "organization")
         .first()
     )

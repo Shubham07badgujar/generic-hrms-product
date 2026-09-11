@@ -39,6 +39,7 @@ from apps.organization.models import (
     OrganizationMembership,
     Team,
 )
+from apps.platform.services.subscriptions import reserve_seats
 from core.access import Action, Resource, invalidate, require
 from core.access.context import get_context
 
@@ -114,6 +115,24 @@ def create_employee(
     # lookups have to be confined to it: a department id from another company
     # must not resolve at all.
     organization_id = get_context(actor).organization_id
+
+    # --- 1b. Seats -------------------------------------------------------
+    # Before the references are even resolved, because running out of seats is
+    # not a data problem and the caller should hear about it without first
+    # being told their designation id is wrong.
+    #
+    # This takes a row lock on the subscription and holds it to commit, which
+    # is why it is a service call and not a `count()` here: two concurrent
+    # hires would otherwise both read limit-1, both decide there is room, and
+    # both succeed. `create_employee` is already `@transaction.atomic`, so the
+    # lock spans the whole hire.
+    #
+    # The candidate-conversion flow comes through this same function, so
+    # hiring from recruitment is covered by this one call site. Employee
+    # IMPORT is not -- it does not exist yet, and when it lands in Stage 5 it
+    # reserves the whole batch in one call rather than row by row, because a
+    # partially imported staff list is worse than a refused one.
+    reserve_seats(organization_id)
 
     # --- 2. Resolve and validate references ------------------------------
     role = _get_or_400(Role, code=role_code, label="role", organization_id=organization_id)
