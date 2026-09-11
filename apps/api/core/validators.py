@@ -155,10 +155,90 @@ _COLLISION_SUFFIX = 8
 #: A guard against a nonsense extension, e.g. a file named `x.` + 200 letters.
 _MAX_EXTENSION = 12
 
+#: Bytes of randomness in the folder segment, as hex characters.
+#:
+#: Sixteen, not thirty-two. Sixty-four bits is far past guessable, and the path
+#: was never the security boundary -- downloads go through an authorising view
+#: and production serves no public media URL. The other sixteen characters are
+#: worth more as filename budget, because the per-organization root already
+#: costs about fifty.
+_RANDOM_CHARS = 16
 
-def scoped_storage_path(prefix: str, owner_id, filename: str) -> str:
+#: Windows refuses an absolute path over 260 characters unless long paths are
+#: enabled, and the absolute path is MEDIA_ROOT plus the stored one -- so a
+#: deep MEDIA_ROOT silently eats this budget. A little slack for the
+#: separator and for Django's collision suffix.
+_WINDOWS_PATH_LIMIT = 255
+
+#: However short the budget gets, a filename this short is not worth storing --
+#: below it the truncation has eaten the name entirely and something is wrong
+#: with the configuration rather than with the upload.
+_MIN_NAME_BUDGET = 16
+
+
+def _path_budget() -> int:
     """
-    Build `<prefix>/<owner>/<random>/<name>`, bounding the name so it fits.
+    How long a stored path may be: the lesser of the column and the filesystem.
+
+    `STORED_PATH_MAX` is the database column, and bounding against it alone was
+    enough until the per-organization root arrived. That root costs about fifty
+    characters, which took a real upload on a developer machine from 235 to 286
+    -- past Windows' limit -- and turned a long filename into a 500 with
+    `FileNotFoundError` and no clue as to why.
+
+    The stored name is cosmetic in any case: `original_filename` holds what the
+    person called the file and downloads are served under that name, so
+    spending less of the budget on it costs nothing anybody sees.
+    """
+    import os
+
+    limit = STORED_PATH_MAX
+    if os.name == "nt":
+        from django.conf import settings
+
+        room = _WINDOWS_PATH_LIMIT - len(str(settings.MEDIA_ROOT)) - 1
+        limit = min(limit, room)
+    return limit
+
+
+#: The root every organization's files live under.
+#:
+#: THE PATH IS NOT THE SECURITY BOUNDARY, and it is worth saying so plainly
+#: before anyone relies on it. Every download goes through a view whose scoped
+#: `get_object()` IS the authorisation check -- a link cannot outlive the
+#: permission that produced it, and production sets `MEDIA_URL = None` so there
+#: is no public URL to guess at in the first place.
+#:
+#: The subtree buys three things that are real but operational rather than
+#: protective:
+#:
+#:   * deleting a tenant's files becomes `rm -rf <organization_uuid>/` instead
+#:     of a query across ten tables, which is what makes the purge in the
+#:     retention policy something anyone can verify;
+#:   * per-tenant bucket policies, lifecycle rules and storage accounting
+#:     become expressible at all;
+#:   * a cross-tenant path in a bug report, a log line or a signed URL is
+#:     visible on sight rather than needing a database lookup to spot.
+ORGANIZATION_ROOT = "organizations"
+
+
+def organization_storage_root(organization_id) -> str:
+    """`organizations/<uuid>` -- the prefix every tenant file sits under."""
+    return f"{ORGANIZATION_ROOT}/{organization_id}"
+
+
+def scoped_storage_path(
+    prefix: str, owner_id, filename: str, *, organization_id
+) -> str:
+    """
+    Build `organizations/<org>/<prefix>/<owner>/<random>/<name>`, bounded to fit.
+
+    `organization_id` is KEYWORD-ONLY AND REQUIRED, deliberately. Giving it a
+    default would mean a caller who forgot it silently wrote outside the tenant
+    tree, and the file would work perfectly -- served by the same authorising
+    view -- until somebody tried to delete that customer's data and found some
+    of it somewhere else. A missing argument is a `TypeError` at the first
+    upload instead.
 
     WHY THE BOUNDING MATTERS
     ------------------------
@@ -178,7 +258,17 @@ def scoped_storage_path(prefix: str, owner_id, filename: str) -> str:
     person actually called the file, and downloads are served under that name.
     Truncating here costs nothing a user can see.
     """
-    folder = f"{prefix}/{owner_id}/{uuid.uuid4().hex}/"
+    if organization_id in (None, ""):
+        raise ValueError(
+            f"Cannot store a {prefix!r} file: no organization. Every uploaded "
+            f"file belongs under its owner's subtree, so that deleting a "
+            f"customer's data is one directory and not a search."
+        )
+
+    folder = (
+        f"{organization_storage_root(organization_id)}/"
+        f"{prefix}/{owner_id}/{uuid.uuid4().hex[:_RANDOM_CHARS]}/"
+    )
 
     safe = safe_original_name(filename)
     stem, dot, tail = safe.rpartition(".")
@@ -187,11 +277,17 @@ def scoped_storage_path(prefix: str, owner_id, filename: str) -> str:
     else:
         extension = f".{tail.lower()}"[:_MAX_EXTENSION]
 
-    budget = STORED_PATH_MAX - len(folder) - len(extension) - _COLLISION_SUFFIX
-    if budget < 1:
-        # Only reachable by giving this function an absurd prefix, which is a
-        # programming error rather than anything a user did.
-        raise ValueError(f"Storage prefix {prefix!r} leaves no room for a filename.")
+    budget = _path_budget() - len(folder) - len(extension) - _COLLISION_SUFFIX
+    if budget < _MIN_NAME_BUDGET:
+        # Reachable two ways: an absurd prefix, which is a programming error;
+        # or a MEDIA_ROOT so deep that nothing fits, which is a deployment
+        # error. Both deserve a message naming the cause rather than a
+        # FileNotFoundError from three frames further down.
+        raise ValueError(
+            f"Storage prefix {prefix!r} leaves {budget} characters for a "
+            f"filename. Either the prefix is too long or MEDIA_ROOT is too "
+            f"deep for this platform's path limit."
+        )
 
     return f"{folder}{stem[:budget] or 'file'}{extension}"
 

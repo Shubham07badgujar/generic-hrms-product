@@ -195,7 +195,12 @@ class HalfDay(models.TextChoices):
 
 
 def leave_attachment_path(instance, filename: str) -> str:
-    return scoped_storage_path("leave", instance.employee_id, filename)
+    return scoped_storage_path(
+        "leave",
+        instance.employee_id,
+        filename,
+        organization_id=instance.organization_id,
+    )
 
 
 class LeaveRequest(OrgOwnedModel):

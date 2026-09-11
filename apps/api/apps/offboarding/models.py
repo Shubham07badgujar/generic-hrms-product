@@ -228,7 +228,10 @@ class ClearanceStatus(models.TextChoices):
 
 def clearance_evidence_path(instance, filename: str) -> str:
     return scoped_storage_path(
-        "exit-clearance", instance.exit_workflow.employee_id, filename
+        "exit-clearance",
+        instance.exit_workflow.employee_id,
+        filename,
+        organization_id=instance.organization_id,
     )
 
 

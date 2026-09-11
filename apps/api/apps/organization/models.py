@@ -20,7 +20,7 @@ from django.db import models
 from core.access.catalog import DepartmentKind, Layer
 from core.fields import EncryptedCharField
 from core.models import BaseModel, OrgOwnedModel
-from core.validators import STORED_PATH_MAX
+from core.validators import STORED_PATH_MAX, scoped_storage_path
 
 
 class OrgStatus(models.TextChoices):
@@ -47,6 +47,26 @@ class OrgStatus(models.TextChoices):
 OPERATIONAL_STATUSES = frozenset(
     {OrgStatus.PENDING_SETUP, OrgStatus.TRIAL, OrgStatus.ACTIVE}
 )
+
+
+def organization_asset_path(instance, filename: str) -> str:
+    """
+    A logo or favicon. The instance IS the organization, so its own pk is the
+    tenant -- the one file path in the product where that is true.
+    """
+    return scoped_storage_path(
+        "branding", instance.pk, filename, organization_id=instance.pk
+    )
+
+
+def org_settings_asset_path(instance, filename: str) -> str:
+    """A signature image, which hangs off settings rather than the tenant row."""
+    return scoped_storage_path(
+        "branding",
+        instance.organization_id,
+        filename,
+        organization_id=instance.organization_id,
+    )
 
 
 class Organization(models.Model):
@@ -78,10 +98,10 @@ class Organization(models.Model):
     slug = models.SlugField(max_length=63, unique=True)
 
     logo = models.ImageField(
-        upload_to="org/", max_length=STORED_PATH_MAX, null=True, blank=True
+        upload_to=organization_asset_path, max_length=STORED_PATH_MAX, null=True, blank=True
     )
     favicon = models.ImageField(
-        upload_to="org/", max_length=STORED_PATH_MAX, null=True, blank=True
+        upload_to=organization_asset_path, max_length=STORED_PATH_MAX, null=True, blank=True
     )
 
     primary_email = models.EmailField(blank=True)
@@ -230,7 +250,7 @@ class OrgSettings(BaseModel):
     #: (offer letters today). Never served publicly — it reaches candidates
     #: only inside a PDF the office chose to send.
     signature = models.ImageField(
-        upload_to="org/", max_length=STORED_PATH_MAX, null=True, blank=True
+        upload_to=org_settings_asset_path, max_length=STORED_PATH_MAX, null=True, blank=True
     )
 
     class Meta:

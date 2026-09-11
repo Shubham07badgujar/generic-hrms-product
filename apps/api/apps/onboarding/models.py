@@ -169,7 +169,12 @@ class ItemStatus(models.TextChoices):
 
 
 def onboarding_item_path(instance, filename: str) -> str:
-    return scoped_storage_path("onboarding", instance.onboarding.employee_id, filename)
+    return scoped_storage_path(
+        "onboarding",
+        instance.onboarding.employee_id,
+        filename,
+        organization_id=instance.organization_id,
+    )
 
 
 class OnboardingItem(OrgOwnedModel):
@@ -299,7 +304,12 @@ class LetterStatus(models.TextChoices):
 
 
 def letter_path(instance, filename: str) -> str:
-    return scoped_storage_path("letters", instance.employee_id, filename)
+    return scoped_storage_path(
+        "letters",
+        instance.employee_id,
+        filename,
+        organization_id=instance.organization_id,
+    )
 
 
 class EmployeeLetter(OrgOwnedModel):

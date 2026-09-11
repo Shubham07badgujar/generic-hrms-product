@@ -21,8 +21,8 @@ from django.db.models.functions import Length
 from django.utils import timezone
 
 from core.models import OrgOwnedModel
-from core.validators import STORED_PATH_MAX
 from core.phone import to_e164_in
+from core.validators import STORED_PATH_MAX, scoped_storage_path
 
 
 def new_application_token() -> str:
@@ -250,6 +250,21 @@ class LegalBasis(models.TextChoices):
     LEGACY_UNRECORDED = "legacy_unrecorded", "Legacy — basis not recorded"
 
 
+def candidate_resume_path(instance, filename: str) -> str:
+    """
+    A CV, under the organization that received it.
+
+    Candidate PII is the category the retention sweep exists for, so it has to
+    be findable and deletable per customer like everything else.
+    """
+    return scoped_storage_path(
+        "candidate-resumes",
+        instance.pk or "new",
+        filename,
+        organization_id=instance.organization_id,
+    )
+
+
 class Candidate(OrgOwnedModel):
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100, blank=True)
@@ -285,7 +300,7 @@ class Candidate(OrgOwnedModel):
     notice_period_days = models.PositiveSmallIntegerField(null=True, blank=True)
 
     resume = models.FileField(
-        upload_to="recruitment/resumes/", max_length=STORED_PATH_MAX, null=True, blank=True
+        upload_to=candidate_resume_path, max_length=STORED_PATH_MAX, null=True, blank=True
     )
     #: Where this person came from: "direct", "referral", "workindia", "naukri".
     source = models.CharField(max_length=40, default="direct", db_index=True)
@@ -858,6 +873,15 @@ class OfferStatus(models.TextChoices):
     WITHDRAWN = "withdrawn", "Withdrawn"
 
 
+def offer_letter_path(instance, filename: str) -> str:
+    return scoped_storage_path(
+        "offer-letters",
+        instance.application_id,
+        filename,
+        organization_id=instance.organization_id,
+    )
+
+
 class Offer(OrgOwnedModel):
     application = models.OneToOneField(
         Application, on_delete=models.PROTECT, related_name="offer"
@@ -889,7 +913,7 @@ class Offer(OrgOwnedModel):
     #: send time — later edits to the letterhead or signatory must never
     #: silently change what a candidate already holds.
     letter_pdf = models.FileField(
-        upload_to="offers/letters/", max_length=512, null=True, blank=True
+        upload_to=offer_letter_path, max_length=512, null=True, blank=True
     )
 
     class Meta:

@@ -81,6 +81,16 @@ class Gender(models.TextChoices):
     OTHER = "O", "Other"
 
 
+def employee_photo_path(instance, filename: str) -> str:
+    """A staff photo, under its own organization's subtree like everything else."""
+    return scoped_storage_path(
+        "employee-photos",
+        instance.pk or "new",
+        filename,
+        organization_id=instance.organization_id,
+    )
+
+
 class Employee(OrgOwnedModel):
     employee_code = models.CharField(max_length=20, db_index=True)
 
@@ -104,7 +114,7 @@ class Employee(OrgOwnedModel):
     date_of_birth = models.DateField(null=True, blank=True)
     gender = models.CharField(max_length=1, choices=Gender.choices, default=Gender.OTHER)
     photo = models.ImageField(
-        upload_to="employees/photos/", max_length=STORED_PATH_MAX, null=True, blank=True
+        upload_to=employee_photo_path, max_length=STORED_PATH_MAX, null=True, blank=True
     )
 
     # --- statutory identifiers, encrypted at rest ---
@@ -450,7 +460,12 @@ def employee_document_path(instance, filename: str) -> str:
     view, never a public URL — but it means a leaked storage listing does not
     hand out a tidy index of identity documents by employee code.
     """
-    return scoped_storage_path("employee-documents", instance.employee_id, filename)
+    return scoped_storage_path(
+        "employee-documents",
+        instance.employee_id,
+        filename,
+        organization_id=instance.organization_id,
+    )
 
 
 class EmployeeDocument(OrgOwnedModel):
