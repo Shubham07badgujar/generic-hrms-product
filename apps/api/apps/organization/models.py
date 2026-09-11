@@ -18,6 +18,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 
 from core.access.catalog import DepartmentKind, Layer
+from core.fields import EncryptedCharField
 from core.models import BaseModel, OrgOwnedModel
 from core.validators import STORED_PATH_MAX
 
@@ -462,3 +463,55 @@ class Team(OrgOwnedModel):
 
     def __str__(self) -> str:
         return self.name
+
+
+class OrgEmailConfig(BaseModel):
+    """
+    One organization's outbound mail settings.
+
+    Every field is OPTIONAL and falls back to the deployment's, field by field.
+    An organization that wants only its own from-address, leaving the SMTP
+    server to the platform, sets one line -- rather than restating the whole
+    block, which is how configuration screens end up full of copied-in values
+    that go stale.
+
+    Behind `ORG_SETTINGS`, which is the Admin's surface. Device credentials
+    live on a different table behind a different permission on purpose: one
+    table would have meant one permission, and an HR manager who may configure
+    the attendance clock would thereby read the mail password.
+    """
+
+    organization = models.OneToOneField(
+        "organization.Organization",
+        on_delete=models.CASCADE,
+        related_name="email_config",
+    )
+
+    host = models.CharField(max_length=255, blank=True)
+    port = models.PositiveIntegerField(null=True, blank=True)
+    use_tls = models.BooleanField(default=True)
+    username = models.CharField(max_length=255, blank=True)
+    #: Encrypted at rest, `write_only` on the way in, and never read back --
+    #: the API reports `has_password` and nothing else. A masked value still
+    #: leaks the length, and the reason to reveal a password is always better
+    #: served by setting a new one.
+    password = EncryptedCharField(max_length=255, blank=True, default="")
+
+    #: The envelope sender. What recipients see, and what SPF and DKIM are
+    #: checked against -- so an organization that sets this without also
+    #: authorising the platform's mail server to send as their domain will see
+    #: deliverability fall. Worth saying on the settings screen.
+    from_email = models.EmailField(blank=True)
+    #: Where a confused recipient replies. A human-facing address, not the one
+    #: SMTP authenticates as.
+    hr_contact = models.EmailField(blank=True)
+
+    class Meta:
+        verbose_name = "organization email configuration"
+
+    def __str__(self) -> str:
+        return f"{self.organization.slug} mail"
+
+    @property
+    def has_password(self) -> bool:
+        return bool(self.password)

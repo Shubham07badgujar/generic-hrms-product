@@ -94,6 +94,7 @@ GLOBALLY_UNIQUE: dict[str, str] = {
         "Derived from the application id, which is already organization-owned."
     ),
     "organization.OrgSettings.organization": "IS the organization link.",
+    "organization.OrgEmailConfig.organization": "IS the organization link.",
     "platform.Subscription.organization": "IS the organization link.",
     "platform.Plan.code": (
         "Plans are platform-owned, not tenant data, so there is no "

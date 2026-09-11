@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import logging
 
-from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.db import IntegrityError, transaction
 from django.template.loader import render_to_string
@@ -46,9 +45,14 @@ from django.utils import timezone
 from apps.recruitment.models import (
     Application,
     CandidateNotification,
+)
+from apps.recruitment.models import (
     CandidateNotificationKind as Kind,
+)
+from apps.recruitment.models import (
     CandidateNotificationStatus as Status,
 )
+from core.config import email_config
 
 logger = logging.getLogger("hrms.recruitment.comms")
 
@@ -131,7 +135,9 @@ def base_context(application: Application) -> dict:
         "current_status": _status_label(application),
         "current_stage": getattr(stage, "name", ""),
         "company_name": _company_name(_organization_for(application)),
-        "hr_contact_email": settings.HR_CONTACT_EMAIL,
+        "hr_contact_email": email_config(
+            _organization_for(application)
+        ).hr_contact,
         "next_step": "",
     }
 
@@ -220,13 +226,21 @@ def _deliver(notification: CandidateNotification) -> None:
         )
         return
 
+    # A candidate notification is sent BY an organization, so the sender
+    # identity, the reply-to address and the connection are all theirs. The
+    # notification row carries its own organization -- taking it from the row
+    # rather than from ambient context is what makes a retry, which may run
+    # much later on a worker, still send as the right company.
+    mail = email_config(notification.organization_id)
+
     try:
         message = EmailMultiAlternatives(
             subject=notification.subject,
             body=notification.body_text,
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            from_email=mail.from_email,
             to=[notification.recipient_email],
-            reply_to=[settings.HR_CONTACT_EMAIL] if settings.HR_CONTACT_EMAIL else None,
+            reply_to=[mail.hr_contact] if mail.hr_contact else None,
+            connection=mail.connection(),
         )
         message.attach_alternative(notification.body_html, "text/html")
         for filename, content, mimetype in _attachments_for(notification):

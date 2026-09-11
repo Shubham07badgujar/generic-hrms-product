@@ -29,6 +29,7 @@ from decimal import Decimal
 from django.db import models
 from django.db.models import Q
 
+from core.fields import EncryptedCharField
 from core.models import OrgOwnedModel, OrgOwnedTimestampedModel
 
 
@@ -367,3 +368,43 @@ class EsslSyncRun(OrgOwnedModel):
 
     def __str__(self) -> str:
         return f"{self.kind} sync {self.started_at:%Y-%m-%d %H:%M} ({self.status})"
+
+
+class OrgAttendanceIntegration(OrgOwnedModel):
+    """
+    One organization's biometric endpoint, and the credentials for it.
+
+    THE BRIEF NAMES THIS TABLE SPECIFICALLY: never copy one company's biometric
+    credentials into another organization, and never expose them to ordinary
+    employees.
+
+    The first is structural. `core.config.attendance_config` reads one
+    organization id and falls back only to the deployment default, so there is
+    no code path in which one customer's endpoint is reachable from another's
+    context. The second is the permission -- this sits behind
+    `ATTENDANCE_DEVICE`, not `ORG_SETTINGS` -- plus `write_only` on the way out.
+
+    A separate table from `OrgEmailConfig` for exactly that reason: one table
+    would have forced one permission, and the person who configures the
+    attendance clock is not the person who should read the mail password.
+    """
+
+    base_url = models.URLField(max_length=400, blank=True)
+    username = models.CharField(max_length=150, blank=True)
+    #: Encrypted at rest, write-only over the API, never read back.
+    password = EncryptedCharField(max_length=255, blank=True, default="")
+
+    class Meta:
+        verbose_name = "organization attendance integration"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization"], name="uniq_attendance_integration_per_org"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.organization.slug} devices"
+
+    @property
+    def has_password(self) -> bool:
+        return bool(self.password)

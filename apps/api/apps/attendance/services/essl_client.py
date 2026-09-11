@@ -69,21 +69,36 @@ class RequestsTransport:
         return response.text
 
 
-def essl_enabled() -> bool:
+def essl_enabled(organization=None) -> bool:
+    """
+    Whether THIS organization can talk to a device service.
+
+    Two conditions, and they answer different questions. The deployment switch
+    says whether the integration exists at all on this installation; the
+    resolved base URL says whether this particular customer has an endpoint --
+    their own, or the deployment's shared one.
+
+    The organization is explicit and defaults to None, which resolves to the
+    deployment's settings. That default is what keeps a single-company install
+    working unchanged, and it is safe precisely because the fallback is to
+    `settings` and never to another organization.
+    """
+    from core.config import attendance_config
+
     return bool(getattr(settings, "ESSL_INTEGRATION_ENABLED", False)) and bool(
-        getattr(settings, "ESSL_BASE_URL", "")
+        attendance_config(organization).base_url
     )
 
 
-def _service_url() -> str:
-    return settings.ESSL_BASE_URL.rstrip("/") + SERVICE_PATH
+def _service_url(config) -> str:
+    return config.base_url.rstrip("/") + SERVICE_PATH
 
 
 def _tz() -> ZoneInfo:
     return ZoneInfo(getattr(settings, "ESSL_TIMEZONE", "Asia/Kolkata"))
 
 
-def _envelope(from_dt: dt.datetime, to_dt: dt.datetime, serial: str) -> str:
+def _envelope(from_dt: dt.datetime, to_dt: dt.datetime, serial: str, config) -> str:
     """The SOAP 1.1 body, field-for-field as the service's own page documents."""
     from xml.sax.saxutils import escape
 
@@ -97,8 +112,8 @@ def _envelope(from_dt: dt.datetime, to_dt: dt.datetime, serial: str) -> str:
         f"<FromDateTime>{from_dt:{_WIRE_DT}}</FromDateTime>"
         f"<ToDateTime>{to_dt:{_WIRE_DT}}</ToDateTime>"
         f"<SerialNumber>{escape(serial)}</SerialNumber>"
-        f"<UserName>{escape(settings.ESSL_USERNAME)}</UserName>"
-        f"<UserPassword>{escape(settings.ESSL_PASSWORD)}</UserPassword>"
+        f"<UserName>{escape(config.username)}</UserName>"
+        f"<UserPassword>{escape(config.password)}</UserPassword>"
         "<strDataList></strDataList>"
         "</GetTransactionsLog>"
         "</soap:Body>"
@@ -164,18 +179,29 @@ def fetch_punches(
     to_dt: dt.datetime,
     *,
     transport: Transport | None = None,
+    organization=None,
 ) -> list[PunchRow]:
     """
     One device's punches for a LOCAL-time window.
 
     `from_dt`/`to_dt` are aware; they are converted to the device's local
     clock for the wire and the returned punches come back aware again.
+
+    THE ORGANIZATION IS EXPLICIT, and this is the call the brief singles out:
+    never copy one company's biometric credentials into another organization.
+    The endpoint and the credentials come from `attendance_config(organization)`
+    -- one organization id, falling back to the deployment's settings and to
+    nothing else. A caller that forgets the argument gets the DEPLOYMENT's
+    configuration, never a neighbour's.
     """
+    from core.config import attendance_config
+
+    config = attendance_config(organization)
     transport = transport or RequestsTransport()
     tz = _tz()
-    body = _envelope(from_dt.astimezone(tz), to_dt.astimezone(tz), serial)
+    body = _envelope(from_dt.astimezone(tz), to_dt.astimezone(tz), serial, config)
     text = transport.post(
-        _service_url(),
+        _service_url(config),
         headers={
             "Content-Type": "text/xml; charset=utf-8",
             "SOAPAction": f'"{SOAP_ACTION}"',
@@ -192,8 +218,9 @@ def fetch_punches(
         raise EsslError(
             "The eTimeTrackLite Web API refused the credentials. The API has "
             "its own user list (separate from the website login) — create or "
-            "check the Web API user in eTimeTrackLite and update "
-            "ESSL_USERNAME / ESSL_PASSWORD."
+            "check the Web API user in eTimeTrackLite and update this "
+            "organization's device credentials (or ESSL_USERNAME / "
+            "ESSL_PASSWORD where the deployment's are used)."
         )
     if lowered and "success" not in lowered and not payload.strip():
         # An unknown non-success verdict with no data — surface it verbatim.
@@ -201,16 +228,21 @@ def fetch_punches(
     return parse_rows(payload)
 
 
-def diagnose(*, transport: Transport | None = None) -> dict:
+def diagnose(*, transport: Transport | None = None, organization=None) -> dict:
     """
     The connection story, one check at a time — powers `manage.py essl_check`
     and the UI status card. Never raises; every problem lands in `errors`.
     """
     from apps.attendance.models import AttendanceDevice
+    from core.config import attendance_config
 
+    config = attendance_config(organization)
     report: dict = {
-        "enabled": essl_enabled(),
-        "base_url": getattr(settings, "ESSL_BASE_URL", ""),
+        "enabled": essl_enabled(organization),
+        "base_url": config.base_url,
+        # Says WHOSE configuration answered, so a support conversation does
+        # not start by guessing whether the customer set their own endpoint.
+        "organization_specific": config.is_organization_specific,
         "service_reachable": False,
         "credentials_ok": None,
         "devices": [],
@@ -226,7 +258,7 @@ def diagnose(*, transport: Transport | None = None) -> dict:
     try:
         import requests
 
-        page = requests.get(_service_url(), timeout=15)
+        page = requests.get(_service_url(config), timeout=15)
         report["service_reachable"] = page.status_code == 200
         if page.status_code != 200:
             report["errors"]["service"] = f"GET {SERVICE_PATH} -> {page.status_code}"
@@ -240,7 +272,12 @@ def diagnose(*, transport: Transport | None = None) -> dict:
     for device in devices:
         entry = {"serial": device.serial_number, "name": device.name, "rows": None}
         try:
-            rows = fetch_punches(device.serial_number, *window, transport=transport)
+            rows = fetch_punches(
+                device.serial_number,
+                *window,
+                transport=transport,
+                organization=organization,
+            )
             entry["rows"] = len(rows)
             report["credentials_ok"] = True
         except EsslError as exc:

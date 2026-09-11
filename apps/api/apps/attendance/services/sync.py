@@ -125,8 +125,17 @@ def sync_all(
 
         try:
             for w_from, w_to in windows:
+                # The organization comes from THE DEVICE, not from ambient
+                # context or a threaded argument. A device belongs to exactly
+                # one customer, and the credentials used to reach it must be
+                # that customer's -- taking it from the row makes that
+                # structural rather than something each caller must remember.
                 rows = essl_client.fetch_punches(
-                    device.serial_number, w_from, w_to, transport=transport
+                    device.serial_number,
+                    w_from,
+                    w_to,
+                    transport=transport,
+                    organization=device.organization_id,
                 )
                 counts = _ingest(device, rows)
                 run.punches_fetched += counts["fetched"]

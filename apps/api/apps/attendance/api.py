@@ -664,6 +664,19 @@ class RangeSyncSerializer(serializers.Serializer):
         return data
 
 
+def _attendance_config(organization_id):
+    from core.config import attendance_config
+
+    return attendance_config(organization_id)
+
+
+def _org_id(request):
+    """This request's organization, for resolving device credentials."""
+    from core.access.context import get_context
+
+    return get_context(request).organization_id
+
+
 class EsslDeviceViewSet(ScopedModelViewSet):
     """Devices, plus the integration's control surface. HR-only by resource."""
 
@@ -689,8 +702,13 @@ class EsslDeviceViewSet(ScopedModelViewSet):
 
         last = EsslSyncRun.objects.active().order_by("-started_at").first()
         return Response({
-            "enabled": essl_enabled(),
-            "base_host": (settings.ESSL_BASE_URL or "").split("//")[-1].split("/")[0],
+            "enabled": essl_enabled(_org_id(request)),
+            # The HOST only, never the full endpoint and never the
+            # credentials: this is a status card an HR user reads, and the
+            # device password is not theirs to see.
+            "base_host": (
+                _attendance_config(_org_id(request)).base_url or ""
+            ).split("//")[-1].split("/")[0],
             "affects_payroll": bool(getattr(settings, "ATTENDANCE_AFFECTS_PAYROLL", False)),
             "devices": DeviceSerializer(
                 self.get_queryset().order_by("name"), many=True
@@ -705,7 +723,7 @@ class EsslDeviceViewSet(ScopedModelViewSet):
         from .services.sync import sync_all
 
         require(request.user, Resource.ATTENDANCE_DEVICE, Action.IMPORT)
-        if not essl_enabled():
+        if not essl_enabled(_org_id(request)):
             raise DRFValidationError(
                 {"detail": "The eSSL integration is disabled on the server."}
             )
@@ -718,7 +736,7 @@ class EsslDeviceViewSet(ScopedModelViewSet):
         from .services.sync import sync_all
 
         require(request.user, Resource.ATTENDANCE_DEVICE, Action.IMPORT)
-        if not essl_enabled():
+        if not essl_enabled(_org_id(request)):
             raise DRFValidationError(
                 {"detail": "The eSSL integration is disabled on the server."}
             )

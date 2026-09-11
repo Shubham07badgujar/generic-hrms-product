@@ -29,8 +29,10 @@ from django.contrib.auth import password_validation
 from django.core.exceptions import ValidationError
 from django.core.mail import EmailMultiAlternatives
 from django.db import transaction
-from django.utils.html import escape
 from django.utils import timezone
+from django.utils.html import escape
+
+from core.config import email_config
 
 logger = logging.getLogger("hrms.accounts")
 
@@ -166,26 +168,29 @@ def _position_of(employee, role) -> str:
     return ""
 
 
-def _hr_mail_connection():
+def _hr_mail_connection(organization=None, *, config=None):
     """
-    HR's own authenticated sender, when one is configured.
+    HR's own authenticated sender, for THIS organization.
 
-    The welcome email announces an employment relationship, so the office
-    sends it from HR's mailbox rather than the recruitment address candidates
+    The welcome email announces an employment relationship, so the office sends
+    it from HR's mailbox rather than the recruitment address candidates
     correspond with. Returns None when unconfigured — the message then goes
-    through the default connection, exactly as before.
-    """
-    if not settings.HR_EMAIL_HOST_USER:
-        return None
-    from django.core import mail
+    through the deployment's default connection, exactly as before.
 
-    return mail.get_connection(
-        host=settings.EMAIL_HOST,
-        port=settings.EMAIL_PORT,
-        username=settings.HR_EMAIL_HOST_USER,
-        password=settings.HR_EMAIL_HOST_PASSWORD,
-        use_tls=settings.EMAIL_USE_TLS,
-    )
+    The organization is passed EXPLICITLY. There is no ambient-current-org
+    convenience here on purpose: the failure mode of forgetting one would be a
+    message sent through another customer's mail server, authenticating as
+    them, and nothing about that announces itself. An explicit argument turns
+    a forgotten call site into a visible one.
+
+    Callers that have already resolved the configuration pass it in rather than
+    resolving twice. The function stays the SEAM either way -- it is what a
+    test substitutes to simulate an SMTP failure, and bypassing it here for a
+    direct `config.connection()` call silently disarmed exactly that test.
+    """
+    from core.config import email_config
+
+    return (config or email_config(organization)).connection()
 
 
 def _transactional_headers(from_email: str) -> dict:
@@ -243,7 +248,12 @@ def send_account_created_email(
     company = _company_name(organization)
     legal_name = _legal_name(organization)
     login_url = f"{settings.FRONTEND_URL.rstrip('/')}/login"
-    hr_contact = settings.HR_CONTACT_EMAIL
+    # FRONTEND_URL stays a deployment setting: there is one SPA, and a
+    # per-organization login URL would be a custom-domain feature that does not
+    # exist. The CONTACT address is per-organization, because it is the
+    # customer's own HR mailbox that a confused new joiner replies to.
+    mail_config = email_config(organization)
+    hr_contact = mail_config.hr_contact
     name = (getattr(employee, "full_name", "") or user.get_full_name() or user.email).strip()
     position = _position_of(employee, role)
 
@@ -401,14 +411,17 @@ def send_account_created_email(
 </div>"""
 
     try:
-        from_email = settings.HR_FROM_EMAIL or settings.DEFAULT_FROM_EMAIL
+        # Sender, reply-to and connection all come from THIS organization's
+        # resolved configuration, falling back field by field to the
+        # deployment's -- never to another organization's.
+        from_email = mail_config.from_email
         message = EmailMultiAlternatives(
             subject=subject,
             body=text_body,
             from_email=from_email,
             to=[recipient],
             reply_to=[hr_contact] if hr_contact else None,
-            connection=_hr_mail_connection(),
+            connection=_hr_mail_connection(config=mail_config),
             headers=_transactional_headers(from_email),
         )
         message.attach_alternative(html_body, "text/html")
