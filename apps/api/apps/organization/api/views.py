@@ -25,7 +25,12 @@ matrix never signed off.
 
 from __future__ import annotations
 
-from core.api.exceptions import BusinessRuleError
+from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.accounts.models import Role
 from apps.accounts.services import role_admin
@@ -40,24 +45,17 @@ from apps.organization.models import (
     OrgStatus,
     Team,
 )
-from core.access import Resource, require
+from apps.organization.setup import SetupError, finish_setup, setup_state
+from core.access import Action, Resource, require
 from core.access.drf import ScopedModelViewSet, ScopedReadOnlyModelViewSet
-from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from rest_framework.views import APIView
-
-from django.core.exceptions import ValidationError as DjangoValidationError
-from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError as DRFValidationError
-from rest_framework.response import Response
-
-from core.access import Action
+from core.api.exceptions import BusinessRuleError
 
 from .serializers import (
     DepartmentSerializer,
-    OrgSettingsSerializer,
     DesignationSerializer,
     EmployeeLevelSerializer,
     LocationSerializer,
+    OrgSettingsSerializer,
     PermissionCellSerializer,
     RoleSerializer,
     RoleWriteSerializer,
@@ -380,3 +378,42 @@ class RoleViewSet(ScopedModelViewSet):
             cells=payload.validated_data,
         )
         return self.permissions(request, pk=pk)
+
+
+class SetupStateView(APIView):
+    """
+    GET  /org/setup/         — every wizard step and whether it is done
+    POST /org/setup/finish/  — the one transition out of PENDING_SETUP
+
+    `ORG_SETTINGS` rather than a new resource, deliberately. The wizard is not
+    a new kind of authority: it writes nothing of its own, and everything it
+    links to is already governed by the resource that owns that screen. Adding
+    a SETUP resource to the matrix would mean an Organization Admin could edit
+    their own roles to remove it, which for a wizard is meaningless and for the
+    catalogue is one more row nobody needed.
+    """
+
+    access_resource = Resource.ORG_SETTINGS
+    access_actions = {"GET": Action.VIEW, "POST": Action.EDIT}
+
+    def _organization(self):
+        from core.access.context import get_context
+
+        return Organization.objects.get(pk=get_context(self.request).organization_id)
+
+    def get(self, request):
+        require(request.user, Resource.ORG_SETTINGS, Action.VIEW)
+        return Response(setup_state(self._organization()))
+
+    def post(self, request):
+        require(request.user, Resource.ORG_SETTINGS, Action.EDIT)
+        organization = self._organization()
+        try:
+            finish_setup(organization, actor=request.user)
+        except SetupError as exc:
+            # 422, not 400: the request is well-formed and the caller is
+            # entitled to make it. The system will not allow it YET, which is a
+            # business rule, and the SPA renders those differently from a
+            # validation error on a field.
+            raise BusinessRuleError(str(exc)) from exc
+        return Response(setup_state(organization))

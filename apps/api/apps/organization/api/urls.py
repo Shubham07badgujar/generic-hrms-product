@@ -12,6 +12,7 @@ from .views import (
     OrgBrandingView,
     OrgSettingsView,
     RoleViewSet,
+    SetupStateView,
     TeamViewSet,
 )
 
@@ -26,4 +27,9 @@ router.register("roles", RoleViewSet, basename="role")
 organization_patterns = [
     path("org/settings/", OrgSettingsView.as_view(), name="org-settings"),
     path("org/branding/", OrgBrandingView.as_view(), name="org-branding"),
+    # One route, two verbs: GET reports the wizard, POST finishes it. A
+    # separate /finish/ path would suggest the wizard has state of its own
+    # to advance, and it has none -- every step is computed from the real
+    # tables each time it is asked.
+    path("org/setup/", SetupStateView.as_view(), name="org-setup"),
 ] + router.urls
