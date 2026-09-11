@@ -17,6 +17,24 @@ from .catalog import Action, Resource, Scope
 from .context import AccessContext, get_context
 
 
+def _enabled_features(ctx) -> list[str]:
+    """
+    Features the client may render, as a positive list.
+
+    Inverted from the stored `disabled_features` on purpose. In the database
+    absence must mean ALLOWED, so that adding a FeatureCode does not silently
+    switch a module off for every existing customer; in the snapshot absence
+    must mean UNAVAILABLE, so the SPA's `hasFeature()` is the same truthiness
+    check as its `can()`. Both conventions are right for where they live, and
+    this function is the one place they meet.
+    """
+    from .features import FeatureCode
+
+    return sorted(
+        str(f) for f in FeatureCode if str(f) not in ctx.disabled_features
+    )
+
+
 def build_snapshot(user) -> dict:
     """
     A compact, client-consumable view of one principal's authority.
@@ -51,6 +69,17 @@ def build_snapshot(user) -> dict:
         "layers": sorted(ctx.layers),
         "roles": sorted(ctx.role_codes),
         "grants": grants,
+        # Entitlement rides along with authority rather than getting its own
+        # endpoint, because they always change together -- a plan change and a
+        # role change both alter what the SPA should render, and two fetches
+        # would give it two moments to disagree with itself.
+        #
+        # A LIST of what is enabled, so absence means unavailable: the same
+        # convention as `grants`, and the one the client already implements.
+        # The negative form lives in the database, where absence has to mean
+        # allowed; it is inverted here so the client has one rule.
+        "features": _enabled_features(ctx),
+        "organization_status": ctx.organization_status,
         "notice": (
             "Advisory only. The API independently enforces every permission on "
             "every request; this snapshot governs presentation, not access."

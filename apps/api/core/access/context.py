@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import Mapping
 
@@ -59,6 +59,45 @@ class AccessContext:
     department_ids: frozenset = frozenset()
     grants: Mapping[tuple[str, str], int] = field(default_factory=dict)
     dashboard_key: str = DashboardKey.SELF
+
+    #: The organization's lifecycle status, carried EVEN ON A DENY so the
+    #: refusal can say why. Without it a suspended customer and a user with no
+    #: permission are the same 403, and the SPA cannot route one of them to a
+    #: screen explaining what happened.
+    organization_status: str = ""
+
+    #: Features this organization's plan does NOT include.
+    #:
+    #: The negative form, matching `Plan.disabled_features`, and for the same
+    #: reason: absence must mean ALLOWED. An organization with no subscription
+    #: -- a self-hosted single-company install, which has no plans at all --
+    #: gets an empty set and therefore the whole product, rather than nothing.
+    #:
+    #: This is the one place in the access layer that fails OPEN, and it is
+    #: deliberate. A bug that lost the subscription would give a customer more
+    #: modules; a bug in the tenant predicate would give them another
+    #: customer's data. Only the second is a security failure, and the two
+    #: should not be made to share a failure direction just for symmetry.
+    disabled_features: frozenset[str] = frozenset()
+
+    #: When the plan last narrowed, and for how long reads survive it. Reading
+    #: and exporting a switched-off module's existing records stays available
+    #: for this window, because a customer must be able to retrieve records
+    #: they are statutorily obliged to keep.
+    features_narrowed_at: object | None = None
+    read_only_grace_days: int = 0
+
+    @property
+    def within_read_grace(self) -> bool:
+        """Whether a disabled module is still readable and exportable."""
+        if self.features_narrowed_at is None:
+            # Never narrowed: the feature was absent from the start, so there
+            # is nothing the customer entered under it to retrieve.
+            return False
+        deadline = self.features_narrowed_at + timezone.timedelta(
+            days=self.read_only_grace_days
+        )
+        return timezone.now() <= deadline
 
     @property
     def min_layer(self) -> int:
@@ -126,6 +165,34 @@ def _active_membership(user):
         .select_related("organization")
         .first()
     )
+
+
+def _plan_state(organization_id) -> dict:
+    """
+    What the organization's plan permits, as three plain values.
+
+    One query per request, joined to the plan, alongside the membership and
+    grant queries that were already happening. Resolved HERE rather than in the
+    permission class for the same reason the grants are: identity, authority
+    and entitlement change together, and a request that checks thirty
+    permissions should ask once.
+    """
+    from apps.platform.models import Subscription
+
+    subscription = (
+        Subscription.objects.filter(organization_id=organization_id, is_active=True)
+        .select_related("plan")
+        .first()
+    )
+    if subscription is None:
+        return {}
+    return {
+        "disabled_features": frozenset(
+            str(f) for f in (subscription.plan.disabled_features or [])
+        ),
+        "features_narrowed_at": subscription.features_narrowed_at,
+        "read_only_grace_days": subscription.read_only_grace_days,
+    }
 
 
 def platform_admin_context(user) -> AccessContext:
@@ -206,8 +273,15 @@ def resolve_context(user) -> AccessContext:
             membership.organization_id,
             membership.organization.status,
         )
-        return DENY_ALL
+        # DENY_ALL with the status attached, not bare DENY_ALL. The denial is
+        # identical; what changes is that `OrganizationOperational` can now
+        # tell a suspended customer apart from a user who simply lacks a
+        # permission, and answer with a code the SPA can act on.
+        return replace(
+            DENY_ALL, organization_status=membership.organization.status
+        )
     organization_id = membership.organization_id
+    plan_state = _plan_state(membership.organization_id)
 
     from apps.accounts.models import RolePermission, UserPermissionOverride, UserRole
 
@@ -297,6 +371,8 @@ def resolve_context(user) -> AccessContext:
     return AccessContext(
         user_id=user.pk,
         organization_id=organization_id,
+        organization_status=membership.organization.status,
+        **plan_state,
         role_codes=frozenset(r.code for r in roles),
         layers=layers,
         read_only=read_only,

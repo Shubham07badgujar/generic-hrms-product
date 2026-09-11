@@ -26,7 +26,7 @@ import logging
 
 from rest_framework.permissions import BasePermission
 
-from .catalog import Action
+from .catalog import READ_ACTIONS, Action
 
 logger = logging.getLogger("hrms.access")
 
@@ -310,3 +310,133 @@ class RBACPermission(BasePermission):
             )
             return False
         return True
+
+
+#: What a SUSPENDED or CANCELLED organization's users may still reach: sign in,
+#: learn who they are, and read the screen explaining what happened. Everything
+#: else is refused with a code the SPA routes on.
+#:
+#: Deliberately tiny, and deliberately not "read everything". A suspended
+#: organization's data is preserved, not published -- the customer gets it back
+#: on restore or through an export, both of which are actions somebody takes,
+#: not a side effect of the account still resolving.
+SUSPENDED_ALLOWED_PREFIXES = (
+    "/api/v1/auth/",
+    "/api/v1/me/",
+    "/api/v1/org/branding/",
+)
+
+
+class OrganizationOperational(BasePermission):
+    """
+    Refuse a suspended, cancelled or archived organization -- and SAY SO.
+
+    NOT MIDDLEWARE, and that is the whole point of it being here. A
+    `SuspendedOrgMiddleware` would run before DRF resolved the JWT, see
+    `AnonymousUser` on every token request, and wave every suspended
+    organization straight through. That is the exact shape of
+    HRMS-INC-20260717-01: a decision made before the principal exists, which is
+    therefore made about nobody.
+
+    `resolve_context` already denies these organizations by returning a
+    grant-less context, so this class adds no authority -- it adds an ANSWER.
+    Without it a suspended customer and a user who simply lacks a permission
+    produce the same 403, and the SPA cannot tell one from the other.
+    """
+
+    message = (
+        "This organization is not currently active. Contact your administrator."
+    )
+    code = "organization_suspended"
+
+    def has_permission(self, request, view) -> bool:
+        user = getattr(request, "user", None)
+        if user is None or not getattr(user, "is_authenticated", False):
+            return True
+        if getattr(user, "is_platform_admin", False):
+            return True
+        if any(request.path.startswith(p) for p in SUSPENDED_ALLOWED_PREFIXES):
+            return True
+
+        # Imported here, not at module scope: this module is named in
+        # DEFAULT_PERMISSION_CLASSES and must stay free of heavy imports --
+        # see the module docstring.
+        from apps.organization.models import OPERATIONAL_STATUSES
+
+        from .context import get_context
+
+        status = get_context(request).organization_status
+        if not status or status in OPERATIONAL_STATUSES:
+            return True
+        logger.info(
+            "access.org_not_operational_route user=%s status=%s path=%s",
+            user.pk, status, request.path,
+        )
+        return False
+
+
+class FeatureEnabled(BasePermission):
+    """
+    Refuse a module the organization's plan does not include.
+
+    THE ONLY FEATURE CHECK IN THE PRODUCT. It reads the resource
+    `RBACPermission` has already resolved, looks it up in one map, and that is
+    the entire mechanism -- so `if plan.has_payroll` never appears anywhere,
+    and a module cannot be half-gated because somebody covered the list
+    endpoint and forgot the export.
+
+    GATES ON THE ACTION, NOT THE RESOURCE ALONE. When a customer downgrades off
+    payroll, their PayrollRuns, Payslips and statutory records remain stored
+    and unmodified; what stops is WRITING. Reading and exporting them stays
+    available for the plan's grace window, because a customer must be able to
+    retrieve records they are statutorily obliged to keep, and a downgrade that
+    made last year's payslips unreachable would be a compliance problem the
+    product created.
+
+    Ordered AFTER `RBACPermission` in the chain, deliberately. A principal who
+    has no permission on a resource should be told that, not told which modules
+    their employer declined to buy -- the refusal reason is itself information,
+    and the narrower one is the honest answer.
+    """
+
+    message = "Your plan does not include this module."
+    code = "feature_not_available"
+
+    def has_permission(self, request, view) -> bool:
+        user = getattr(request, "user", None)
+        if user is None or not getattr(user, "is_authenticated", False):
+            return True
+
+        # Platform views and genuinely public ones resolve no resource, so
+        # there is nothing to look up -- which is correct: a customer's plan
+        # must never govern the operator's own console.
+        resource = resolve_resource(view, request)
+        if not resource:
+            return True
+
+        from .features import feature_for
+
+        feature = feature_for(resource)
+        if feature is None:
+            # Unmapped. `access.E014` fails the build for this, so reaching it
+            # at runtime means the check was bypassed -- allow rather than
+            # refuse, because a build-time omission should not take a customer
+            # down mid-request.
+            logger.error("access.unmapped_feature resource=%s", resource)
+            return True
+
+        from .context import get_context
+
+        context = get_context(request)
+        if str(feature) not in context.disabled_features:
+            return True
+
+        action = resolve_action(view, request)
+        if action in READ_ACTIONS and context.within_read_grace:
+            return True
+
+        logger.info(
+            "access.feature_disabled user=%s feature=%s action=%s path=%s",
+            user.pk, feature, action, request.path,
+        )
+        return False

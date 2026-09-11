@@ -191,7 +191,17 @@ REST_FRAMEWORK = {
         # A new joiner with mandatory onboarding outstanding reaches only
         # their onboarding, their documents and their own profile.
         "core.access.permissions.OnboardingGate",
+        # A suspended or cancelled organization reaches auth, /me/ and the
+        # screen explaining why, and nothing else. A permission class rather
+        # than middleware: middleware runs before DRF resolves the JWT, would
+        # see AnonymousUser, and would wave every suspended organization
+        # through -- the shape of HRMS-INC-20260717-01.
+        "core.access.permissions.OrganizationOperational",
         "core.access.permissions.RBACPermission",
+        # AFTER RBAC on purpose: a principal with no permission on a resource
+        # is told that, rather than told which modules their employer declined
+        # to buy. The refusal reason is itself information.
+        "core.access.permissions.FeatureEnabled",
     ],
     "DEFAULT_PAGINATION_CLASS": "core.api.pagination.PageNumberPagination",
     "PAGE_SIZE": 40,
