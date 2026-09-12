@@ -187,6 +187,11 @@ PER_ORGANIZATION_SETTINGS = {
     "HR_EMAIL_HOST_PASSWORD",
     "HR_FROM_EMAIL",
     "HR_CONTACT_EMAIL",
+    # Not spelled EMAIL_*, and so not caught by the first version of this
+    # guard -- which is how the notification transport went on sending every
+    # customer's internal notices from the deployment's own address for a
+    # whole slice after the rest of the send path had been converted.
+    "DEFAULT_FROM_EMAIL",
     "ESSL_BASE_URL",
     "ESSL_USERNAME",
     "ESSL_PASSWORD",

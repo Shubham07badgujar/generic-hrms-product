@@ -156,15 +156,9 @@ def _active_membership(user):
     One query, and the `uniq_one_active_membership` constraint is what makes
     `.first()` unambiguous rather than arbitrary.
     """
-    from apps.organization.models import MembershipStatus, OrganizationMembership
+    from apps.organization.membership import active_membership
 
-    return (
-        OrganizationMembership.objects.filter(
-            user_id=user.pk, status=MembershipStatus.ACTIVE, is_active=True
-        )
-        .select_related("organization")
-        .first()
-    )
+    return active_membership(user)
 
 
 def _plan_state(organization_id) -> dict:

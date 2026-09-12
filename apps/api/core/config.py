@@ -134,6 +134,90 @@ def email_config(organization) -> EmailConfig:
 
 
 # ---------------------------------------------------------------------------
+# Message wording
+# ---------------------------------------------------------------------------
+
+
+def _one_line(value: str) -> str:
+    """
+    A subject line, flattened.
+
+    A template file ends with a newline and an author may press Return in a
+    subject box; either becomes a header-injection attempt the moment it
+    reaches SMTP. Collapsing whitespace here is cheaper than remembering to at
+    every send site.
+    """
+    return " ".join(value.split())
+
+
+@dataclass(frozen=True)
+class RenderedMessage:
+    """One outbound message, already rendered for one organization."""
+
+    subject: str
+    text: str
+    html: str
+    #: True when the wording came from the organization's own row rather than
+    #: the template this product ships. Surfaced so an editing screen can say
+    #: "using the standard wording" instead of showing an empty box.
+    is_organization_specific: bool = False
+
+
+def render_message(organization, key: str, context: dict) -> RenderedMessage:
+    """
+    Render one message as one organization would word it.
+
+    `key` is the shipped template's path without its extension --
+    "recruitment/email/offer_sent" -- so the template path IS the identifier
+    and there is no second registry of message names to keep in step with the
+    files.
+
+    Resolution is the same shape as every other resolver here: the
+    organization's own override if it has one, the shipped template otherwise,
+    and NEVER another organization's wording. An override supplying no HTML
+    still gets the shipped HTML rendered with its own context, which reads
+    better than nothing and better than HTML contradicting the text beside it.
+
+    The context is built by the sending service and holds plain strings, so an
+    organization authoring a template reaches its own message's facts and
+    nothing behind them.
+    """
+    from django.template import Context, Template
+    from django.template.loader import render_to_string
+
+    row = None
+    organization_id = _organization_id(organization)
+    if organization_id is not None:
+        from apps.organization.models import OrgEmailTemplate
+
+        row = (
+            OrgEmailTemplate.objects.all_orgs()
+            .filter(organization_id=organization_id, key=key, is_active=True)
+            .first()
+        )
+
+    def shipped(suffix: str) -> str:
+        return render_to_string(f"{key}{suffix}", context)
+
+    if row is None:
+        return RenderedMessage(
+            subject=_one_line(shipped(".subject.txt")),
+            text=shipped(".txt"),
+            html=shipped(".html"),
+        )
+
+    def authored(source: str) -> str:
+        return Template(source).render(Context(context))
+
+    return RenderedMessage(
+        subject=_one_line(authored(row.subject)),
+        text=authored(row.body_text),
+        html=authored(row.body_html) if row.body_html else shipped(".html"),
+        is_organization_specific=True,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Attendance devices
 # ---------------------------------------------------------------------------
 

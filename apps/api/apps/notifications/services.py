@@ -9,6 +9,11 @@ every failure here is logged and swallowed. The caller gets its work done.
 The second rule is that a notification is addressed to a USER, never to an
 Employee. Admin and CEO hold no Employee record and still need to be told
 things.
+
+The third rule is that the user must belong to the organization the action
+happened in. That is checked once, in `_addressable_organization`, rather than
+trusted to each of the two dozen event functions that resolve their own
+audience.
 """
 
 from __future__ import annotations
@@ -48,8 +53,17 @@ def notify(
     Returning None is a normal outcome, not a failure: the recipient may have
     switched the kind off, or an identical unread notification may already be
     sitting in their list.
+
+    It is also the answer when the recipient does not belong to the acting
+    organization, or when no organization is bound at all — see
+    `_addressable_organization`, which is where recipient isolation is
+    enforced for every event in this system.
     """
     if recipient is None or not getattr(recipient, "is_active", False):
+        return None
+
+    organization_id = _addressable_organization(recipient, kind=kind)
+    if organization_id is None:
         return None
 
     entity_type, entity_id = "", ""
@@ -101,6 +115,53 @@ def notify_many(*, recipients, **kwargs) -> list[Notification]:
         if notification is not None:
             created.append(notification)
     return created
+
+
+# ------------------------------------------------- addressing (the boundary)
+
+
+def _addressable_organization(recipient, *, kind: str):
+    """
+    The organization this notification belongs to, if it may reach `recipient`.
+
+    Returns None — meaning "write nothing, send nothing" — when the acting
+    organization cannot be determined, or when the recipient is not an active
+    member of it.
+
+    THIS IS THE SINGLE CHOKEPOINT FOR RECIPIENT ISOLATION. Every event in
+    `events.py` resolves its own audience, and a notification's title carries
+    the thing it is about: an employee's name, a candidate's name, a period's
+    net pay. An audience resolved one row too wide is therefore a disclosure,
+    not a nuisance. Rather than trusting two dozen event functions to filter
+    correctly, the addressing is checked once, here, on the way to the row.
+
+    It fails closed twice over. No bound organization is a refusal, because an
+    unbound caller cannot show that anyone is in scope; a non-member recipient
+    is a refusal, because membership is the sole source of tenant identity. A
+    refusal is logged at ERROR: each one is either a bug in an event function
+    or a caller that forgot to bind context, and both want finding rather than
+    absorbing.
+    """
+    from apps.organization.membership import is_member
+    from core.middleware import get_current_org_id
+
+    organization_id = get_current_org_id()
+    if organization_id is None:
+        logger.error(
+            "notifications.unbound_organization kind=%s recipient=%s — "
+            "no notification written; bind one with acting_as(user, organization=...)",
+            kind, getattr(recipient, "pk", None),
+        )
+        return None
+
+    if not is_member(recipient, organization_id):
+        logger.error(
+            "notifications.cross_tenant_recipient_refused kind=%s recipient=%s "
+            "organization=%s", kind, getattr(recipient, "pk", None), organization_id,
+        )
+        return None
+
+    return organization_id
 
 
 def _preferences_for(recipient, kind: str, priority: str) -> tuple[bool, bool]:

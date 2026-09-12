@@ -405,7 +405,12 @@ def _notify_hr_of_selection(invite: InterviewSlotInvite) -> None:
     start = dt.datetime.fromisoformat(invite.selected_slot["start"])
     end = dt.datetime.fromisoformat(invite.selected_slot["end"])
     notify_many(
-        recipients=_users_holding(Resource.INTERVIEW, Action.CREATE, scope_at_least=Scope.ALL),
+        recipients=_users_holding(
+            invite.organization_id,
+            Resource.INTERVIEW,
+            Action.CREATE,
+            scope_at_least=Scope.ALL,
+        ),
         kind=NotificationKind.INTERVIEW_SLOT_SELECTED,
         title=f"Interview slot chosen: {invite.candidate.full_name}",
         body=(

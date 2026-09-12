@@ -180,6 +180,11 @@ class NotificationDelivery(OrgOwnedModel):
     a schema change.
     """
 
+    #: Derived from the notification rather than from acting context. A
+    #: delivery row cannot disagree with the thing it delivers, and a retry
+    #: running on a worker long afterwards has no context to read.
+    org_source = "notification"
+
     notification = models.ForeignKey(
         Notification, on_delete=models.CASCADE, related_name="deliveries"
     )

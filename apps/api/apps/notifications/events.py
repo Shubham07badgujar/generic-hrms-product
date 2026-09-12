@@ -10,6 +10,17 @@ honest about noise.
 Every function is called from the service that owns the event, AFTER its
 transaction has committed the meaningful work. `notify()` never raises, so a
 caller does not need to guard these.
+
+WHOSE PEOPLE
+------------
+An event that resolves its audience — "everyone who can approve payroll" —
+must resolve it within ONE organization. `_users_holding()` therefore takes the
+organization as its first positional argument, and every caller passes the one
+its own record carries — including the two callers OUTSIDE this module, in
+`apps/leave/services.py` and `apps/recruitment/services/slots.py`. See
+docs/MESSAGING_ISOLATION.md for what went wrong when it did not, and for the
+second layer inside `notify()` that covers the events which name their
+recipients directly instead.
 """
 
 from __future__ import annotations
@@ -19,9 +30,9 @@ from .models import Priority
 from .services import notify, notify_many
 
 
-def _users_holding(resource: str, action: str, *, scope_at_least=None):
+def _users_holding(organization, resource: str, action: str, *, scope_at_least=None):
     """
-    Everyone who may act on a resource — the recipients for "someone must do X".
+    Everyone in ONE organization who may act on a resource.
 
     Resolved from the permission matrix rather than a hardcoded role list, so
     granting a new role the permission also starts telling it about the work
@@ -29,16 +40,31 @@ def _users_holding(resource: str, action: str, *, scope_at_least=None):
 
     `scope_at_least` defaults to any scope at all. Pass a floor for the cases
     where a SELF-scoped holder is not a real candidate to act on the item.
+
+    THE ORGANIZATION IS THE FIRST ARGUMENT AND IT IS NOT OPTIONAL. This
+    function used to read every active user on the platform and keep whichever
+    ones held the permission — and holding `PAYROLL_RUN/APPROVE` in one's OWN
+    company is exactly what every HR Head of every customer does. So one
+    company's payroll run addressed every other company's payroll approvers,
+    naming its employee counts and net pay in the subject line. Making the
+    organization a positional argument means a new event cannot be written
+    without answering "whose?", and `None` addresses nobody rather than
+    everybody.
     """
-    from apps.accounts.models import User
+    from apps.organization.membership import member_users
     from core.access import Scope, can
 
     minimum = Scope.SELF if scope_at_least is None else scope_at_least
     return [
         user
-        for user in User.objects.filter(is_active=True)
+        for user in member_users(organization)
         if can(user, resource, action) >= minimum
     ]
+
+
+def _org_of(obj):
+    """The organization a business record belongs to, or None."""
+    return getattr(obj, "organization_id", None)
 
 
 def _user_of(employee):
@@ -96,7 +122,9 @@ def department_decision_recorded_for(*, application, decision: str, rationale: s
 
     verb = decision.replace("recommend_", "").replace("_", " ")
     notify_many(
-        recipients=_users_holding(Resource.CANDIDATE, Action.REJECT),
+        recipients=_users_holding(
+            _org_of(application), Resource.CANDIDATE, Action.REJECT
+        ),
         kind=K.DEPARTMENT_DECISION_RECORDED,
         title=f"{application.candidate.full_name}: department recommends {verb}",
         body=(rationale or "")[:400],
@@ -173,7 +201,10 @@ def document_uploaded(document) -> None:
 
     notify_many(
         recipients=_users_holding(
-            Resource.EMPLOYEE_DOCUMENT, Action.APPROVE, scope_at_least=Scope.ALL
+            _org_of(document),
+            Resource.EMPLOYEE_DOCUMENT,
+            Action.APPROVE,
+            scope_at_least=Scope.ALL,
         ),
         kind=K.DOCUMENT_UPLOADED,
         title=f"Document to verify: {employee.full_name}",
@@ -230,7 +261,9 @@ def probation_review_due(review) -> None:
     from core.access import Action, Resource
 
     employee = review.employee
-    recipients = _users_holding(Resource.PROBATION_REVIEW, Action.DECIDE)
+    recipients = _users_holding(
+        _org_of(review), Resource.PROBATION_REVIEW, Action.DECIDE
+    )
     recipients.append(_manager_of(employee))
 
     notify_many(
@@ -265,7 +298,9 @@ def resignation_submitted(resignation) -> None:
     from core.access import Action, Resource
 
     employee = resignation.employee
-    recipients = _users_holding(Resource.OFFBOARDING, Action.APPROVE)
+    recipients = _users_holding(
+        _org_of(resignation), Resource.OFFBOARDING, Action.APPROVE
+    )
     recipients.append(_manager_of(employee))
 
     notify_many(
@@ -309,7 +344,9 @@ def payroll_processed(run) -> None:
     from core.access import Action, Resource
 
     notify_many(
-        recipients=_users_holding(Resource.PAYROLL_RUN, Action.APPROVE),
+        recipients=_users_holding(
+            _org_of(run), Resource.PAYROLL_RUN, Action.APPROVE
+        ),
         kind=K.PAYROLL_PROCESSED,
         title=f"Payroll {run.period_year}-{run.period_month:02d} is ready for review",
         body=f"{run.totals.get('employee_count', 0)} payslips, "
@@ -325,7 +362,9 @@ def payroll_approved(run) -> None:
     from core.access import Action, Resource
 
     notify_many(
-        recipients=_users_holding(Resource.PAYROLL_RUN, Action.EDIT),
+        recipients=_users_holding(
+            _org_of(run), Resource.PAYROLL_RUN, Action.EDIT
+        ),
         kind=K.PAYROLL_APPROVED,
         title=f"Payroll {run.period_year}-{run.period_month:02d} approved",
         body="The run is locked. Corrections now require a recorded reversal.",
@@ -344,8 +383,8 @@ def payroll_reversed(run, *, reason: str) -> None:
     """
     from core.access import Action, Resource
 
-    recipients = _users_holding(Resource.PAYROLL_RUN, Action.EDIT)
-    recipients += _users_holding(Resource.PAYROLL_RUN, Action.APPROVE)
+    recipients = _users_holding(_org_of(run), Resource.PAYROLL_RUN, Action.EDIT)
+    recipients += _users_holding(_org_of(run), Resource.PAYROLL_RUN, Action.APPROVE)
 
     notify_many(
         recipients=recipients,
@@ -372,12 +411,18 @@ def payslip_available(payslip) -> None:
     )
 
 
-def statutory_verification_due(rule_sets) -> None:
+def statutory_verification_due(rule_sets, *, organization) -> None:
     """
     Rates are waiting on Finance, and payroll cannot be approved until they sign.
 
     CRITICAL: this is the gate that blocks paying anyone, and the people who
     can clear it are not the people who hit it.
+
+    The only event here whose organization cannot come from its own subject.
+    `StatutoryRuleSet` is deliberately global — India's PF and ESI rates are a
+    fact about the Republic, not about a customer — so the rate sets name
+    nobody to tell. The organization is therefore a required keyword argument
+    supplied by the payroll run that hit the gate.
     """
     from core.access import Action, Resource
 
@@ -385,7 +430,9 @@ def statutory_verification_due(rule_sets) -> None:
         return
 
     notify_many(
-        recipients=_users_holding(Resource.STATUTORY_CONFIG, Action.APPROVE),
+        recipients=_users_holding(
+            organization, Resource.STATUTORY_CONFIG, Action.APPROVE
+        ),
         kind=K.STATUTORY_VERIFICATION_DUE,
         title=f"{len(rule_sets)} statutory rate set(s) await verification",
         body="No payroll run can be approved until each is checked against its "
@@ -450,7 +497,9 @@ def admin_override(override, *, subject_label: str) -> None:
     from core.access import Action, Resource
 
     notify_many(
-        recipients=_users_holding(Resource.CANDIDATE, Action.REJECT),
+        recipients=_users_holding(
+            _org_of(override), Resource.CANDIDATE, Action.REJECT
+        ),
         kind=K.ADMIN_OVERRIDE,
         title=f"Administrative override: {subject_label}",
         body=getattr(override, "reason", "")[:400],

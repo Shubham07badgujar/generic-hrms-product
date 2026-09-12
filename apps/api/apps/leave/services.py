@@ -996,8 +996,12 @@ def flag_unreported_absences() -> int:
             day -= dt.timedelta(days=1)
         if streak >= config.absence_flag_days:
             notify_many(
-                recipients=_users_holding(Resource.LEAVE_REQUEST, Action.APPROVE,
-                                          scope_at_least=Scope.ALL),
+                recipients=_users_holding(
+                    employee.organization_id,
+                    Resource.LEAVE_REQUEST,
+                    Action.APPROVE,
+                    scope_at_least=Scope.ALL,
+                ),
                 kind=NotificationKind.LEAVE_SUBMITTED,
                 title=f"Uninformed absence: {employee.full_name}",
                 body=(f"{employee.full_name} ({employee.employee_code}) has been absent "

@@ -67,9 +67,16 @@ def _build(slug: str, name: str) -> World:
     from apps.payroll.models import PayrollRun
     from apps.recruitment.models import Candidate
 
-    organization = Organization.objects.create(
-        name=name, slug=slug, status=OrgStatus.ACTIVE
-    )
+    # Creating a tenant is a PLATFORM act, so it runs with no organization
+    # bound -- which is what provisioning does, and what makes the audit row
+    # for "this organization was created" org-less rather than stamped with
+    # whichever tenant happened to be in force. Without this the fixture wrote
+    # that row against the session organization, which is both untrue and a
+    # foreign key into a row this file never creates.
+    with acting_as(None, organization=None):
+        organization = Organization.objects.create(
+            name=name, slug=slug, status=OrgStatus.ACTIVE
+        )
 
     with acting_as(None, organization=organization):
         seed_roles(organization=organization)

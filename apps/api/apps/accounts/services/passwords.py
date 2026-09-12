@@ -110,18 +110,9 @@ def _organization_of(user):
     name the company, and failing the send would be the worse outcome.
     """
     try:
-        from apps.organization.models import MembershipStatus, OrganizationMembership
+        from apps.organization.membership import organization_of
 
-        membership = (
-            OrganizationMembership.objects.filter(
-                user_id=getattr(user, "pk", None),
-                status=MembershipStatus.ACTIVE,
-                is_active=True,
-            )
-            .select_related("organization")
-            .first()
-        )
-        return membership.organization if membership else None
+        return organization_of(user)
     except Exception:  # noqa: BLE001 — a missing table must not stop the mail
         logger.warning("accounts.org_lookup_failed", exc_info=True)
         return None

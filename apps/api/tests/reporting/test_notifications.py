@@ -288,16 +288,22 @@ def test_saving_a_preference_marks_it_configured(auth, people):
 # ------------------------------------------------------- workflow integration
 
 
-def test_recipients_come_from_the_permission_matrix_not_a_role_list(people):
+def test_recipients_come_from_the_permission_matrix_not_a_role_list(people, org):
     """
     Granting a permission should also start telling that role about the work.
 
     A hardcoded role list is how a queue ends up silently unwatched after a
     permission change.
+
+    The organization is now the first argument: the audience is everyone in
+    ONE company who holds the permission. This test still asks the question it
+    always asked — which of these people, not which of these companies.
     """
     from core.access import Action, Resource
 
-    recipients = events._users_holding(Resource.PAYROLL_RUN, Action.APPROVE)
+    recipients = events._users_holding(
+        org["organization"], Resource.PAYROLL_RUN, Action.APPROVE
+    )
     emails = {user.email for user in recipients}
 
     assert people["finance_head"].user.email in emails

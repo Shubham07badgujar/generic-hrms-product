@@ -535,3 +535,49 @@ class OrgEmailConfig(BaseModel):
     @property
     def has_password(self) -> bool:
         return bool(self.password)
+
+
+class OrgEmailTemplate(OrgOwnedModel):
+    """
+    One organization's own wording for one outbound message.
+
+    An OVERRIDE, not a copy. The shipped templates stay where they are, under
+    `apps/*/templates/`, and remain the default for every organization that has
+    never edited anything -- so a fresh tenant reads exactly the text this
+    product ships, and a self-hosted single-company installation is unchanged.
+    A row here replaces one message for one organization and nothing else.
+
+    The alternative -- seeding every shipped template into every new tenant as
+    rows -- was rejected. It would copy 51 files into the database per customer
+    at provisioning, and then a wording fix in the product would reach nobody,
+    because every organization would be sitting on a private copy made on the
+    day they signed up.
+
+    The render context is built by the sending service and contains plain
+    strings only (names, dates, a formatted amount), so an author here can
+    reach the message's own facts and nothing behind them.
+    """
+
+    #: The shipped template's path without its extension --
+    #: "recruitment/email/offer_sent". Using the real template path as the key
+    #: means there is no second registry of message names to keep in step.
+    key = models.CharField(max_length=160, db_index=True)
+
+    subject = models.CharField(max_length=300)
+    body_text = models.TextField()
+    #: Optional. An organization that writes only plain text gets the shipped
+    #: HTML rendered with its own context, which reads better than no HTML at
+    #: all and better than HTML that contradicts the text beside it.
+    body_html = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["key"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "key"], name="uniq_email_template_per_org"
+            )
+        ]
+        verbose_name = "organization email template"
+
+    def __str__(self) -> str:
+        return f"{self.organization_id}:{self.key}"

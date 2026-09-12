@@ -54,20 +54,28 @@ class EmailTransport:
     name = "email"
 
     def send(self, notification) -> None:
-        from django.core.mail import send_mail
-        from django.conf import settings
+        from django.core.mail import EmailMessage
+
+        from core.config import email_config
 
         recipient = getattr(notification.recipient, "email", "")
         if not recipient:
             raise ValueError("Recipient has no email address.")
 
-        send_mail(
+        # Sender identity and connection come from the ROW's organization, not
+        # from ambient context and not from the deployment defaults. The row is
+        # the only thing a retry will still have months later, and an internal
+        # notice arriving from another customer's mail server would announce
+        # one company's business under another company's name.
+        mail = email_config(notification.organization_id)
+
+        EmailMessage(
             subject=notification.title,
-            message=notification.body or notification.title,
-            from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
-            recipient_list=[recipient],
-            fail_silently=False,
-        )
+            body=notification.body or notification.title,
+            from_email=mail.from_email,
+            to=[recipient],
+            connection=mail.connection(),
+        ).send(fail_silently=False)
 
 
 #: Registered transports, in delivery order.

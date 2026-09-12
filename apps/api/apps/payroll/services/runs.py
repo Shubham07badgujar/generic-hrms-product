@@ -385,7 +385,9 @@ def process_run(run: PayrollRun, *, actor) -> PayrollRun:
     # whoever can verify statutory rates is told if they are the reason it
     # cannot be approved. Two different people, two different actions.
     notify_events.payroll_processed(run)
-    notify_events.statutory_verification_due(unverified_rule_sets(run))
+    notify_events.statutory_verification_due(
+        unverified_rule_sets(run), organization=run.organization_id
+    )
     return run
 
 

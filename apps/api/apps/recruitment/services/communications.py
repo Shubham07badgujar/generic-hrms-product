@@ -39,7 +39,6 @@ import logging
 
 from django.core.mail import EmailMultiAlternatives
 from django.db import IntegrityError, transaction
-from django.template.loader import render_to_string
 from django.utils import timezone
 
 from apps.recruitment.models import (
@@ -52,7 +51,7 @@ from apps.recruitment.models import (
 from apps.recruitment.models import (
     CandidateNotificationStatus as Status,
 )
-from core.config import email_config
+from core.config import email_config, render_message
 
 logger = logging.getLogger("hrms.recruitment.comms")
 
@@ -95,21 +94,18 @@ def _organization_for(application):
     """
     The company this correspondence comes from.
 
-    Resolved from the acting organization context, because the recruitment
-    tables do not carry the column yet. Once they do this becomes relational --
-    application -> job_opening -> organization -- and this indirection exists so
-    that is a change to one function rather than to every template context.
+    Relational: the application carries its own organization, so the company
+    named in a candidate's inbox is a property of the record rather than of
+    whoever happened to be signed in. This read ambient context while the
+    recruitment tables were still being converted; they carry the column now,
+    and reading it from the row is what makes a send that runs later on a
+    worker -- a retry, a queued batch -- still name the right company.
 
-    Returns None when nothing is bound (a Celery send, today), and the caller
-    falls back to the deployment's display name rather than guessing at a
-    company. Naming the wrong one in a candidate's inbox would be worse than
-    naming none.
+    Returns None only for a row with no organization, and the caller then
+    falls back to the deployment's display name rather than guessing. Naming
+    the wrong company in a candidate's inbox would be worse than naming none.
     """
-    from apps.organization.models import Organization
-    from core.middleware import get_current_org_id
-
-    org_id = get_current_org_id()
-    return Organization.objects.filter(pk=org_id).first() if org_id else None
+    return getattr(application, "organization", None)
 
 
 def _company_name(organization=None) -> str:
@@ -201,13 +197,24 @@ def offer_context(offer) -> dict:
 # ---------------------------------------------------------------- rendering
 
 
-def render(kind: str, context: dict) -> tuple[str, str, str]:
-    """(subject, text, html) for a kind. Raises TemplateDoesNotExist if unknown."""
-    prefix = f"recruitment/email/{kind}"
-    subject = render_to_string(f"{prefix}.subject.txt", context).strip().replace("\n", " ")
-    text = render_to_string(f"{prefix}.txt", context)
-    html = render_to_string(f"{prefix}.html", context)
-    return subject, text, html
+def template_key(kind: str) -> str:
+    """The shipped template path for a kind, which is also its override key."""
+    return f"recruitment/email/{kind}"
+
+
+def render(kind: str, context: dict, *, organization=None) -> tuple[str, str, str]:
+    """
+    (subject, text, html) for a kind, as THIS organization words it.
+
+    An organization that has written its own version of this message gets its
+    own; every other organization gets the text this product ships. Passing no
+    organization renders the shipped template -- never another customer's
+    wording, which has no resolution order in which it could appear.
+
+    Raises TemplateDoesNotExist for an unknown kind.
+    """
+    message = render_message(organization, template_key(kind), context)
+    return message.subject, message.text, message.html
 
 
 # ---------------------------------------------------------------- sending
@@ -294,7 +301,9 @@ def notify_candidate(
     context = base_context(application)
     context.update(extra_context or {})
     try:
-        subject, text, html = render(kind, context)
+        subject, text, html = render(
+            kind, context, organization=_organization_for(application)
+        )
     except Exception:  # noqa: BLE001 — a broken template must not break hiring
         logger.exception("recruitment.candidate_email_template_error kind=%s", kind)
         return None

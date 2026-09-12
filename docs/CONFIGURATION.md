@@ -29,8 +29,16 @@ thing to its home.
 | Onboarding checklist templates, document types | Organisation | Every new joiner's gate |
 | Letter templates | Organisation | Generated documents |
 | Notification preferences | Settings → Notifications | Per-user delivery |
+| Outbound mail server, sender address, reply-to | Organisation → Settings | Every email this organisation sends; unset fields fall back to the deployment's, field by field |
+| Email wording overrides | Organisation (model in place; no screen yet) | Replaces one shipped message for this organisation only — see `docs/MESSAGING_ISOLATION.md` |
 
 ## In `.env` (secrets and endpoints — see `apps/api/.env.example`)
+
+Since the multi-tenant conversion, the mail and eSSL groups below are
+**deployment defaults, not the value**. `core.config` resolves each one from
+the organisation's own row and falls back here field by field — never to
+another organisation. A single-company self-hosted installation leaves those
+tables empty and behaves exactly as this table describes.
 
 | Group | Variables |
 |---|---|
