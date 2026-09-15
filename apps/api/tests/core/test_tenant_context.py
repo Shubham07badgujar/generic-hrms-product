@@ -6,7 +6,7 @@ request-less callers. Reads resolve their organization from `AccessContext`
 instead, derived from the authenticated principal -- see
 docs/ARCHITECTURE.md §13.2 for why that distinction is the whole point.
 
-What is NOT covered here: `TenantManager` filtering and `OrgOwnedModel.save()`
+What is NOT covered here: manager-level filtering and `OrgOwnedModel.save()`
 stamping, both of which need a concrete table. Exercising them against a
 synthetic model needs `isolate_apps`, which cannot resolve `accounts.User`
 (already-imported models do not re-register in a temporary app registry). They

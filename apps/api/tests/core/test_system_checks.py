@@ -26,7 +26,7 @@ This is the same "guard the guard" reasoning as
 from __future__ import annotations
 
 import pytest
-from django.core.checks import Error
+from django.core.checks import ERROR, CheckMessage, Error
 from django.core.checks.registry import registry
 
 pytestmark = pytest.mark.meta
@@ -36,6 +36,10 @@ EXPECTED_CHECKS = {
     "check_all_api_views_are_mapped",
     "check_every_resource_has_a_spec",
     "check_role_invariants",
+    # Reports which apps still read across organizations at the manager. It is
+    # the check that would have said `TenantManager` was wired to nothing, so
+    # it gets the same guard against silently not running as the others.
+    "check_tenant_manager_rollout",
 }
 
 
@@ -93,11 +97,19 @@ def test_the_project_currently_passes_every_access_check(roles):
     queries `Role`, and running it against an empty table would assert nothing
     about the roles the product actually ships.
     """
-    errors: list[Error] = []
+    messages: list[CheckMessage] = []
     for fn in registry.get_checks():
         if getattr(fn, "__module__", "") == "core.access.checks":
-            errors.extend(fn(None) or [])
+            messages.extend(fn(None) or [])
 
-    assert not errors, "Access checks report issues:\n  " + "\n  ".join(
+    # ERRORS only. This test was written when every access check could return
+    # nothing but errors, so it asserted the whole list was empty. The rollout
+    # check reports a WARNING by design -- an unfinished per-app rollout is a
+    # known state, not a broken build, and deploys run `--fail-level ERROR` for
+    # the same reason. What that warning says is asserted exactly, in both
+    # directions, in tests/tenancy/test_tenant_manager.py.
+    errors: list[Error] = [m for m in messages if m.level >= ERROR]
+
+    assert not errors, "Access checks report errors:\n  " + "\n  ".join(
         f"{e.id} {e.msg}" for e in errors
     )

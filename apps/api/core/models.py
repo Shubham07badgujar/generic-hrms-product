@@ -155,13 +155,9 @@ class OrgContextMissing(TenancyError):
     """
 
 
-class TenantQuerySet(SoftDeleteQuerySet):
-    """Soft-delete semantics, for tenant-owned tables."""
-
-
-class TenantManager(models.Manager.from_queryset(TenantQuerySet)):
+class TenantScopedManagerMixin:
     """
-    Default manager for organization-owned models. Fails closed.
+    The tenant predicate, applied at the manager. Fails closed.
 
     This is the layer that covers what the view layer cannot. `scope_queryset()`
     protects endpoints, but two thirds of this codebase's queryset call sites
@@ -170,15 +166,27 @@ class TenantManager(models.Manager.from_queryset(TenantQuerySet)):
     every writable relational serializer field. Those never pass through a view
     mixin. They do pass through here.
 
+    Active only for apps named in `STRICT_TENANT_APPS`, because flipping it
+    changes the default behaviour of every query in an app at once. See that
+    set for why the rollout is per app.
+
     The escape hatch is `Model.objects.all_orgs()` -- explicit, greppable, and
     reviewable. There is deliberately no ambient "disable tenancy" switch: a
     flag someone can set at a distance is how the original incident happened.
     """
 
+    def _is_strict(self) -> bool:
+        from core.access.tenancy import STRICT_TENANT_APPS
+
+        return self.model._meta.app_label in STRICT_TENANT_APPS
+
     def get_queryset(self):
+        qs = super().get_queryset()
+        if not self._is_strict():
+            return qs
+
         from core.middleware import get_current_org_id
 
-        qs = super().get_queryset()
         org_id = get_current_org_id()
         if org_id is None:
             raise OrgContextMissing(
@@ -193,12 +201,13 @@ class TenantManager(models.Manager.from_queryset(TenantQuerySet)):
 
     def all_orgs(self):
         """
-        Every row, every organization.
+        Every row, every organization. Explicit and greppable.
 
         For platform administration, data migrations and the isolation tests
-        themselves. Each call site is a place someone deliberately stepped
-        outside tenancy, which is why this is a named method and not a keyword
-        argument -- `grep -rn all_orgs` is the audit.
+        themselves, which must start from an unfiltered queryset in order to
+        prove the filtering works. Each call site is a place someone
+        deliberately stepped outside tenancy, which is why this is a named
+        method and not a keyword argument -- `grep -rn all_orgs` is the audit.
         """
         return super().get_queryset()
 
@@ -294,27 +303,17 @@ class OrgOwnedQuerySet(OrgStampingQuerySetMixin, SoftDeleteQuerySet):
     """Soft-delete semantics, plus organization stamping on bulk writes."""
 
 
-class OrgOwnedManager(models.Manager.from_queryset(OrgOwnedQuerySet)):
+class OrgOwnedManager(
+    TenantScopedManagerMixin, models.Manager.from_queryset(OrgOwnedQuerySet)
+):
     """
     Default manager for organization-owned models.
 
-    Does NOT filter by organization -- that is `TenantManager`, rolled out per
-    app once every creation path reliably binds a context. This one only
-    ensures writes carry an organization.
+    Stamps an organization on write always; FILTERS by one only for apps named
+    in `STRICT_TENANT_APPS`. There is one manager rather than two so that
+    flipping an app cannot mean swapping a class somewhere and missing a model
+    -- the behaviour is a property of the app label, checked on every query.
     """
-
-    def all_orgs(self):
-        """
-        Every row, every organization. Explicit and greppable.
-
-        Defined here as well as on `TenantManager` so the escape hatch has ONE
-        name across the codebase. Without it, code written against the eventual
-        filtering manager -- platform administration, data migrations, and the
-        isolation tests, which must start from an unfiltered queryset to prove
-        the filtering works -- would break on whichever models had not been
-        flipped yet, for no reason a reader could see.
-        """
-        return self.get_queryset()
 
 
 class OrgOwnedModel(OrgStampingMixin, BaseModel):
@@ -357,11 +356,17 @@ class OrgOwnedTimestampedQuerySet(OrgStampingQuerySetMixin, models.QuerySet):
 
 
 class OrgOwnedTimestampedManager(
-    models.Manager.from_queryset(OrgOwnedTimestampedQuerySet)
+    TenantScopedManagerMixin,
+    models.Manager.from_queryset(OrgOwnedTimestampedQuerySet),
 ):
-    def all_orgs(self):
-        """Every row, every organization. See `OrgOwnedManager.all_orgs`."""
-        return self.get_queryset()
+    """
+    Same rule, for the append-only tables.
+
+    These are the two highest-volume tables in the product and both are full of
+    PII -- biometric punches and candidate import staging rows -- so leaving
+    them on a looser manager than everything else would put the leak where the
+    data is densest.
+    """
 
 
 class OrgOwnedTimestampedModel(OrgStampingMixin, TimestampedModel):
@@ -402,10 +407,12 @@ def org_scoped(model, organization=None):
     Rows of `model` belonging to ONE organization -- the bound one by default.
 
     For the seed and configuration code that runs OUTSIDE a request, where the
-    read-path predicate in `core.access.engine` never applies. `OrgOwnedManager`
-    deliberately does not filter (that is the eventual `TenantManager`), so a
-    bare `Model.objects.update_or_create(code=...)` there matches on a code that
-    is unique only per organization -- and finds somebody else's row.
+    read-path predicate in `core.access.engine` never applies. Still worth
+    calling even for an app that now filters at the manager: it makes the
+    organization explicit at the call site rather than ambient, and a bare
+    `Model.objects.update_or_create(code=...)` in an app not yet flipped
+    matches on a code that is unique only per organization -- and finds
+    somebody else's row.
 
     That is not hypothetical. Every configuration seed except `seed_roles` did
     exactly this, so provisioning a second customer UPDATED the first

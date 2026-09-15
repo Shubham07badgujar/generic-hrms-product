@@ -11,7 +11,7 @@ that a new view had one.
 
 from __future__ import annotations
 
-from django.core.checks import Error, Tags, register
+from django.core.checks import Error, Tags, Warning, register
 
 from .permissions import PLATFORM_PATH_PREFIX
 
@@ -550,3 +550,52 @@ def check_every_resource_has_a_feature(app_configs, **kwargs):
             )
 
     return errors
+
+
+@register()
+def check_tenant_manager_rollout(app_configs, **kwargs):
+    """
+    Report which apps still read across organizations at the service layer.
+
+    access.W001 -- a WARNING, not an error, because an unfinished rollout is a
+    known state rather than a broken one. It is here so the state is VISIBLE on
+    every build: `TenantManager` existed for a full stage, was wired to nothing,
+    and nothing said so. `manage.py check` reported no issues while every
+    service-layer query in the product read every customer's rows.
+
+    The message names the remaining apps and the model count, so the number has
+    to go down rather than being a line nobody parses. When it reaches zero the
+    check reports nothing and this whole transitional state is over.
+    """
+    from django.apps import apps as django_apps
+
+    from core.models import OrgOwnedModel, OrgOwnedTimestampedModel
+
+    from .tenancy import STRICT_TENANT_APPS
+
+    pending: dict[str, int] = {}
+    for model in django_apps.get_models():
+        if not issubclass(model, OrgOwnedModel | OrgOwnedTimestampedModel):
+            continue
+        label = model._meta.app_label
+        if label in STRICT_TENANT_APPS:
+            continue
+        pending[label] = pending.get(label, 0) + 1
+
+    if not pending:
+        return []
+
+    listing = ", ".join(f"{app} ({count})" for app, count in sorted(pending.items()))
+    return [
+        Warning(
+            f"{sum(pending.values())} organization-owned models in "
+            f"{len(pending)} app(s) do not filter by organization at the "
+            f"manager: {listing}.",
+            hint="Their queries are scoped by the view layer only, so any "
+                 "service, Celery task or management command reading them "
+                 "sees every customer's rows. Add the app to "
+                 "core.access.tenancy.STRICT_TENANT_APPS and fix the fallout.",
+            id="access.W001",
+            obj="core.access.tenancy",
+        )
+    ]

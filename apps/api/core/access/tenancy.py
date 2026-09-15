@@ -78,6 +78,31 @@ NULLABLE_TENANT: dict[str, str] = {
 PENDING_TENANCY: frozenset[str] = frozenset()
 
 
+#: Apps whose org-owned models FILTER by organization at the manager, not
+#: merely stamp one on write.
+#:
+#: THE DIFFERENCE THIS MAKES. Having the column is what lets the predicate be
+#: written; this set is what makes it run. Until an app is named here,
+#: `Model.objects.all()` inside a service returns every customer's rows, and
+#: the only thing standing between that and a cross-tenant read is the view
+#: layer -- which covers HTTP and nothing else. Celery tasks, management
+#: commands, and services called from other services all bypass it.
+#:
+#: WHY IT IS A LIST AND NOT A FLAG. Flipping this changes the default
+#: behaviour of every query in an app at once, including the ones that are
+#: SUPPOSED to be platform-wide and will now raise. Per-app is how the fallout
+#: is read and fixed in reviewable pieces rather than as one wall of failures
+#: with the real breakages hidden among them.
+#:
+#: The escape hatch for a genuinely platform-wide query is
+#: `Model.objects.all_orgs()` -- named, greppable, and reviewable, so
+#: `grep -rn all_orgs` is the audit of every place someone stepped outside
+#: tenancy on purpose.
+STRICT_TENANT_APPS: frozenset[str] = frozenset({
+    "notifications",
+})
+
+
 #: Values that are deliberately unique across the WHOLE platform, with the
 #: reason. Everything else on a tenant-owned table must be scoped -- either by
 #: naming `organization` in the constraint, or by being unique through a

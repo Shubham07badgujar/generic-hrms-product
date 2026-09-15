@@ -45,7 +45,7 @@ def get_current_org_id():
     The organization this code is acting on behalf of, or None.
 
     None means "not established", never "all of them". Every caller treats it
-    as an error condition -- `TenantManager` raises on it -- because the one
+    as an error condition -- a strict tenant manager raises on it -- because the one
     thing this must never do is quietly widen a query.
     """
     return _current_org.get()

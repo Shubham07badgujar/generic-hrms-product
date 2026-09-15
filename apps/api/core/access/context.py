@@ -401,7 +401,7 @@ def _bind(ctx: AccessContext) -> AccessContext:
 
     Reads never consult that variable -- they use `ctx.organization_id`
     directly. This is what lets `OrgOwnedModel.save()` stamp a new row and
-    `TenantManager` scope a service-layer query without every service function
+    the tenant manager scope a service-layer query without every service function
     growing an `organization=` argument, which is not viable across 386 service
     functions of which only a third even take an actor.
 
