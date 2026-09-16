@@ -40,6 +40,7 @@ from .models import (
 
 
 from core.api.serializers import ScopedRelationsMixin
+from core.querysets import deferred
 
 def _call(fn, **kwargs):
     """Run a service, translating its Django ValidationError into a DRF 400."""
@@ -83,7 +84,7 @@ class ResignationRequestSerializer(ScopedRelationsMixin, serializers.ModelSerial
 
 class SubmitResignationSerializer(ScopedRelationsMixin, serializers.Serializer):
     employee = serializers.PrimaryKeyRelatedField(
-        queryset=Employee.objects.filter(is_active=True), required=False, allow_null=True
+        queryset=deferred(Employee).filter(is_active=True), required=False, allow_null=True
     )
     requested_last_working_date = serializers.DateField()
     reason = serializers.CharField()
@@ -232,7 +233,7 @@ class ExitWorkflowDetailSerializer(ExitWorkflowListSerializer):
 
 
 class StartExitSerializer(ScopedRelationsMixin, serializers.Serializer):
-    employee = serializers.PrimaryKeyRelatedField(queryset=Employee.objects.filter(is_active=True))
+    employee = serializers.PrimaryKeyRelatedField(queryset=deferred(Employee).filter(is_active=True))
     exit_type = serializers.CharField()
     last_working_date = serializers.DateField()
     reason = serializers.CharField(required=False, allow_blank=True, default="")
@@ -283,7 +284,7 @@ class ClearanceTemplateSerializer(ScopedRelationsMixin, serializers.ModelSeriali
 
 class ResignationViewSet(ScopedModelViewSet):
     access_resource = Resource.OFFBOARDING
-    queryset = ResignationRequest.objects.select_related(
+    queryset = deferred(ResignationRequest).select_related(
         "employee", "employee__department", "reviewed_by"
     ).filter(is_active=True)
     serializer_class = ResignationRequestSerializer
@@ -383,7 +384,7 @@ class ResignationViewSet(ScopedModelViewSet):
 class ExitWorkflowViewSet(ScopedModelViewSet):
     access_resource = Resource.OFFBOARDING
     queryset = (
-        ExitWorkflow.objects.select_related(
+        deferred(ExitWorkflow).select_related(
             "employee", "employee__department", "resignation", "settlement", "interview"
         )
         .prefetch_related("clearance_items__assigned_to")
@@ -572,7 +573,7 @@ class ExitClearanceItemViewSet(ServiceCreatedOnly, ScopedModelViewSet):
     """
 
     access_resource = Resource.OFFBOARDING
-    queryset = ExitClearanceItem.objects.select_related(
+    queryset = deferred(ExitClearanceItem).select_related(
         "exit_workflow", "exit_workflow__employee", "assigned_to", "completed_by"
     ).filter(is_active=True)
     serializer_class = ExitClearanceItemSerializer
@@ -674,7 +675,7 @@ class ExitClearanceItemViewSet(ServiceCreatedOnly, ScopedModelViewSet):
 class ClearanceTemplateViewSet(ScopedReadOnlyModelViewSet):
     access_resource = Resource.OFFBOARDING
     pagination_class = None
-    queryset = ClearanceTemplate.objects.filter(is_active=True).prefetch_related("items")
+    queryset = deferred(ClearanceTemplate).filter(is_active=True).prefetch_related("items")
     serializer_class = ClearanceTemplateSerializer
 
     def get_queryset(self):

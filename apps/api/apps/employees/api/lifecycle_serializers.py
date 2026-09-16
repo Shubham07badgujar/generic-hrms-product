@@ -41,6 +41,7 @@ from apps.onboarding.models import (
 from core.api.serializers import OrgScopedUniqueMixin
 
 from core.api.serializers import ScopedRelationsMixin
+from core.querysets import deferred
 
 class DocumentTypeSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     class Meta:
@@ -102,7 +103,7 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
 
 
 class DocumentUploadSerializer(ScopedRelationsMixin, serializers.Serializer):
-    document_type = serializers.PrimaryKeyRelatedField(queryset=DocumentType.objects.all())
+    document_type = serializers.PrimaryKeyRelatedField(queryset=deferred(DocumentType))
     file = serializers.FileField()
     issue_date = serializers.DateField(required=False, allow_null=True)
     expires_on = serializers.DateField(required=False, allow_null=True)
@@ -306,7 +307,7 @@ class EmployeeOnboardingSerializer(serializers.ModelSerializer):
 class OnboardingItemActionSerializer(ScopedRelationsMixin, serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True, default="")
     document = serializers.PrimaryKeyRelatedField(
-        queryset=EmployeeDocument.objects.all(), required=False, allow_null=True
+        queryset=deferred(EmployeeDocument), required=False, allow_null=True
     )
     file = serializers.FileField(required=False, allow_null=True)
 
@@ -350,7 +351,7 @@ class EmployeeLetterSerializer(serializers.ModelSerializer):
 class LetterGenerateSerializer(ScopedRelationsMixin, serializers.Serializer):
     letter_type = serializers.CharField()
     template = serializers.PrimaryKeyRelatedField(
-        queryset=LetterTemplate.objects.all(), required=False, allow_null=True
+        queryset=deferred(LetterTemplate), required=False, allow_null=True
     )
     context_extra = serializers.DictField(required=False, default=dict)
 
@@ -412,7 +413,7 @@ class AssetSerializer(ScopedRelationsMixin, OrgScopedUniqueMixin, serializers.Mo
     #: little else — an omitted category lands in the "General" bucket rather
     #: than forcing a taxonomy on people who never asked for one.
     category = serializers.PrimaryKeyRelatedField(
-        queryset=AssetCategory.objects.filter(is_active=True), required=False
+        queryset=deferred(AssetCategory).filter(is_active=True), required=False
     )
     category_name = serializers.CharField(source="category.name", read_only=True)
     location_name = serializers.CharField(source="location.name", read_only=True, default=None)
@@ -479,9 +480,9 @@ class AssetAllocationSerializer(serializers.ModelSerializer):
 
 
 class AllocateSerializer(ScopedRelationsMixin, serializers.Serializer):
-    asset = serializers.PrimaryKeyRelatedField(queryset=Asset.objects.all())
+    asset = serializers.PrimaryKeyRelatedField(queryset=deferred(Asset))
     employee = serializers.PrimaryKeyRelatedField(
-        queryset=Employee.objects.filter(is_active=True)
+        queryset=deferred(Employee).filter(is_active=True)
     )
     condition = serializers.CharField(required=False, default="good")
     notes = serializers.CharField(required=False, allow_blank=True, default="")
@@ -497,10 +498,10 @@ class BulkAllocateSerializer(ScopedRelationsMixin, serializers.Serializer):
     """
 
     employee = serializers.PrimaryKeyRelatedField(
-        queryset=Employee.objects.filter(is_active=True)
+        queryset=deferred(Employee).filter(is_active=True)
     )
     assets = serializers.PrimaryKeyRelatedField(
-        queryset=Asset.objects.filter(is_active=True), many=True, allow_empty=False
+        queryset=deferred(Asset).filter(is_active=True), many=True, allow_empty=False
     )
     notes = serializers.CharField(required=False, allow_blank=True, default="")
 

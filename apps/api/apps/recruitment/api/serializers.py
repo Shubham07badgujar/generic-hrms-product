@@ -50,6 +50,7 @@ from apps.workflows.models import (
 from core.api.serializers import OrgScopedUniqueMixin
 
 from core.api.serializers import ScopedRelationsMixin
+from core.querysets import deferred
 
 class FeedbackFieldSerializer(serializers.ModelSerializer):
     class Meta:
@@ -110,7 +111,7 @@ class InterviewRoundSerializer(ScopedRelationsMixin, serializers.Serializer):
     name = serializers.CharField(required=False, allow_blank=True, default="")
     role = serializers.CharField()
     feedback_form = serializers.PrimaryKeyRelatedField(
-        queryset=FeedbackForm.objects.filter(is_active=True),
+        queryset=deferred(FeedbackForm).filter(is_active=True),
         required=False,
         allow_null=True,
         default=None,
@@ -623,7 +624,7 @@ class DecisionSerializer(ScopedRelationsMixin, serializers.Serializer):
     decision = serializers.CharField()
     rationale = serializers.CharField(required=False, allow_blank=True, default="")
     interview = serializers.PrimaryKeyRelatedField(
-        queryset=Interview.objects.all(), required=False, allow_null=True
+        queryset=deferred(Interview), required=False, allow_null=True
     )
 
 
@@ -682,10 +683,10 @@ class InterviewSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
 
 
 class InterviewScheduleSerializer(ScopedRelationsMixin, serializers.Serializer):
-    application = serializers.PrimaryKeyRelatedField(queryset=Application.objects.all())
-    stage = serializers.PrimaryKeyRelatedField(queryset=WorkflowStage.objects.all())
+    application = serializers.PrimaryKeyRelatedField(queryset=deferred(Application))
+    stage = serializers.PrimaryKeyRelatedField(queryset=deferred(WorkflowStage))
     interviewer = serializers.PrimaryKeyRelatedField(
-        queryset=Employee.objects.filter(is_active=True)
+        queryset=deferred(Employee).filter(is_active=True)
     )
     scheduled_at = serializers.DateTimeField()
     duration_minutes = serializers.IntegerField(default=45, min_value=5, max_value=480)
@@ -769,15 +770,15 @@ class ConvertSerializer(ScopedRelationsMixin, serializers.Serializer):
     personal_email = serializers.EmailField(required=False, allow_blank=True)
     phone = serializers.CharField(required=False, allow_blank=True, max_length=20)
     department = serializers.PrimaryKeyRelatedField(
-        queryset=Department.objects.filter(is_active=True), required=False, allow_null=True
+        queryset=deferred(Department).filter(is_active=True), required=False, allow_null=True
     )
     designation = serializers.PrimaryKeyRelatedField(
-        queryset=Designation.objects.filter(is_active=True), required=False, allow_null=True
+        queryset=deferred(Designation).filter(is_active=True), required=False, allow_null=True
     )
     location = serializers.PrimaryKeyRelatedField(
-        queryset=Location.objects.filter(is_active=True), required=False, allow_null=True
+        queryset=deferred(Location).filter(is_active=True), required=False, allow_null=True
     )
     reporting_manager = serializers.PrimaryKeyRelatedField(
-        queryset=Employee.objects.filter(is_active=True), required=False, allow_null=True
+        queryset=deferred(Employee).filter(is_active=True), required=False, allow_null=True
     )
     date_of_joining = serializers.DateField(required=False, allow_null=True)

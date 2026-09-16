@@ -67,6 +67,7 @@ from apps.workflows import services as workflow_services
 from core.access.drf import ScopedModelViewSet, ScopedReadOnlyModelViewSet
 
 from . import serializers as s
+from core.querysets import deferred
 
 
 class PipelineScopedMixin:
@@ -201,7 +202,7 @@ class HiringWorkflowViewSet(ScopedModelViewSet):
         )
         return Response(s.HiringWorkflowSerializer(workflow).data)
     queryset = (
-        HiringWorkflow.objects.filter(is_active=True)
+        deferred(HiringWorkflow).filter(is_active=True)
         .prefetch_related(
             "stages__responsible_role",
             "stages__feedback_form",
@@ -219,7 +220,7 @@ class HiringWorkflowViewSet(ScopedModelViewSet):
 
 class FeedbackFormViewSet(ScopedReadOnlyModelViewSet):
     access_resource = Resource.HIRING_WORKFLOW
-    queryset = FeedbackForm.objects.filter(is_active=True).prefetch_related("fields")
+    queryset = deferred(FeedbackForm).filter(is_active=True).prefetch_related("fields")
     serializer_class = s.FeedbackFormSerializer
 
 
@@ -238,7 +239,7 @@ class JobOpeningViewSet(PipelineScopedMixin, ScopedModelViewSet):
     assigned_path = ("recruiter_id", "applications__interviews__interviewer_id")
 
     queryset = (
-        JobOpening.objects.select_related(
+        deferred(JobOpening).select_related(
             "workflow", "department", "designation", "location", "level", "target_role"
         )
         .filter(is_active=True)
@@ -307,7 +308,7 @@ class CandidateViewSet(PipelineScopedMixin, ScopedModelViewSet):
     access_resource = Resource.CANDIDATE
     department_path = "applications__job_opening__department_id__in"
     assigned_path = "applications__interviews__interviewer_id"
-    queryset = Candidate.objects.filter(is_active=True)
+    queryset = deferred(Candidate).filter(is_active=True)
     serializer_class = s.CandidateSerializer
     search_fields = ["first_name", "last_name", "email", "phone"]
     ordering_fields = ["created_at", "first_name"]
@@ -393,7 +394,7 @@ class ApplicationViewSet(PipelineScopedMixin, ScopedModelViewSet):
     access_resource = Resource.APPLICATION
 
     queryset = (
-        Application.objects.select_related(
+        deferred(Application).select_related(
             "candidate", "job_opening__department", "current_stage__responsible_role"
         )
         .prefetch_related("slot_invites")
@@ -704,7 +705,7 @@ class InterviewViewSet(ScopedModelViewSet):
 
     access_resource = Resource.INTERVIEW
     queryset = (
-        Interview.objects.select_related(
+        deferred(Interview).select_related(
             "application__candidate", "interviewer", "stage__feedback_form"
         )
         .filter(is_active=True)
@@ -906,7 +907,7 @@ class InterviewViewSet(ScopedModelViewSet):
 
 class OfferViewSet(ScopedModelViewSet):
     access_resource = Resource.OFFER
-    queryset = Offer.objects.select_related("application__candidate").filter(is_active=True)
+    queryset = deferred(Offer).select_related("application__candidate").filter(is_active=True)
     serializer_class = s.OfferSerializer
     filterset_fields = ["status", "application"]
     http_method_names = ["get", "post", "head", "options"]

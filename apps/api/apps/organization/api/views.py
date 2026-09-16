@@ -61,6 +61,7 @@ from .serializers import (
     RoleWriteSerializer,
     TeamSerializer,
 )
+from core.querysets import deferred
 
 
 def _call(fn, **kwargs):
@@ -259,7 +260,7 @@ class DepartmentViewSet(_ReferenceViewSet):
         ("children", "sub-departments"),
     )
     queryset = (
-        Department.objects.filter(is_active=True)
+        deferred(Department).filter(is_active=True)
         .select_related("head_employee", "parent_department")
         .order_by("name")
     )
@@ -271,7 +272,7 @@ class DesignationViewSet(_ReferenceViewSet):
     access_resource = Resource.DESIGNATION
     in_use = (("employees", "employees"),)
     queryset = (
-        Designation.objects.filter(is_active=True).select_related("department").order_by("title")
+        deferred(Designation).filter(is_active=True).select_related("department").order_by("title")
     )
     serializer_class = DesignationSerializer
     filterset_fields = ["department"]
@@ -280,7 +281,7 @@ class DesignationViewSet(_ReferenceViewSet):
 class LocationViewSet(_ReferenceViewSet):
     access_resource = Resource.LOCATION
     in_use = (("employees", "employees"),)
-    queryset = Location.objects.filter(is_active=True).order_by("name")
+    queryset = deferred(Location).filter(is_active=True).order_by("name")
     serializer_class = LocationSerializer
 
 
@@ -288,13 +289,13 @@ class EmployeeLevelViewSet(_ReferenceViewSet):
     #: Seniority bands are part of the designation surface — see module docstring.
     access_resource = Resource.DESIGNATION
     in_use = (("employees", "employees"),)
-    queryset = EmployeeLevel.objects.filter(is_active=True).order_by("rank")
+    queryset = deferred(EmployeeLevel).filter(is_active=True).order_by("rank")
     serializer_class = EmployeeLevelSerializer
 
 
 class TeamViewSet(_ReadOnlyReferenceViewSet):
     access_resource = Resource.DEPARTMENT
-    queryset = Team.objects.filter(is_active=True).select_related("department").order_by("name")
+    queryset = deferred(Team).filter(is_active=True).select_related("department").order_by("name")
     serializer_class = TeamSerializer
     filterset_fields = ["department"]
 
@@ -316,7 +317,7 @@ class RoleViewSet(ScopedModelViewSet):
 
     access_resource = Resource.ROLE
     pagination_class = None
-    queryset = Role.objects.filter(is_active=True).order_by("layer", "name")
+    queryset = deferred(Role).filter(is_active=True).order_by("layer", "name")
     serializer_class = RoleSerializer
     filterset_fields = ["layer", "is_grantable", "department_kind"]
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]

@@ -38,6 +38,7 @@ from apps.platform.models import Plan, Subscription
 from apps.platform.services import subscriptions as subscription_services
 from core.access.drf import PlatformAPIView, PlatformReadOnlyModelViewSet
 from core.api.exceptions import BusinessRuleError
+from core.querysets import deferred
 
 
 class SubscriptionSerializer(serializers.ModelSerializer):
@@ -97,7 +98,7 @@ class PlatformOrganizationViewSet(PlatformReadOnlyModelViewSet):
     """
 
     serializer_class = PlatformOrganizationSerializer
-    queryset = Organization.objects.all()
+    queryset = deferred(Organization)
     filterset_fields = ["status"]
     search_fields = ["name", "legal_name", "slug", "primary_email"]
     ordering_fields = ["name", "created_at", "status"]
@@ -261,7 +262,7 @@ class PlatformPlanViewSet(PlatformReadOnlyModelViewSet):
     """
 
     serializer_class = PlatformPlanSerializer
-    queryset = Plan.objects.all()
+    queryset = deferred(Plan)
     ordering = ["display_order", "name"]
 
     def get_queryset(self):

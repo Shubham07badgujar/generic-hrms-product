@@ -41,6 +41,7 @@ SENSITIVE_ACTIONS = [
 
 
 from core.api.serializers import ScopedRelationsMixin
+from core.querysets import deferred
 
 class AuditLogSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
     actor_name = serializers.SerializerMethodField()
@@ -83,7 +84,7 @@ class AuditLogSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
 class AuditLogViewSet(ScopedReadOnlyModelViewSet):
     access_resource = Resource.AUDIT_LOG
     serializer_class = AuditLogSerializer
-    queryset = AuditLog.objects.select_related(
+    queryset = deferred(AuditLog).select_related(
         "actor", "subject_employee", "subject_employee__department"
     ).all()
     filterset_fields = ["action", "resource", "entity_type", "actor", "subject_employee"]

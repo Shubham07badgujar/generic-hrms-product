@@ -41,6 +41,7 @@ from .models import (
 from core.api.serializers import OrgScopedUniqueMixin
 
 from core.api.serializers import ScopedRelationsMixin
+from core.querysets import deferred
 
 class LeaveTypeSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer):
     class Meta:
@@ -171,7 +172,7 @@ class LeaveApplySerializer(ScopedRelationsMixin, serializers.Serializer):
     """Dates, type, reason. The server computes and decides everything else."""
 
     leave_type = serializers.PrimaryKeyRelatedField(
-        queryset=LeaveType.objects.filter(is_active=True)
+        queryset=deferred(LeaveType).filter(is_active=True)
     )
     start_date = serializers.DateField()
     end_date = serializers.DateField()
@@ -229,7 +230,7 @@ class LeaveTypeViewSet(ScopedModelViewSet):
         "list": Resource.LEAVE_REQUEST,
         "retrieve": Resource.LEAVE_REQUEST,
     }
-    queryset = LeaveType.objects.filter(is_active=True)
+    queryset = deferred(LeaveType).filter(is_active=True)
     serializer_class = LeaveTypeSerializer
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
@@ -249,7 +250,7 @@ class LeaveTypeViewSet(ScopedModelViewSet):
 
 class LeavePolicyViewSet(ScopedModelViewSet):
     access_resource = Resource.LEAVE_POLICY
-    queryset = LeavePolicy.objects.select_related("leave_type", "department").filter(
+    queryset = deferred(LeavePolicy).select_related("leave_type", "department").filter(
         is_active=True
     )
     serializer_class = LeavePolicySerializer
@@ -259,14 +260,14 @@ class LeavePolicyViewSet(ScopedModelViewSet):
 
 class HolidayCalendarViewSet(ScopedModelViewSet):
     access_resource = Resource.LEAVE_POLICY
-    queryset = HolidayCalendar.objects.prefetch_related("holidays").filter(is_active=True)
+    queryset = deferred(HolidayCalendar).prefetch_related("holidays").filter(is_active=True)
     serializer_class = HolidayCalendarSerializer
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
 
 class HolidayViewSet(ScopedModelViewSet):
     access_resource = Resource.LEAVE_POLICY
-    queryset = Holiday.objects.select_related("calendar").filter(is_active=True)
+    queryset = deferred(Holiday).select_related("calendar").filter(is_active=True)
     serializer_class = HolidaySerializer
     filterset_fields = ["calendar"]
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
@@ -278,7 +279,7 @@ class LeaveBalanceViewSet(ScopedQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     access_resource = Resource.LEAVE_REQUEST
     #: Retired types keep their balance history in the DB, but the cards on
     #: the leave page show the CURRENT policy only.
-    queryset = LeaveBalance.objects.select_related(
+    queryset = deferred(LeaveBalance).select_related(
         "employee", "employee__department", "leave_type"
     ).filter(is_active=True, leave_type__is_active=True)
     serializer_class = LeaveBalanceSerializer
@@ -315,7 +316,7 @@ class LeaveRequestViewSet(ScopedModelViewSet):
     """
 
     access_resource = Resource.LEAVE_REQUEST
-    queryset = LeaveRequest.objects.select_related(
+    queryset = deferred(LeaveRequest).select_related(
         "employee", "employee__department", "employee__designation",
         "leave_type", "decided_by",
     ).filter(is_active=True)
@@ -508,7 +509,7 @@ class ShortLeaveViewSet(ScopedQuerysetMixin, viewsets.ModelViewSet):
 
     access_resource = Resource.LEAVE_REQUEST
     access_actions = {"create": Action.VIEW, "destroy": Action.APPROVE}
-    queryset = ShortLeave.objects.select_related("employee").filter(is_active=True)
+    queryset = deferred(ShortLeave).select_related("employee").filter(is_active=True)
     serializer_class = ShortLeaveSerializer
     filterset_fields = ["employee", "date"]
     http_method_names = ["get", "post", "delete", "head", "options"]
@@ -551,7 +552,7 @@ class HolidayWorkViewSet(ScopedQuerysetMixin, viewsets.ModelViewSet):
 
     access_resource = Resource.LEAVE_REQUEST
     access_actions = {"create": Action.VIEW, "destroy": Action.APPROVE}
-    queryset = HolidayWork.objects.select_related("employee").filter(is_active=True)
+    queryset = deferred(HolidayWork).select_related("employee").filter(is_active=True)
     serializer_class = HolidayWorkSerializer
     filterset_fields = ["employee", "date"]
     http_method_names = ["get", "post", "delete", "head", "options"]

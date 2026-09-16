@@ -65,6 +65,7 @@ from core.access.drf import (
 
 from . import lifecycle_serializers as s
 from .filters import EmployeeDocumentFilter
+from core.querysets import deferred
 
 
 def _call(fn, **kwargs):
@@ -100,7 +101,7 @@ class DocumentTypeViewSet(ScopedReadOnlyModelViewSet):
 
     access_resource = Resource.EMPLOYEE_DOCUMENT
     pagination_class = None
-    queryset = DocumentType.objects.filter(is_active=True)
+    queryset = deferred(DocumentType).filter(is_active=True)
     serializer_class = s.DocumentTypeSerializer
     filterset_fields = ["category", "is_mandatory"]
 
@@ -113,7 +114,7 @@ class DocumentTypeViewSet(ScopedReadOnlyModelViewSet):
 
 class EmployeeDocumentViewSet(ScopedModelViewSet):
     access_resource = Resource.EMPLOYEE_DOCUMENT
-    queryset = EmployeeDocument.objects.select_related(
+    queryset = deferred(EmployeeDocument).select_related(
         "employee", "employee__department", "employee__user",
         "document_type", "uploaded_by", "verified_by", "rejected_by",
     ).filter(is_active=True)
@@ -205,7 +206,7 @@ class EmployeeDocumentViewSet(ScopedModelViewSet):
 
 class ProbationReviewViewSet(ServiceCreatedOnly, ScopedModelViewSet):
     access_resource = Resource.PROBATION_REVIEW
-    queryset = ProbationReview.objects.select_related(
+    queryset = deferred(ProbationReview).select_related(
         "employee", "employee__department", "reviewer", "decided_by"
     ).filter(is_active=True)
     serializer_class = s.ProbationReviewSerializer
@@ -304,7 +305,7 @@ class OnboardingTemplateViewSet(ScopedModelViewSet):
     access_resource = Resource.ONBOARDING
     pagination_class = None
     queryset = (
-        OnboardingTemplate.objects.filter(is_active=True)
+        deferred(OnboardingTemplate).filter(is_active=True)
         .select_related("department")
         .prefetch_related("items__document_type")
     )
@@ -322,7 +323,7 @@ class OnboardingTemplateViewSet(ScopedModelViewSet):
 class EmployeeOnboardingViewSet(ServiceCreatedOnly, ScopedModelViewSet):
     access_resource = Resource.ONBOARDING
     queryset = (
-        EmployeeOnboarding.objects.select_related("employee", "employee__department", "template")
+        deferred(EmployeeOnboarding).select_related("employee", "employee__department", "template")
         .prefetch_related("items__assigned_to", "items__document_type")
         .filter(is_active=True)
     )
@@ -366,7 +367,7 @@ class OnboardingItemViewSet(ServiceCreatedOnly, ScopedModelViewSet):
 
     access_resource = Resource.ONBOARDING
     queryset = (
-        OnboardingItem.objects.select_related(
+        deferred(OnboardingItem).select_related(
             "onboarding", "onboarding__employee", "assigned_to", "document_type"
         ).filter(is_active=True)
     )
@@ -479,7 +480,7 @@ class OnboardingItemViewSet(ServiceCreatedOnly, ScopedModelViewSet):
 class LetterTemplateViewSet(ScopedReadOnlyModelViewSet):
     access_resource = Resource.LETTER
     pagination_class = None
-    queryset = LetterTemplate.objects.filter(is_active=True)
+    queryset = deferred(LetterTemplate).filter(is_active=True)
     serializer_class = s.LetterTemplateSerializer
     filterset_fields = ["letter_type"]
 
@@ -491,7 +492,7 @@ class LetterTemplateViewSet(ScopedReadOnlyModelViewSet):
 
 class EmployeeLetterViewSet(ScopedModelViewSet):
     access_resource = Resource.LETTER
-    queryset = EmployeeLetter.objects.select_related("employee", "generated_by", "template").filter(
+    queryset = deferred(EmployeeLetter).select_related("employee", "generated_by", "template").filter(
         is_active=True
     )
     serializer_class = s.EmployeeLetterSerializer
@@ -543,7 +544,7 @@ class EmployeeLetterViewSet(ScopedModelViewSet):
 
 class CompanyEmailAccountViewSet(ScopedModelViewSet):
     access_resource = Resource.EMAIL_ACCOUNT
-    queryset = CompanyEmailAccount.objects.select_related(
+    queryset = deferred(CompanyEmailAccount).select_related(
         "employee", "requested_by", "provisioned_by"
     ).filter(is_active=True)
     serializer_class = s.CompanyEmailAccountSerializer
@@ -622,7 +623,7 @@ class CompanyEmailAccountViewSet(ScopedModelViewSet):
 class AssetCategoryViewSet(ScopedReadOnlyModelViewSet):
     access_resource = Resource.ASSET
     pagination_class = None
-    queryset = AssetCategory.objects.filter(is_active=True)
+    queryset = deferred(AssetCategory).filter(is_active=True)
     serializer_class = s.AssetCategorySerializer
 
 
@@ -636,7 +637,7 @@ class AssetViewSet(ScopedModelViewSet):
     """
 
     access_resource = Resource.ASSET
-    queryset = Asset.objects.select_related("category", "location").filter(is_active=True)
+    queryset = deferred(Asset).select_related("category", "location").filter(is_active=True)
     serializer_class = s.AssetSerializer
     filterset_fields = ["status", "category", "condition", "location"]
     search_fields = ["asset_tag", "name", "serial_number"]
@@ -645,7 +646,7 @@ class AssetViewSet(ScopedModelViewSet):
 
 class AssetAllocationViewSet(ScopedModelViewSet):
     access_resource = Resource.ASSET_ALLOCATION
-    queryset = AssetAllocation.objects.select_related(
+    queryset = deferred(AssetAllocation).select_related(
         "asset", "asset__category", "employee", "allocated_by", "received_by"
     ).filter(is_active=True)
     serializer_class = s.AssetAllocationSerializer

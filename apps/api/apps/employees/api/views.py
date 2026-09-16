@@ -32,6 +32,7 @@ from .serializers import (
     EmployeeListSerializer,
     IdentifiersSerializer,
 )
+from core.querysets import deferred
 
 
 def _layer_of(employee) -> int | None:
@@ -50,7 +51,7 @@ class EmployeeViewSet(ScopedModelViewSet):
     access_resource = Resource.EMPLOYEE
 
     queryset = (
-        Employee.objects.select_related(
+        deferred(Employee).select_related(
             "department", "designation", "location", "level", "team", "reporting_manager", "user"
         )
         .prefetch_related("user__user_roles__role")

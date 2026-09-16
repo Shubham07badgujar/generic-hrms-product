@@ -31,6 +31,7 @@ from apps.recruitment.models import JobOpening, LegalBasis
 from core.access import Action, Resource, Scope, can
 from core.access.drf import ScopedModelViewSet
 from core.api.serializers import ScopedRelationsMixin
+from core.querysets import deferred
 
 MIN_BASIS_NOTE = 20
 
@@ -90,7 +91,7 @@ class ImportBatchSerializer(serializers.ModelSerializer):
 
 class UploadSerializer(ScopedRelationsMixin, serializers.Serializer):
     platform = serializers.CharField()
-    job_opening = serializers.PrimaryKeyRelatedField(queryset=JobOpening.objects.all())
+    job_opening = serializers.PrimaryKeyRelatedField(queryset=deferred(JobOpening))
     file = serializers.FileField()
     column_override = serializers.JSONField(required=False)
 
@@ -166,7 +167,7 @@ class CandidateImportViewSet(ScopedModelViewSet):
     # those two routes answer 415 and the flow cannot be completed at all.
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     serializer_class = ImportBatchSerializer
-    queryset = ImportBatch.objects.select_related("job_opening").all()
+    queryset = deferred(ImportBatch).select_related("job_opening").all()
     http_method_names = ["get", "post", "delete", "head", "options"]
 
     def get_queryset(self):

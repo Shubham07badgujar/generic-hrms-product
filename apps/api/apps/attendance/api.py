@@ -53,6 +53,7 @@ from .models import (
 from core.api.serializers import OrgScopedUniqueMixin
 
 from core.api.serializers import ScopedRelationsMixin
+from core.querysets import deferred
 
 def _call(func, **kwargs):
     try:
@@ -159,7 +160,7 @@ def _as_xlsx(rows: list[list[str]]) -> bytes:
 class AttendanceRecordViewSet(ScopedModelViewSet):
     access_resource = Resource.ATTENDANCE
     queryset = (
-        AttendanceRecord.objects.select_related("employee")
+        deferred(AttendanceRecord).select_related("employee")
         .filter(is_active=True)
     )
     serializer_class = AttendanceRecordSerializer
@@ -427,7 +428,7 @@ class RegularizationSerializer(serializers.ModelSerializer):
 
 class RegularizationViewSet(ScopedModelViewSet):
     access_resource = Resource.REGULARIZATION
-    queryset = RegularizationRequest.objects.select_related("employee").filter(is_active=True)
+    queryset = deferred(RegularizationRequest).select_related("employee").filter(is_active=True)
     serializer_class = RegularizationSerializer
     filterset_fields = ["status", "employee"]
     http_method_names = ["get", "post", "head", "options"]
@@ -626,7 +627,7 @@ class ShiftRuleViewSet(ScopedModelViewSet):
     """
 
     access_resource = Resource.ATTENDANCE_DEVICE
-    queryset = ShiftRule.objects.select_related("location").filter(is_active=True)
+    queryset = deferred(ShiftRule).select_related("location").filter(is_active=True)
     serializer_class = ShiftRuleSerializer
     pagination_class = None
     http_method_names = ["get", "patch", "head", "options"]
@@ -681,7 +682,7 @@ class EsslDeviceViewSet(ScopedModelViewSet):
     """Devices, plus the integration's control surface. HR-only by resource."""
 
     access_resource = Resource.ATTENDANCE_DEVICE
-    queryset = AttendanceDevice.objects.select_related("location").filter(is_active=True)
+    queryset = deferred(AttendanceDevice).select_related("location").filter(is_active=True)
     serializer_class = DeviceSerializer
     pagination_class = None
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
@@ -772,7 +773,7 @@ class EsslMappingViewSet(ScopedModelViewSet):
 
     access_resource = Resource.ATTENDANCE_DEVICE
     queryset = (
-        EsslEmployeeLink.objects.select_related("employee", "location")
+        deferred(EsslEmployeeLink).select_related("employee", "location")
         .filter(is_active=True)
         .order_by("employee__employee_code", "essl_user_id")
     )

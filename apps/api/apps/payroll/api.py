@@ -52,6 +52,7 @@ from .models import (
 from core.api.serializers import OrgScopedUniqueMixin
 
 from core.api.serializers import ScopedRelationsMixin
+from core.querysets import deferred
 
 def _call(fn, **kwargs):
     """Run a service, translating its Django exceptions into DRF responses."""
@@ -297,7 +298,7 @@ class SalaryComponentViewSet(ScopedModelViewSet):
     """The component catalogue — org configuration, not per-employee data."""
 
     access_resource = Resource.SALARY
-    queryset = SalaryComponent.objects.filter(is_active=True)
+    queryset = deferred(SalaryComponent).filter(is_active=True)
     serializer_class = SalaryComponentSerializer
     pagination_class = None
     filterset_fields = ["component_type", "is_wage"]
@@ -325,7 +326,7 @@ class SalaryComponentViewSet(ScopedModelViewSet):
 class SalaryStructureViewSet(ScopedModelViewSet):
     access_resource = Resource.SALARY
     queryset = (
-        SalaryStructure.objects.select_related("employee")
+        deferred(SalaryStructure).select_related("employee")
         .prefetch_related("lines__component")
         .filter(is_active=True)
     )
@@ -368,7 +369,7 @@ class SalaryStructureViewSet(ScopedModelViewSet):
 
 class PayrollRunViewSet(ScopedModelViewSet):
     access_resource = Resource.PAYROLL_RUN
-    queryset = PayrollRun.objects.select_related("location").filter(is_active=True)
+    queryset = deferred(PayrollRun).select_related("location").filter(is_active=True)
     serializer_class = PayrollRunSerializer
     parser_classes = [JSONParser]
     filterset_fields = ["status", "period_year", "period_month", "run_type", "location"]
@@ -529,7 +530,7 @@ class PayslipViewSet(ScopedModelViewSet):
     access_resource = Resource.PAYSLIP
     http_method_names = ["get", "delete", "head", "options"]
     queryset = (
-        Payslip.objects.select_related("employee", "payroll_run", "location")
+        deferred(Payslip).select_related("employee", "payroll_run", "location")
         .prefetch_related("lines", "statutory_contributions")
         .filter(is_active=True)
     )
@@ -565,7 +566,7 @@ class PayslipViewSet(ScopedModelViewSet):
 
 class PayrollAdjustmentViewSet(ScopedModelViewSet):
     access_resource = Resource.PAYROLL_ADJUSTMENT
-    queryset = PayrollAdjustment.objects.select_related("employee").filter(is_active=True)
+    queryset = deferred(PayrollAdjustment).select_related("employee").filter(is_active=True)
     serializer_class = PayrollAdjustmentSerializer
     parser_classes = [JSONParser]
     filterset_fields = ["employee", "status", "kind", "period_year", "period_month"]
@@ -605,7 +606,7 @@ class PayrollAdjustmentViewSet(ScopedModelViewSet):
 
 class InvestmentDeclarationViewSet(ScopedModelViewSet):
     access_resource = Resource.SALARY
-    queryset = InvestmentDeclaration.objects.select_related("employee").filter(is_active=True)
+    queryset = deferred(InvestmentDeclaration).select_related("employee").filter(is_active=True)
     serializer_class = InvestmentDeclarationSerializer
     parser_classes = [JSONParser]
     filterset_fields = ["employee", "financial_year", "status"]
@@ -655,7 +656,7 @@ class StatutoryRuleSetViewSet(ScopedModelViewSet):
     """
 
     access_resource = Resource.STATUTORY_CONFIG
-    queryset = StatutoryRuleSet.objects.select_related("verified_by").filter(is_active=True)
+    queryset = deferred(StatutoryRuleSet).select_related("verified_by").filter(is_active=True)
     serializer_class = StatutoryRuleSetSerializer
     parser_classes = [JSONParser]
     pagination_class = None
