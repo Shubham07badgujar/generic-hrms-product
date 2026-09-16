@@ -180,10 +180,36 @@ class TenantScopedManagerMixin:
 
         return self.model._meta.app_label in STRICT_TENANT_APPS
 
+    def _parent_organization_id(self):
+        """
+        The organization fixed by the row this manager hangs off, if any.
+
+        Django builds a reverse related manager from the model's DEFAULT
+        manager, so `onboarding.items` arrives here and would otherwise demand
+        an ambient organization before the parent filter is even applied. It
+        does not need one: the parent is itself organization-owned, so the
+        tenant is already decided, and the predicate below narrows to exactly
+        that organization rather than to whatever happens to be bound.
+
+        Refusing here instead broke login. The sign-in response says whether
+        onboarding is still pending, and it is computed before any tenant is
+        bound -- so the first app with a reverse accessor took `/auth/login/`
+        and `/me/` down with it.
+
+        This can only ever narrow. Reaching a parent from another organization
+        already means holding that row, which the read path had to hand over.
+        """
+        parent = getattr(self, "instance", None)
+        return getattr(parent, "organization_id", None) if parent else None
+
     def get_queryset(self):
         qs = super().get_queryset()
         if not self._is_strict():
             return qs
+
+        parent_org_id = self._parent_organization_id()
+        if parent_org_id is not None:
+            return qs.filter(organization_id=parent_org_id)
 
         from core.middleware import get_current_org_id
 

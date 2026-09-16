@@ -152,6 +152,61 @@ def test_a_strict_app_returns_only_the_bound_organizations_rows(org_a, org_b):
     assert {mine.pk, theirs.pk} <= everything
 
 
+def test_a_reverse_accessor_needs_no_ambient_organization(org_a):
+    """
+    `parent.children` is already decided by the parent, so it must not demand one.
+
+    Django builds a reverse related manager from the model's default manager,
+    so this arrives at the tenant predicate like any other query. Refusing it
+    broke sign-in: the login response reports whether onboarding is pending,
+    and computes it before any tenant is bound.
+    """
+    from apps.onboarding.models import EmployeeOnboarding
+
+    with acting_as(org_a.admin, organization=org_a.organization):
+        onboarding = (
+            EmployeeOnboarding.objects.filter(employee=org_a.worker_employee).first()
+        )
+    assert onboarding is not None, "the fixture has no onboarding to read"
+
+    with acting_as(None, organization=None):
+        items = list(onboarding.items.all())
+
+    assert all(item.organization_id == org_a.organization.pk for item in items)
+
+
+def test_a_reverse_accessor_is_still_confined_to_its_parents_organization(
+    org_a, org_b
+):
+    """
+    The narrowing half: it uses the PARENT's organization, not whatever is bound.
+
+    Reading A's children while B is bound must return A's rows, not an empty
+    set and not B's -- the parent fixes the tenant, so the bound one is
+    irrelevant here.
+    """
+    from apps.onboarding.models import EmployeeOnboarding
+
+    with acting_as(org_a.admin, organization=org_a.organization):
+        onboarding = (
+            EmployeeOnboarding.objects.filter(employee=org_a.worker_employee).first()
+        )
+        expected = {item.pk for item in onboarding.items.all()}
+
+    with acting_as(org_b.admin, organization=org_b.organization):
+        seen = {item.pk for item in onboarding.items.all()}
+
+    assert seen == expected
+    # Note `all_orgs()` is NOT the check here. On a reverse accessor it steps
+    # around the parent filter as well as the tenant one, so it answers "every
+    # item in the database", not "this onboarding's items in any organization".
+    with acting_as(org_b.admin, organization=org_b.organization):
+        assert all(
+            item.organization_id == org_a.organization.pk
+            for item in onboarding.items.all()
+        )
+
+
 def test_a_strict_app_cannot_fetch_another_organizations_row_by_id(org_a, org_b):
     """
     The object-id case: the one a Celery task handed the wrong tenant's id hits.

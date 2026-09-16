@@ -77,9 +77,20 @@ def handbook_acknowledgement_pending(user) -> bool:
     employee = getattr(user, "employee", None)
     if employee is None:
         return False
-    return OnboardingItem.objects.filter(
-        onboarding__employee=employee,
-        onboarding__status=OnboardingStatus.IN_PROGRESS,
+
+    # Reached THROUGH the employee's own checklist rather than from
+    # `OnboardingItem.objects`, and that is not a style choice. This runs while
+    # `/api/v1/me/` is serialised, and that view is `access_exempt` -- a user may
+    # always read their own identity -- so no permission class runs and, for a
+    # session or a force-authenticated caller, no organization is bound. Asking
+    # the manager directly there made sign-in a 500 the moment onboarding began
+    # filtering. The checklist fixes the tenant by itself: these are this
+    # employee's items and nobody else's.
+    onboarding = getattr(employee, "onboarding", None)
+    if onboarding is None or onboarding.status != OnboardingStatus.IN_PROGRESS:
+        return False
+
+    return onboarding.items.filter(
         kind=ItemKind.ACKNOWLEDGEMENT,
         status__in=(
             ItemStatus.PENDING,
