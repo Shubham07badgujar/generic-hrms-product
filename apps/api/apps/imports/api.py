@@ -30,6 +30,7 @@ from apps.imports.services import importer
 from apps.recruitment.models import JobOpening, LegalBasis
 from core.access import Action, Resource, Scope, can
 from core.access.drf import ScopedModelViewSet
+from core.api.serializers import ScopedRelationsMixin
 
 MIN_BASIS_NOTE = 20
 
@@ -87,7 +88,7 @@ class ImportBatchSerializer(serializers.ModelSerializer):
         return spec.label if spec else obj.platform
 
 
-class UploadSerializer(serializers.Serializer):
+class UploadSerializer(ScopedRelationsMixin, serializers.Serializer):
     platform = serializers.CharField()
     job_opening = serializers.PrimaryKeyRelatedField(queryset=JobOpening.objects.all())
     file = serializers.FileField()

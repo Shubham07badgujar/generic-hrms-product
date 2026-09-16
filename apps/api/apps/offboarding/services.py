@@ -29,6 +29,7 @@ from apps.notifications import events as notify_events
 from core.access import Action, Resource, require
 from core.access.catalog import Scope
 from core.access.engine import AccessDenied
+from core.access.guards import require_same_organization
 
 from .models import (
     CLOSED_STAGES,
@@ -78,6 +79,8 @@ def submit_resignation(
     and the reason an employee cannot set their own status to RESIGNED.
     """
     require(actor, Resource.OFFBOARDING, Action.CREATE)
+    # Same reasoning as start_exit: the actor's permission does not make the employee theirs to act on.
+    require_same_organization(employee)
 
     # Someone submitting on another person's behalf needs reach beyond
     # themselves; self-service covers only your own resignation.
@@ -314,6 +317,8 @@ def start_exit(
     in the spec share one implementation.
     """
     require(actor, Resource.OFFBOARDING, Action.CREATE)
+    # The permission above is the ACTOR's, in their own company. Before this, the employee was whatever the caller handed over -- see core/access/guards.py.
+    require_same_organization(employee, resignation, template)
 
     if ExitWorkflow.objects.filter(employee=employee).exists():
         raise OffboardingError({"employee": "An exit is already under way for this employee."})

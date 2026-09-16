@@ -480,24 +480,107 @@ for w in WORLDS:
         # The injection vector: a well-formed create naming ANOTHER
         # organization's department. Refusing this is what stops a valid
         # request from quietly stitching two tenants together.
+        #
+        # The payload must be valid in EVERY other respect. An earlier version
+        # of this check sent `department` instead of `department_id` and left
+        # out `email` and `role_code`, so every run was refused for the missing
+        # fields and reported PASS without the department ever being looked at.
+        # Refused-for-the-right-reason is asserted below, and a positive control
+        # with the caller's own department makes an incomplete payload show up
+        # as INCONCLUSIVE instead of as isolation.
+        def _employee_payload(world, department_pk, tag):
+            token = secrets.token_hex(3)
+            return {
+                "first_name": "Injected", "last_name": f"Row{tag}",
+                "email": f"injected-{tag}-{token}@{world['domain']}",
+                "personal_email": f"injected-{tag}-{token}.personal@{world['domain']}",
+                "role_code": "employee",
+                "department_id": str(department_pk),
+                "designation_id": str(world["rows"]["employee"].designation_id),
+                "location_id": str(world["rows"]["location"].pk),
+                "level_id": str(world["rows"]["employee"].level_id),
+                "reporting_manager_id": str(world["rows"]["employee"].pk),
+                "date_of_joining": "2025-01-01",
+            }
+
+        control = client.post(
+            "/api/v1/employees/",
+            _employee_payload(w, w["rows"]["department"].pk, "own"),
+            format="json",
+        )
         created = client.post(
             "/api/v1/employees/",
-            {
-                "employee_code": f"INJ{secrets.token_hex(2).upper()}",
-                "first_name": "Injected", "last_name": "Row",
-                "personal_email": f"injected@{w['domain']}",
-                "department": str(other["rows"]["department"].pk),
-                "designation": str(w["rows"]["employee"].designation_id),
-                "location": str(w["rows"]["location"].pk),
-                "level": str(w["rows"]["employee"].level_id),
-                "reporting_manager": str(w["rows"]["employee"].pk),
-                "date_of_joining": "2025-01-01",
-            },
+            _employee_payload(w, other["rows"]["department"].pk, "foreign"),
+            format="json",
+        )
+        body = created.content.decode(errors="replace").lower()
+        check(
+            f"6b. {w['name']} cannot create an employee in {other['name']}'s department",
+            created.status_code == 400 and "department" in body,
+            f"{created.status_code} {created.content[:140]}",
+            inconclusive=control.status_code != 201,
+        )
+
+        # Relation ids in the body of a CUSTOM endpoint. This is the vector the
+        # checks above never tried, and it was open: a declared
+        # `PrimaryKeyRelatedField` on a plain Serializer resolved any
+        # organization's employee, and `POST /exits/` then offboarded them --
+        # status set to resigned, login and mailbox flagged, a settlement
+        # created. The victim's state is re-read from the database, because a
+        # 400 that still changed the row would not be a refusal.
+        import datetime as _dt
+
+        from apps.employees.models import Employee as _Employee
+        from apps.offboarding.models import ExitWorkflow as _ExitWorkflow
+
+        victim = other["rows"]["employee"]
+        # A different employee of the caller's for each other organization. The
+        # control files a real resignation, and a second one for the same person
+        # is refused as already awaiting review -- which read as INCONCLUSIVE on
+        # every second pass through this loop.
+        other_index = next(i for i, candidate in enumerate(WORLDS) if candidate is other)
+        own_subject = w["employees"][-1 - other_index]
+        in_thirty_days = str(_dt.date.today() + _dt.timedelta(days=30))
+        exit_type = _ExitWorkflow._meta.get_field("exit_type").choices[0][0]
+
+        def _victim_state(victim_pk):
+            row = _Employee.objects.all_orgs().get(pk=victim_pk)
+            return (row.status, row.is_active)
+
+        before = _victim_state(victim.pk)
+        foreign_exit = client.post(
+            "/api/v1/exits/",
+            {"employee": str(victim.pk), "exit_type": exit_type,
+             "last_working_date": in_thirty_days},
             format="json",
         )
         check(
-            f"6b. {w['name']} cannot create an employee in {other['name']}'s department",
-            created.status_code == 400, f"{created.status_code} {created.content[:140]}",
+            f"6c. {w['name']} cannot offboard {other['name']}'s employee",
+            foreign_exit.status_code in (400, 404)
+            and "employee" in foreign_exit.content.decode(errors="replace").lower()
+            and _victim_state(victim.pk) == before,
+            f"{foreign_exit.status_code} {foreign_exit.content[:140]}",
+        )
+
+        foreign_resignation = client.post(
+            "/api/v1/resignations/",
+            {"employee": str(victim.pk),
+             "requested_last_working_date": in_thirty_days, "reason": "probe"},
+            format="json",
+        )
+        own_resignation = client.post(
+            "/api/v1/resignations/",
+            {"employee": str(own_subject.pk),
+             "requested_last_working_date": in_thirty_days, "reason": "control"},
+            format="json",
+        )
+        check(
+            f"6d. {w['name']} cannot file a resignation for {other['name']}'s employee",
+            foreign_resignation.status_code in (400, 404)
+            and "employee" in foreign_resignation.content.decode(errors="replace").lower()
+            and _victim_state(victim.pk) == before,
+            f"{foreign_resignation.status_code} {foreign_resignation.content[:140]}",
+            inconclusive=own_resignation.status_code != 201,
         )
 
 
@@ -675,7 +758,11 @@ w_("| List employees, departments, locations, leave, attendance, payroll runs, "
 w_("| Read a named employee, department, location, leave request, attendance "
    "record, payroll run, candidate, document, leave type | 404 |")
 w_("| Edit another organization's employee | 404 |")
-w_("| Create an employee in another organization's department | 400 |")
+w_("| Create an employee in another organization's department, with a payload "
+   "valid in every other field | 400, naming the department |")
+w_("| Open an exit, or file a resignation, for another organization's employee "
+   "(a relation id in the body of a custom endpoint) | 400 or 404, and the "
+   "employee unchanged |")
 w_("| Every detail route the URL resolver exposes | 403, 404 or 405 |")
 w_("| The same read as HR Head and as a plain employee | 403 or 404 |")
 w_("")

@@ -81,7 +81,7 @@ class ResignationRequestSerializer(ScopedRelationsMixin, serializers.ModelSerial
         ]
 
 
-class SubmitResignationSerializer(serializers.Serializer):
+class SubmitResignationSerializer(ScopedRelationsMixin, serializers.Serializer):
     employee = serializers.PrimaryKeyRelatedField(
         queryset=Employee.objects.filter(is_active=True), required=False, allow_null=True
     )
@@ -231,7 +231,7 @@ class ExitWorkflowDetailSerializer(ExitWorkflowListSerializer):
         ]
 
 
-class StartExitSerializer(serializers.Serializer):
+class StartExitSerializer(ScopedRelationsMixin, serializers.Serializer):
     employee = serializers.PrimaryKeyRelatedField(queryset=Employee.objects.filter(is_active=True))
     exit_type = serializers.CharField()
     last_working_date = serializers.DateField()

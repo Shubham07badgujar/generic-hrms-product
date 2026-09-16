@@ -129,6 +129,17 @@ def test_a_leave_request_cannot_borrow_another_organizations_leave_type(
     assert response.status_code in (400, 404), (
         f"expected refusal, got {response.status_code}: {response.content[:300]}"
     )
+    # Refused for the RIGHT reason. This case used to pass on a coincidence:
+    # the serializer resolved the other company's leave type without complaint,
+    # and the request only failed later because no leave policy linked it to
+    # this employee. A business rule was standing in for a tenancy check, and
+    # would have stopped standing in the first time the data lined up.
+    assert "leave_type" in response.content.decode().lower(), (
+        f"refused, but not because of the leave type: {response.content[:300]}"
+    )
+    assert "policy" not in response.content.decode().lower(), (
+        "refused by the leave-policy rule, not by the tenant scope"
+    )
 
 
 def test_the_same_payload_succeeds_with_its_own_organizations_rows(org_a, api_for):

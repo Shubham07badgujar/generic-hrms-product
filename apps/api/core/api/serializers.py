@@ -200,11 +200,39 @@ class ScopedRelationsMixin:
     are separate claims.
     """
 
-    def build_relational_field(self, field_name, relation_info):
-        field_class, field_kwargs = super().build_relational_field(
-            field_name, relation_info
-        )
-        queryset = field_kwargs.get("queryset")
-        if queryset is not None:
-            field_kwargs["queryset"] = scope_relation_queryset(queryset, self.context)
-        return field_class, field_kwargs
+    def get_fields(self):
+        """
+        Scope EVERY writable relation lookup, declared or generated.
+
+        This used to hook `build_relational_field`, which only ever sees the
+        fields `ModelSerializer` generates. A relation field written out by hand
+        -- `employee = PrimaryKeyRelatedField(queryset=Employee.objects...)` --
+        never passes through it, and neither does any field on a plain
+        `Serializer`. A probe found 23 such fields across 16 serializers, and
+        every one resolved another organization's id. Two were exploitable
+        end to end: `POST /exits/` let one company's admin offboard another
+        company's employee -- status set to resigned, user and company mailbox
+        flagged, a final settlement created -- and `POST /resignations/` filed
+        a resignation on their behalf.
+
+        `get_fields()` is the one place both kinds meet. DRF deep-copies the
+        declared fields for each serializer instance, so narrowing a queryset
+        here affects this request and no other. Many-relations are narrowed
+        through their child, which is where the lookup actually happens.
+        """
+        from rest_framework.relations import ManyRelatedField, RelatedField
+
+        fields = super().get_fields()
+        for field in fields.values():
+            relation = (
+                field.child_relation if isinstance(field, ManyRelatedField) else field
+            )
+            if (
+                isinstance(relation, RelatedField)
+                and not field.read_only
+                and relation.queryset is not None
+            ):
+                relation.queryset = scope_relation_queryset(
+                    relation.queryset, self.context
+                )
+        return fields

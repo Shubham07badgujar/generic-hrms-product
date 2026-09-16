@@ -1,23 +1,23 @@
 # Tenant Isolation Test Report
 
-Generated 2026-09-09 12:25 UTC by `scripts/verify_tenant_isolation.py`.
+Generated 2026-09-15 12:31 UTC by `scripts/verify_tenant_isolation.py`.
 
 This file is written by the script that performs the attempts. It is not a description of a test run; it is the output of one. Re-running the script overwrites it.
 
 ## Verdict
 
-**PASSED.** 126 of 126 checks passed, none inconclusive.
+**PASSED.** 138 of 138 checks passed, none inconclusive.
 
 | | |
 |---|---|
-| Checks passed | 126 |
+| Checks passed | 138 |
 | Checks failed | 0 |
 | Inconclusive (positive control did not succeed) | 0 |
 | Detail routes walked across organizations | 378 |
 | Refused | 378 |
 | Served another organization's row | 0 |
 | Raised instead of answering | 0 |
-| Detail routes exposed by the URL resolver, in total | 495 |
+| Detail routes exposed by the URL resolver, in total | 515 |
 | ...of which answered for the caller's own row, and were therefore asked about | 63 |
 
 ## The organizations
@@ -26,9 +26,9 @@ Fictional, generated per run. Every domain is `.example` (RFC 2606, unroutable).
 
 | Organization | Slug | Employees | Departments | Locations |
 |---|---|---|---|---|
-| Northwind Health | `healthcare-445ac3` | 20 | 5 | 3 |
-| Aperture Systems | `technology-445ac3` | 15 | 4 | 2 |
-| Fairhaven Retail | `retail-445ac3` | 10 | 3 | 2 |
+| Northwind Health | `healthcare-fbbd16` | 20 | 5 | 3 |
+| Aperture Systems | `technology-fbbd16` | 15 | 4 | 2 |
+| Fairhaven Retail | `retail-fbbd16` | 10 | 3 | 2 |
 
 ## What was attempted
 
@@ -41,7 +41,8 @@ Every cross-organization attempt is paired with the same request against the cal
 | List employees, departments, locations, leave, attendance, payroll runs, candidates, documents, audit logs | no other organization's row present |
 | Read a named employee, department, location, leave request, attendance record, payroll run, candidate, document, leave type | 404 |
 | Edit another organization's employee | 404 |
-| Create an employee in another organization's department | 400 |
+| Create an employee in another organization's department, with a payload valid in every other field | 400, naming the department |
+| Open an exit, or file a resignation, for another organization's employee (a relation id in the body of a custom endpoint) | 400 or 404, and the employee unchanged |
 | Every detail route the URL resolver exposes | 403, 404 or 405 |
 | The same read as HR Head and as a plain employee | 403 or 404 |
 
@@ -171,17 +172,29 @@ None. Every route answered with a status code.
 | PASS | 5. Fairhaven Retail reading Aperture Systems's employee_document | 404 |
 | PASS | 5. Fairhaven Retail reading Aperture Systems's leave_type | 404 |
 | PASS | 6. Northwind Health cannot edit Aperture Systems's employee | 404 |
-| PASS | 6b. Northwind Health cannot create an employee in Aperture Systems's department | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"email":["This field is required."],"role_code":["This field is require' |
+| PASS | 6b. Northwind Health cannot create an employee in Aperture Systems's department | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"department":["No department matches {\'pk\': UUID(\'386ae37d-7b0e-4c50-ad' |
+| PASS | 6c. Northwind Health cannot offboard Aperture Systems's employee | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"employee":["Invalid pk \\"7d4c110d-a46e-4171-a63d-71726ca533cc\\" - obje' |
+| PASS | 6d. Northwind Health cannot file a resignation for Aperture Systems's employee | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"employee":["Invalid pk \\"7d4c110d-a46e-4171-a63d-71726ca533cc\\" - obje' |
 | PASS | 6. Northwind Health cannot edit Fairhaven Retail's employee | 404 |
-| PASS | 6b. Northwind Health cannot create an employee in Fairhaven Retail's department | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"email":["This field is required."],"role_code":["This field is require' |
+| PASS | 6b. Northwind Health cannot create an employee in Fairhaven Retail's department | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"department":["No department matches {\'pk\': UUID(\'11321436-df17-46c8-9c' |
+| PASS | 6c. Northwind Health cannot offboard Fairhaven Retail's employee | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"employee":["Invalid pk \\"e00dcdbe-1b65-4283-b2f3-5e0383c6685d\\" - obje' |
+| PASS | 6d. Northwind Health cannot file a resignation for Fairhaven Retail's employee | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"employee":["Invalid pk \\"e00dcdbe-1b65-4283-b2f3-5e0383c6685d\\" - obje' |
 | PASS | 6. Aperture Systems cannot edit Northwind Health's employee | 404 |
-| PASS | 6b. Aperture Systems cannot create an employee in Northwind Health's department | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"email":["This field is required."],"role_code":["This field is require' |
+| PASS | 6b. Aperture Systems cannot create an employee in Northwind Health's department | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"department":["No department matches {\'pk\': UUID(\'a896fd91-0f6f-46d8-90' |
+| PASS | 6c. Aperture Systems cannot offboard Northwind Health's employee | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"employee":["Invalid pk \\"048bec56-2e5b-4a02-a4d3-65b6345462f6\\" - obje' |
+| PASS | 6d. Aperture Systems cannot file a resignation for Northwind Health's employee | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"employee":["Invalid pk \\"048bec56-2e5b-4a02-a4d3-65b6345462f6\\" - obje' |
 | PASS | 6. Aperture Systems cannot edit Fairhaven Retail's employee | 404 |
-| PASS | 6b. Aperture Systems cannot create an employee in Fairhaven Retail's department | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"email":["This field is required."],"role_code":["This field is require' |
+| PASS | 6b. Aperture Systems cannot create an employee in Fairhaven Retail's department | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"department":["No department matches {\'pk\': UUID(\'11321436-df17-46c8-9c' |
+| PASS | 6c. Aperture Systems cannot offboard Fairhaven Retail's employee | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"employee":["Invalid pk \\"e00dcdbe-1b65-4283-b2f3-5e0383c6685d\\" - obje' |
+| PASS | 6d. Aperture Systems cannot file a resignation for Fairhaven Retail's employee | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"employee":["Invalid pk \\"e00dcdbe-1b65-4283-b2f3-5e0383c6685d\\" - obje' |
 | PASS | 6. Fairhaven Retail cannot edit Northwind Health's employee | 404 |
-| PASS | 6b. Fairhaven Retail cannot create an employee in Northwind Health's department | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"email":["This field is required."],"role_code":["This field is require' |
+| PASS | 6b. Fairhaven Retail cannot create an employee in Northwind Health's department | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"department":["No department matches {\'pk\': UUID(\'a896fd91-0f6f-46d8-90' |
+| PASS | 6c. Fairhaven Retail cannot offboard Northwind Health's employee | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"employee":["Invalid pk \\"048bec56-2e5b-4a02-a4d3-65b6345462f6\\" - obje' |
+| PASS | 6d. Fairhaven Retail cannot file a resignation for Northwind Health's employee | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"employee":["Invalid pk \\"048bec56-2e5b-4a02-a4d3-65b6345462f6\\" - obje' |
 | PASS | 6. Fairhaven Retail cannot edit Aperture Systems's employee | 404 |
-| PASS | 6b. Fairhaven Retail cannot create an employee in Aperture Systems's department | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"email":["This field is required."],"role_code":["This field is require' |
+| PASS | 6b. Fairhaven Retail cannot create an employee in Aperture Systems's department | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"department":["No department matches {\'pk\': UUID(\'386ae37d-7b0e-4c50-ad' |
+| PASS | 6c. Fairhaven Retail cannot offboard Aperture Systems's employee | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"employee":["Invalid pk \\"7d4c110d-a46e-4171-a63d-71726ca533cc\\" - obje' |
+| PASS | 6d. Fairhaven Retail cannot file a resignation for Aperture Systems's employee | 400 b'{"error":{"code":"invalid","message":"Validation failed.","details":{"employee":["Invalid pk \\"7d4c110d-a46e-4171-a63d-71726ca533cc\\" - obje' |
 | PASS | 7. Northwind Health -> Aperture Systems: 63/63 detail routes refused | no route served the caller's own row |
 | PASS | 7. Northwind Health -> Fairhaven Retail: 63/63 detail routes refused | no route served the caller's own row |
 | PASS | 7. Aperture Systems -> Northwind Health: 63/63 detail routes refused | no route served the caller's own row |
@@ -206,7 +219,7 @@ None. Every route answered with a status code.
 Stated because a report that only lists what passed is not evidence, it is advertising.
 
 - **The organizations are built by this script, not by the platform provisioning service**, which does not exist yet. `provision()` is the seam: when that service lands, it replaces the body of that function and this report starts proving the real creation path too.
-- **The walk reached 63 of the 495 routes the resolver exposes.** A route is only asserted against when it serves the CALLER's own row, because one that answers 405 or 404 for everybody refuses both organizations equally and counting it as a refusal would score the test against itself. The rest are dropped for lack of an answer, not judged and passed. Most of the gap is POST/PUT-only actions, file downloads with nothing uploaded, and the `.json` suffix duplicates of routes already walked.
+- **The walk reached 63 of the 515 routes the resolver exposes.** A route is only asserted against when it serves the CALLER's own row, because one that answers 405 or 404 for everybody refuses both organizations equally and counting it as a refusal would score the test against itself. The rest are dropped for lack of an answer, not judged and passed. Most of the gap is POST/PUT-only actions, file downloads with nothing uploaded, and the `.json` suffix duplicates of routes already walked.
 - **Celery tasks are not exercised here.** A task's isolation is a separate question with its own per-task tests, including the negative case where a task given another organization's object id must fail rather than silently do nothing.
 - **Per-organization email, files and configuration are not covered.** Those arrive with the per-organization configuration work and get their own checks.
 - **The platform layer is not covered**, because it does not exist yet. Whether a platform administrator is kept out of customer HR data is a question this report cannot yet answer.

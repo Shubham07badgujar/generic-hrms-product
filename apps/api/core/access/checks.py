@@ -327,6 +327,48 @@ def check_unique_constraints_are_organization_scoped(app_configs, **kwargs):
     return errors
 
 
+def _is_writable_lookup(field) -> bool:
+    """A field that resolves ids a request body supplies: the injection surface."""
+    from rest_framework.relations import ManyRelatedField, RelatedField
+
+    relation = field.child_relation if isinstance(field, ManyRelatedField) else field
+    return (
+        isinstance(relation, RelatedField)
+        and not getattr(field, "read_only", False)
+        and getattr(relation, "queryset", None) is not None
+    )
+
+
+def serializer_lacks_relation_scoping(serializer_class) -> bool:
+    """
+    Whether this serializer resolves body-supplied ids without the tenant scope.
+
+    Declared fields are read straight off the class, so nothing has to be
+    built. That is the half this check used to miss: it asked only
+    ModelSerializers, and only about the fields DRF generates, while relation
+    fields written out by hand on plain Serializers resolved ids across every
+    organization -- including the one that let one company's admin offboard
+    another company's employee.
+
+    A serializer already carrying the mixin is answered without being built at
+    all. Generated fields still need an instance, and a serializer that cannot
+    be built without request context is judged on its declared fields alone.
+    """
+    from rest_framework import serializers as drf
+
+    from core.api.serializers import ScopedRelationsMixin
+
+    if issubclass(serializer_class, ScopedRelationsMixin):
+        return False
+    candidates = list(getattr(serializer_class, "_declared_fields", {}).values())
+    if issubclass(serializer_class, drf.ModelSerializer):
+        try:
+            candidates += list(serializer_class().get_fields().values())
+        except Exception:  # noqa: BLE001 -- needs context to build
+            pass
+    return any(_is_writable_lookup(f) for f in candidates)
+
+
 @register()
 def check_serializers_scope_their_relations(app_configs, **kwargs):
     """
@@ -349,7 +391,6 @@ def check_serializers_scope_their_relations(app_configs, **kwargs):
 
     from rest_framework import serializers as drf
 
-    from core.api.serializers import ScopedRelationsMixin
 
     errors: list[Error] = []
     root = pathlib.Path(__file__).resolve().parents[2]
@@ -365,22 +406,12 @@ def check_serializers_scope_their_relations(app_configs, **kwargs):
         for name, obj in vars(module).items():
             if not (
                 inspect.isclass(obj)
-                and issubclass(obj, drf.ModelSerializer)
-                and obj is not drf.ModelSerializer
+                and issubclass(obj, drf.Serializer)
+                and obj not in (drf.Serializer, drf.ModelSerializer)
                 and obj.__module__ == module_name
             ):
                 continue
-            try:
-                fields = obj().get_fields()
-            except Exception:  # noqa: BLE001 — needs context to build
-                continue
-            writable_relation = any(
-                isinstance(f, (drf.PrimaryKeyRelatedField, drf.SlugRelatedField))
-                and not f.read_only
-                and getattr(f, "queryset", None) is not None
-                for f in fields.values()
-            )
-            if writable_relation and not issubclass(obj, ScopedRelationsMixin):
+            if serializer_lacks_relation_scoping(obj):
                 errors.append(
                     Error(
                         f"Serializer '{module_name}.{name}' has a writable "

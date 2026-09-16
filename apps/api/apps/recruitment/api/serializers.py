@@ -104,7 +104,7 @@ class HiringWorkflowSerializer(OrgScopedUniqueMixin, serializers.ModelSerializer
         ]
 
 
-class InterviewRoundSerializer(serializers.Serializer):
+class InterviewRoundSerializer(ScopedRelationsMixin, serializers.Serializer):
     """One interview round of a process description, in interview order."""
 
     name = serializers.CharField(required=False, allow_blank=True, default="")
@@ -617,7 +617,7 @@ class _ReasonField(serializers.CharField):
         super().__init__(**kwargs)
 
 
-class DecisionSerializer(serializers.Serializer):
+class DecisionSerializer(ScopedRelationsMixin, serializers.Serializer):
     """Payload for any stage decision that is not terminal."""
 
     decision = serializers.CharField()
@@ -681,7 +681,7 @@ class InterviewSerializer(ScopedRelationsMixin, serializers.ModelSerializer):
         return hasattr(obj, "feedback")
 
 
-class InterviewScheduleSerializer(serializers.Serializer):
+class InterviewScheduleSerializer(ScopedRelationsMixin, serializers.Serializer):
     application = serializers.PrimaryKeyRelatedField(queryset=Application.objects.all())
     stage = serializers.PrimaryKeyRelatedField(queryset=WorkflowStage.objects.all())
     interviewer = serializers.PrimaryKeyRelatedField(
@@ -748,7 +748,7 @@ class OfferResponseSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True, default="")
 
 
-class ConvertSerializer(serializers.Serializer):
+class ConvertSerializer(ScopedRelationsMixin, serializers.Serializer):
     """
     The onboarding form: what HR Head verifies before the employee is minted.
 

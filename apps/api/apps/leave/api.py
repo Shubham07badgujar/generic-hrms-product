@@ -167,7 +167,7 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class LeaveApplySerializer(serializers.Serializer):
+class LeaveApplySerializer(ScopedRelationsMixin, serializers.Serializer):
     """Dates, type, reason. The server computes and decides everything else."""
 
     leave_type = serializers.PrimaryKeyRelatedField(

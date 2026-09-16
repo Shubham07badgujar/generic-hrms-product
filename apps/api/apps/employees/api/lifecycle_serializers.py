@@ -101,7 +101,7 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
         return obj.uploaded_by_id != obj.employee.user_id
 
 
-class DocumentUploadSerializer(serializers.Serializer):
+class DocumentUploadSerializer(ScopedRelationsMixin, serializers.Serializer):
     document_type = serializers.PrimaryKeyRelatedField(queryset=DocumentType.objects.all())
     file = serializers.FileField()
     issue_date = serializers.DateField(required=False, allow_null=True)
@@ -303,7 +303,7 @@ class EmployeeOnboardingSerializer(serializers.ModelSerializer):
         return obj.outstanding_mandatory.count()
 
 
-class OnboardingItemActionSerializer(serializers.Serializer):
+class OnboardingItemActionSerializer(ScopedRelationsMixin, serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True, default="")
     document = serializers.PrimaryKeyRelatedField(
         queryset=EmployeeDocument.objects.all(), required=False, allow_null=True
@@ -347,7 +347,7 @@ class EmployeeLetterSerializer(serializers.ModelSerializer):
         return bool(obj.pdf_file)
 
 
-class LetterGenerateSerializer(serializers.Serializer):
+class LetterGenerateSerializer(ScopedRelationsMixin, serializers.Serializer):
     letter_type = serializers.CharField()
     template = serializers.PrimaryKeyRelatedField(
         queryset=LetterTemplate.objects.all(), required=False, allow_null=True
@@ -478,7 +478,7 @@ class AssetAllocationSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class AllocateSerializer(serializers.Serializer):
+class AllocateSerializer(ScopedRelationsMixin, serializers.Serializer):
     asset = serializers.PrimaryKeyRelatedField(queryset=Asset.objects.all())
     employee = serializers.PrimaryKeyRelatedField(
         queryset=Employee.objects.filter(is_active=True)
@@ -488,7 +488,7 @@ class AllocateSerializer(serializers.Serializer):
     expected_return_date = serializers.DateField(required=False, allow_null=True)
 
 
-class BulkAllocateSerializer(serializers.Serializer):
+class BulkAllocateSerializer(ScopedRelationsMixin, serializers.Serializer):
     """
     Several assets into one pair of hands, in one request.
 
