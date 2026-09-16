@@ -107,6 +107,13 @@ def email_config(organization) -> EmailConfig:
     row = None
     organization_id = _organization_id(organization)
     if organization_id is not None:
+        # Plain filter, deliberately. `OrgEmailConfig` carries an organization
+        # but inherits `BaseModel`, so its manager never applies the tenant
+        # predicate and there is nothing here to step around -- unlike
+        # `OrgAttendanceIntegration` below, which is organization-owned and
+        # needs `all_orgs()` to get past a predicate that would otherwise
+        # refuse a resolver whose whole contract is that the CALLER names the
+        # organization.
         row = OrgEmailConfig.objects.filter(
             organization_id=organization_id, is_active=True
         ).first()
@@ -257,9 +264,11 @@ def attendance_config(organization) -> AttendanceConfig:
     row = None
     organization_id = _organization_id(organization)
     if organization_id is not None:
-        row = OrgAttendanceIntegration.objects.filter(
-            organization_id=organization_id, is_active=True
-        ).first()
+        row = (
+            OrgAttendanceIntegration.objects.all_orgs()
+            .filter(organization_id=organization_id, is_active=True)
+            .first()
+        )
 
     def pick(attr, default):
         value = getattr(row, attr, None) if row else None

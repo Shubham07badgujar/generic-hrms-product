@@ -13,26 +13,40 @@ import without waiting for beat.
 
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand
-
 from apps.imports.services.retention import (
     COMMITTED_DAYS,
     UNCOMMITTED_HOURS,
     purge_staging_pii,
 )
+from core.management.orgcommand import OrganizationCommand
 
 
-class Command(BaseCommand):
+class Command(OrganizationCommand):
+    """
+    One organization's staging rows, never everybody's.
+
+    Retention is per customer: their rows, their clock, their audit trail. The
+    command took no organization at all, which was invisible while the manager
+    did not filter and becomes an `OrgContextMissing` the moment imports does.
+    The base class supplies `--organization`, and needs it only once a
+    deployment has more than one company.
+
+    The nightly sweep is the Celery dispatcher, which fans out across every
+    running organization. This exists for the operator who wants to see what is
+    pending, or to run the policy out of band after a large import.
+    """
+
     help = "Remove personal data from candidate-import staging rows past retention."
 
     def add_arguments(self, parser):
+        super().add_arguments(parser)
         parser.add_argument(
             "--apply",
             action="store_true",
             help="Actually destroy the staging PII. Without this, nothing is written.",
         )
 
-    def handle(self, *args, **options):
+    def handle_for_organization(self, organization, *args, **options):
         apply = options["apply"]
         result = purge_staging_pii(apply=apply)
 

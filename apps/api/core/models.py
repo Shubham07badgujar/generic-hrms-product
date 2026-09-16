@@ -465,4 +465,16 @@ def org_scoped(model, organization=None):
             f"bound. Wrap the call in acting_as(user, organization=...), or "
             f"pass the organization explicitly."
         )
-    return model.objects.filter(organization_id=organization_id)
+    # Through `all_orgs()`, then straight back down to the named organization.
+    # The escape hatch is required here rather than optional: the manager's
+    # predicate runs BEFORE this filter, so for a strict app it would refuse the
+    # very call whose whole purpose is to name an organization without relying
+    # on an ambient one. Every row this returns still belongs to exactly one
+    # organization -- the one the caller asked for.
+    #
+    # A model that carries an organization but inherits `BaseModel` has no
+    # escape hatch because it has no predicate to escape; `OrgEmailConfig` is
+    # one. Asking for `all_orgs()` there is an AttributeError, not a leak.
+    manager = model.objects
+    rows = manager.all_orgs() if hasattr(manager, "all_orgs") else manager.all()
+    return rows.filter(organization_id=organization_id)

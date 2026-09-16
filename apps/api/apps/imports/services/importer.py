@@ -57,6 +57,7 @@ from apps.recruitment.services import intake, retention
 from core.access import Action, Resource, require
 from core.api.exceptions import BusinessRuleError
 from core.fields import fingerprint
+from core.models import TenancyError
 from core.phone import to_e164_in
 from core.validators import validate_upload
 
@@ -536,6 +537,14 @@ def _commit_row(row, *, actor, job, batch, first_stage, result) -> None:
                 ]
             )
 
+    except TenancyError:
+        # NOT one bad row. A tenancy fault is a programming error -- a query
+        # with no organization bound, or a row whose organization disagrees
+        # with its parent's -- and recording it as `row_failed` turns a bug
+        # into a plausible-looking partial import that nobody investigates.
+        # It cost real time here: flipping imports to a filtering manager made
+        # half of every batch "fail" with no clue why.
+        raise
     except Exception as exc:  # noqa: BLE001 — one bad row must cost one row
         # PII-free by construction: the code, never the value. This object is
         # what gets logged, audited and shipped to Sentry.

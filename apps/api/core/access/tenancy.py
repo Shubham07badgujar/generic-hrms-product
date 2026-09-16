@@ -100,7 +100,10 @@ PENDING_TENANCY: frozenset[str] = frozenset()
 #: tenancy on purpose.
 STRICT_TENANT_APPS: frozenset[str] = frozenset({
     "assets",
+    "attendance",
+    "imports",
     "itaccounts",
+    "leave",
     "notifications",
     "offboarding",
     "onboarding",

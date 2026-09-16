@@ -167,7 +167,7 @@ class CandidateImportViewSet(ScopedModelViewSet):
     # those two routes answer 415 and the flow cannot be completed at all.
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     serializer_class = ImportBatchSerializer
-    queryset = deferred(ImportBatch).select_related("job_opening").all()
+    queryset = deferred(ImportBatch).select_related("job_opening")
     http_method_names = ["get", "post", "delete", "head", "options"]
 
     def get_queryset(self):

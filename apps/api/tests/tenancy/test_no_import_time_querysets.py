@@ -53,8 +53,39 @@ def _root_model(call: ast.Call) -> str | None:
             return None
 
 
+def _rooted_at_deferred(call: ast.Call) -> bool:
+    """Whether this call chain starts at `deferred(Model)`."""
+    cur: ast.AST = call
+    while True:
+        if isinstance(cur, ast.Call):
+            if isinstance(cur.func, ast.Name) and cur.func.id == "deferred":
+                return True
+            cur = cur.func
+        elif isinstance(cur, ast.Attribute):
+            cur = cur.value
+        else:
+            return False
+
+
+def _chain_methods(call: ast.Call) -> list[str]:
+    out: list[str] = []
+    cur: ast.AST = call
+    while isinstance(cur, ast.Call) and isinstance(cur.func, ast.Attribute):
+        out.append(cur.func.attr)
+        cur = cur.func.value
+    return list(reversed(out))
+
+
 class _Scanner(ast.NodeVisitor):
-    """Manager calls reached without entering a function body."""
+    """Manager calls reached without entering a function body.
+
+    Two shapes count. `Model.objects...` is the original: it evaluates at
+    import and, under a strict app, raises there. `deferred(Model)...` normally
+    does not evaluate -- but only the recorded methods are deferred, so a chain
+    ending in `.all()` or any other unrecorded call evaluates exactly like the
+    shape it replaced. Two of those survived the conversion, and this scan did
+    not see them, because it was only looking for the word `objects`.
+    """
 
     def __init__(self, label: str):
         self.label = label
@@ -71,6 +102,12 @@ class _Scanner(ast.NodeVisitor):
     def visit_Call(self, node):
         if self.depth == 0:
             model = _root_model(node)
+            if model is None and _rooted_at_deferred(node):
+                from core.querysets import RECORDED
+
+                unrecorded = [m for m in _chain_methods(node) if m not in RECORDED]
+                if unrecorded:
+                    model = f"deferred(...).{unrecorded[0]}()"
             if model:
                 self.hits.append((self.label, node.lineno, model))
                 # Keep descending into the ARGUMENTS so a nested manager call
@@ -119,9 +156,24 @@ def test_the_scanner_catches_a_violation_when_one_exists():
         "    return Asset.objects.select_related('category')\n"
     )
 
+    deferred_but_evaluated = (
+        "class View:\n"
+        "    queryset = deferred(Asset).select_related('category').all()\n"
+    )
+    deferred_and_lazy = (
+        "class View:\n"
+        "    queryset = deferred(Asset).select_related('category')\n"
+    )
+
     assert _scan_source(offending, "probe") == [("probe", 2, "Asset")]
     assert {hit[2] for hit in _scan_source(nested, "probe")} == {"Asset", "Other"}
     assert _scan_source(inside_a_function, "probe") == []
+    # `.all()` is not a recorded method, so this evaluates at import exactly
+    # like the shape it replaced. Two of these survived the conversion.
+    assert _scan_source(deferred_but_evaluated, "probe") == [
+        ("probe", 2, "deferred(...).all()")
+    ]
+    assert _scan_source(deferred_and_lazy, "probe") == []
 
 
 def test_no_module_builds_a_queryset_at_import():

@@ -19,14 +19,26 @@ from __future__ import annotations
 
 import datetime as dt
 
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import CommandError
+
+from core.management.orgcommand import OrganizationCommand
 
 #: Mirrors the range-sync bound: big enough for a quarter, small enough that
 #: a typo in the year cannot grind through decades.
 MAX_DAYS = 92
 
 
-class Command(BaseCommand):
+class Command(OrganizationCommand):
+    """
+    One organization's attendance, under that organization's shift policy.
+
+    Recomputation reads shift rules, holidays and employees, all of which are
+    per customer, so "recompute the range" is only a meaningful instruction once
+    somebody has said whose range. `--employee` is a code, and employee codes
+    are unique per organization rather than globally -- so without a tenant this
+    command could recompute a different company's employee of the same code.
+    """
+
     help = (
         "Recompute device-sourced attendance for a date range under the "
         "current policy. Manual/regularized days are never touched. When "
@@ -35,6 +47,7 @@ class Command(BaseCommand):
     )
 
     def add_arguments(self, parser):
+        super().add_arguments(parser)
         parser.add_argument("--from", dest="date_from", required=True,
                             help="first date, YYYY-MM-DD")
         parser.add_argument("--to", dest="date_to", required=True,
@@ -42,7 +55,7 @@ class Command(BaseCommand):
         parser.add_argument("--employee", dest="employee_code", default="",
                             help="limit to one employee code")
 
-    def handle(self, *args, **options):
+    def handle_for_organization(self, organization, *args, **options):
         from apps.attendance.models import EsslEmployeeLink
         from apps.attendance.services.calculation import recompute_day
         from apps.employees.models import Employee

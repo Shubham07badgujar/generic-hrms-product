@@ -86,7 +86,7 @@ class AuditLogViewSet(ScopedReadOnlyModelViewSet):
     serializer_class = AuditLogSerializer
     queryset = deferred(AuditLog).select_related(
         "actor", "subject_employee", "subject_employee__department"
-    ).all()
+    )
     filterset_fields = ["action", "resource", "entity_type", "actor", "subject_employee"]
     search_fields = ["entity_label", "actor_email", "reason"]
     ordering_fields = ["occurred_at"]
