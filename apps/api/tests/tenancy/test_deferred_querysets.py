@@ -58,7 +58,13 @@ def test_class_access_evaluates_nothing_and_still_names_its_model():
 
 
 def test_instance_access_builds_a_real_queryset_through_the_manager(org_a):
-    """What `GenericAPIView.get_queryset` and every `self.queryset` override get."""
+    """
+    What `GenericAPIView.get_queryset` and every `self.queryset` override get.
+
+    A real QuerySet, not the recorder: pagination slices what it is handed and
+    a Manager cannot be sliced, so handing one back turned every paginated list
+    endpoint into a 500.
+    """
     model = _model()
 
     class View:
@@ -69,6 +75,47 @@ def test_instance_access_builds_a_real_queryset_through_the_manager(org_a):
 
     assert isinstance(built, QuerySet)
     assert built.model is model
+
+
+def test_instance_access_yields_the_recorder_when_the_manager_refuses():
+    """
+    The metadata case, and why it is not a hole.
+
+    drf-spectacular reads `view.queryset` off an INSTANCE while generating the
+    schema: no request, so no organization, so a strict app refuses. Raising
+    there made `/api/schema/` a 500 as soon as a second app went strict. What
+    comes back answers `.model` and holds no rows, and asking it for rows goes
+    through the manager again and is refused again.
+    """
+    model = _model()
+
+    class View:
+        queryset = deferred(model).select_related("recipient")
+
+    with acting_as(None, organization=None):
+        fallback = View().queryset
+
+        assert fallback is View.queryset
+        assert fallback.model is model
+        with pytest.raises(OrgContextMissing):
+            fallback.all()
+
+
+def test_none_answers_without_asking_the_manager():
+    """
+    An empty queryset needs no tenant, and must not demand one.
+
+    `apply_org_predicate` returns `qs.none()` when nothing is bound, so routing
+    that through a strict manager would raise on the very path written to
+    handle the unbound case -- which is what made schema generation 500.
+    """
+    model = _model()
+
+    with acting_as(None, organization=None):
+        empty = deferred(model).filter(is_read=False).none()
+
+    assert isinstance(empty, QuerySet)
+    assert list(empty) == []
 
 
 def test_it_is_a_manager_so_drf_relation_fields_accept_it():

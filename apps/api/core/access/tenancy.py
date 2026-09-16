@@ -99,6 +99,7 @@ PENDING_TENANCY: frozenset[str] = frozenset()
 #: `grep -rn all_orgs` is the audit of every place someone stepped outside
 #: tenancy on purpose.
 STRICT_TENANT_APPS: frozenset[str] = frozenset({
+    "itaccounts",
     "notifications",
 })
 

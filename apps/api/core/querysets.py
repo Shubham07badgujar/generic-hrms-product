@@ -36,13 +36,25 @@ queryset is read today:
   evaluates nothing, which is all the router needs for a default basename and
   all `core.access.routewalk.model_of` reads.
 * **On a view instance** (`self.queryset`) it builds a fresh QuerySet through the
-  default manager, so the tenant predicate applies to THIS request.
-  `GenericAPIView.get_queryset` and every override that reads `self.queryset`
-  get a real QuerySet exactly as before.
+  default manager, so the tenant predicate applies to THIS request. That has to
+  be a real QuerySet: pagination slices what it is handed, and a Manager cannot
+  be sliced.
 * **As a serializer field's `queryset=`** it is stored in the field instance's
   dict, where no descriptor runs, so it stays a Manager -- and DRF's
   `RelatedField.get_queryset` explicitly accepts a Manager and calls `.all()` on
   it for every lookup.
+
+THE ONE EXCEPTION, AND WHY IT IS NOT A HOLE
+-------------------------------------------
+Instance access hands back the recorder instead of a QuerySet when the manager
+REFUSES -- a strict app asked with no organization bound. drf-spectacular reads
+`view.queryset` off an INSTANCE while generating the schema, where there is no
+request and therefore no tenant, and raising there turned `/api/schema/` into a
+500 the moment a second app went strict.
+
+What comes back in that case answers `.model` and holds no rows. Anything that
+actually wants rows calls through the manager again and is refused again, so
+nothing becomes readable that the predicate would have hidden.
 
 Only an explicit allowlist of chainable methods is RECORDED. Everything else --
 `all`, `get`, `count`, iteration -- falls through to the ordinary Manager proxies
@@ -97,10 +109,33 @@ class DeferredQuerySet(Manager):
             queryset = getattr(queryset, name)(*args, **kwargs)
         return queryset
 
+    def none(self):
+        """
+        An empty queryset, built without consulting the manager.
+
+        The one call that does not need the tenant predicate: an empty queryset
+        returns no rows for anybody, so asking which organization is asking
+        cannot change the answer. Going through the manager would instead RAISE
+        for a strict app whenever nothing is bound -- and `.none()` is exactly
+        what `apply_org_predicate` returns in that case, so the refusal would
+        land on the code path built to handle it.
+        """
+        from django.db.models import QuerySet
+
+        return QuerySet(model=self.model).none()
+
     def __get__(self, instance, owner):
         if instance is None:
             return self
-        return self.get_queryset()
+        from core.models import OrgContextMissing
+
+        try:
+            return self.get_queryset()
+        except OrgContextMissing:
+            # Metadata, not rows. See "THE ONE EXCEPTION" in the module
+            # docstring: schema generation reads this with nothing bound, and
+            # the recorder answers `.model` while holding no rows.
+            return self
 
     def __repr__(self) -> str:
         chain = "".join(f".{name}(...)" for name, _, _ in self._steps)
