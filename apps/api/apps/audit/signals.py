@@ -65,7 +65,13 @@ def on_pre_save(sender, instance, **kwargs):
     if instance.pk is None:
         instance.__dict__["_audit_previous"] = None
         return
-    previous = sender.objects.filter(pk=instance.pk).first()
+    # `_base_manager`, not `objects`: this re-reads the very row being saved,
+    # so there is no tenant question to answer -- and the filtering manager
+    # got it wrong both ways. With nothing bound it raised, failing a save
+    # that carries its own organization. With a DIFFERENT organization bound
+    # it found nothing, `previous` was None, and the update was silently
+    # never audited. Django reads a row back this way in `refresh_from_db`.
+    previous = sender._base_manager.filter(pk=instance.pk).first()
     instance.__dict__["_audit_previous"] = _field_values(previous) if previous else None
 
 

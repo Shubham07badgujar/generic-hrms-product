@@ -224,3 +224,28 @@ def test_a_strict_app_cannot_fetch_another_organizations_row_by_id(org_a, org_b)
     with acting_as(org_a.admin, organization=org_a.organization):
         with pytest.raises(Notification.DoesNotExist):
             Notification.objects.get(pk=theirs.pk)
+
+
+@pytest.mark.unbound_organization
+def test_an_update_made_with_nothing_bound_is_still_audited(org_a):
+    """
+    The audit trail re-reads a row before an update so it can record the diff.
+
+    It re-read it through the tenant manager. With nothing bound that raised,
+    failing a save of a row that carries its own organization; with another
+    organization bound it found nothing, and the update was silently never
+    audited. The re-read is of the same row, so it asks no tenant question.
+    """
+    from apps.audit.models import AuditAction, AuditLog
+
+    employee = org_a.worker_employee
+    employee.first_name = "Renamed"
+    employee.save(update_fields=["first_name"])
+
+    entry = AuditLog.objects.filter(
+        entity_type="employees.Employee",
+        entity_id=str(employee.pk),
+        action=AuditAction.UPDATE,
+    ).first()
+    assert entry is not None, "the update wrote no audit row"
+    assert entry.after.get("first_name") == "Renamed"

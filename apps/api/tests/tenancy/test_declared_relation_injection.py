@@ -252,17 +252,22 @@ def test_the_check_flags_a_plain_serializer_with_an_unscoped_declared_relation()
     from apps.employees.models import Employee
     from core.access.checks import serializer_lacks_relation_scoping
     from core.api.serializers import ScopedRelationsMixin
+    from core.querysets import deferred
 
+    # `deferred`, as production serializers declare it. `Employee.objects.all()`
+    # in a class body is a query built at definition time, which raises once
+    # employees filter at the manager -- and the check under test looks at
+    # the serializer's scoping, not at how its queryset was spelled.
     class Unscoped(drf.Serializer):
-        employee = drf.PrimaryKeyRelatedField(queryset=Employee.objects.all())
+        employee = drf.PrimaryKeyRelatedField(queryset=deferred(Employee))
 
     class UnscopedMany(drf.Serializer):
         employees = drf.PrimaryKeyRelatedField(
-            queryset=Employee.objects.all(), many=True
+            queryset=deferred(Employee), many=True
         )
 
     class Scoped(ScopedRelationsMixin, drf.Serializer):
-        employee = drf.PrimaryKeyRelatedField(queryset=Employee.objects.all())
+        employee = drf.PrimaryKeyRelatedField(queryset=deferred(Employee))
 
     class ReadOnly(drf.Serializer):
         employee = drf.PrimaryKeyRelatedField(read_only=True)

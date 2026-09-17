@@ -63,10 +63,16 @@ class TokenObtainSerializer(TokenObtainPairSerializer):
             # address matching two people resolves to nobody and fails with
             # the same generic error as any unknown address, so nothing about
             # accounts is enumerable either way.
+            #
+            # Across EVERY organization, deliberately: nobody is signed in
+            # yet, so there is no organization to scope to -- finding one is
+            # what this lookup is for. Two companies' employees sharing an
+            # address is the same ambiguity as two in one company, and fails
+            # the same way.
             from apps.employees.models import Employee
 
             matches = list(
-                Employee.objects.filter(
+                Employee.objects.all_orgs().filter(
                     personal_email__iexact=email, is_active=True, user__isnull=False,
                 ).select_related("user")[:2]
             )
