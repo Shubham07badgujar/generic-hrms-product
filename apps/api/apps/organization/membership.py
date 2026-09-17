@@ -49,6 +49,30 @@ def organization_of(user):
     return membership.organization if membership else None
 
 
+def role_grants(user):
+    """
+    This principal's active role grants, in their OWN organization.
+
+    Read through the membership rather than the bound organization, because
+    the places that ask are exactly the places where nothing is bound yet: the
+    admin sign-in door checks roles before a session exists, and `/me/` is
+    `access_exempt`, so no permission check binds one either. A user's roles
+    are a fact about the user's organization, and the membership already says
+    which that is -- so the answer does not depend on whatever happens to be
+    bound, including another organization's.
+
+    No membership, no grants: an empty queryset, never every grant this user
+    holds anywhere.
+    """
+    from apps.accounts.models import UserRole
+
+    grants = UserRole.objects.all_orgs().filter(is_active=True, role__is_active=True)
+    membership = active_membership(user)
+    if membership is None:
+        return grants.none()
+    return grants.filter(user_id=user.pk, organization_id=membership.organization_id)
+
+
 def is_member(user, organization) -> bool:
     """
     Whether this principal is an active member of THIS organization.

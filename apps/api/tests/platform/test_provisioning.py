@@ -121,7 +121,9 @@ def test_the_administrator_holds_their_own_organizations_admin_role():
         admin_email="admin@aperture.example",
     )
 
-    grant = UserRole.objects.get(user=second.admin)
+    # Across every organization on purpose: `.get()` then also proves the
+    # administrator holds exactly ONE grant anywhere, not one per company.
+    grant = UserRole.objects.all_orgs().get(user=second.admin)
     assert grant.role.organization_id == second.organization.pk
     assert grant.role.organization_id != first.organization.pk
 

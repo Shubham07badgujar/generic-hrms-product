@@ -291,8 +291,22 @@ def resolve_context(user) -> AccessContext:
     from apps.accounts.models import RolePermission, UserPermissionOverride, UserRole
 
     # 2. Active role grants.
+    #
+    #    Steps 2, 5 and 6 name the organization EXPLICITLY, from the membership
+    #    just resolved, rather than letting the tenant manager read it from
+    #    context. This function is what PRODUCES the organization that gets
+    #    bound, so on every path that resolves before binding (the admin
+    #    sign-in door, force_authenticate, get_context(user) in a service) the
+    #    ambient value is either absent or somebody else's. A grant row from
+    #    another organization must never contribute authority here.
     grants_qs = (
-        UserRole.objects.filter(user_id=user.pk, is_active=True, role__is_active=True)
+        UserRole.objects.all_orgs()
+        .filter(
+            organization_id=organization_id,
+            user_id=user.pk,
+            is_active=True,
+            role__is_active=True,
+        )
         .select_related("role")
     )
     roles = [g.role for g in grants_qs]
@@ -320,14 +334,23 @@ def resolve_context(user) -> AccessContext:
     employee_id = None
     department_id = None
     employee = getattr(user, "employee", None)
+    # An Employee record in a DIFFERENT organization is not this principal's
+    # employee here, and must not lend them a department scope in this one.
+    if employee is not None and employee.organization_id != organization_id:
+        logger.warning(
+            "access.employee_outside_membership user=%s", user.pk
+        )
+        employee = None
     if employee is not None and employee.is_active:
         employee_id = employee.pk
         department_id = employee.department_id
 
     # 5. Aggregate role permissions. MAX scope wins across roles.
     grants: dict[tuple[str, str], int] = {}
-    for perm in RolePermission.objects.filter(
-        role_id__in=[r.pk for r in roles], is_active=True
+    for perm in RolePermission.objects.all_orgs().filter(
+        organization_id=organization_id,
+        role_id__in=[r.pk for r in roles],
+        is_active=True,
     ):
         key = (perm.resource, perm.action)
         grants[key] = max(grants.get(key, Scope.NONE), perm.scope)
@@ -335,8 +358,8 @@ def resolve_context(user) -> AccessContext:
     # 6. Per-user overrides REPLACE the role-derived scope — they can widen or
     #    explicitly deny (scope=NONE). Expired ones are ignored.
     now = timezone.now()
-    for override in UserPermissionOverride.objects.filter(
-        user_id=user.pk, is_active=True
+    for override in UserPermissionOverride.objects.all_orgs().filter(
+        organization_id=organization_id, user_id=user.pk, is_active=True
     ).exclude(expires_at__lt=now):
         grants[(override.resource, override.action)] = override.scope
 

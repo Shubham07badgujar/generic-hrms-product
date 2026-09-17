@@ -197,11 +197,12 @@ class PlatformTokenObtainSerializer(TokenObtainSerializer):
 def _is_admin(user) -> bool:
     if getattr(user, "is_superuser", False):
         return True
+    from apps.organization.membership import role_grants
     from core.access.catalog import RoleCode
 
-    return user.user_roles.filter(
-        is_active=True, role__code=RoleCode.ADMIN, role__is_active=True
-    ).exists()
+    # Before sign-in nothing is bound, so `user.user_roles` would have no
+    # organization to filter by. The membership says which one applies.
+    return role_grants(user).filter(role__code=RoleCode.ADMIN).exists()
 
 
 def _audit_login(user, *, success: bool) -> None:
@@ -279,10 +280,9 @@ class MeSerializer(serializers.ModelSerializer):
         return handbook_acknowledgement_pending(user)
 
     def get_roles(self, user) -> list[str]:
-        return list(
-            user.user_roles.filter(is_active=True, role__is_active=True)
-            .values_list("role__code", flat=True)
-        )
+        from apps.organization.membership import role_grants
+
+        return list(role_grants(user).values_list("role__code", flat=True))
 
     def get_employee_id(self, user):
         employee = getattr(user, "employee", None)

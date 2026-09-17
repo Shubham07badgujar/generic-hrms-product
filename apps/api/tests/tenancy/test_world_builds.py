@@ -27,14 +27,14 @@ def test_each_has_its_own_role_catalogue(org_a, org_b):
     """
     from apps.accounts.models import Role
 
-    a = set(Role.objects.filter(organization=org_a.organization).values_list("code", flat=True))
-    b = set(Role.objects.filter(organization=org_b.organization).values_list("code", flat=True))
+    a = set(Role.objects.all_orgs().filter(organization=org_a.organization).values_list("code", flat=True))
+    b = set(Role.objects.all_orgs().filter(organization=org_b.organization).values_list("code", flat=True))
 
     assert a == b, "both organizations get the same role vocabulary"
     assert len(a) >= 18
     assert not (
-        set(Role.objects.filter(organization=org_a.organization).values_list("pk", flat=True))
-        & set(Role.objects.filter(organization=org_b.organization).values_list("pk", flat=True))
+        set(Role.objects.all_orgs().filter(organization=org_a.organization).values_list("pk", flat=True))
+        & set(Role.objects.all_orgs().filter(organization=org_b.organization).values_list("pk", flat=True))
     ), "and they are different rows"
 
 

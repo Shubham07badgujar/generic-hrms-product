@@ -17,6 +17,7 @@ from apps.accounts.permission_matrix import ROLE_SPECS, cell_count
 from apps.accounts.services.roles import matrix_report, seed_roles
 from core.access.catalog import Scope
 from core.management.orgcommand import resolve_organization
+from core.middleware import acting_as
 
 SCOPE_SYMBOL = {
     "NONE": "-",
@@ -62,13 +63,18 @@ class Command(BaseCommand):
             return
 
         organization = self._organization(options.get("organization"))
-        result = seed_roles(
-            organization=organization, prune=not options["no_prune"]
-        )
-        self.stdout.write(self.style.SUCCESS(f"Seeded. {result}"))
+        # Bound for the whole run. The seeder bulk-inserts permission rows,
+        # and bulk inserts take their organization from the acting context --
+        # so without this the command raised OrgContextMissing on the first
+        # organization it was pointed at.
+        with acting_as(None, organization=organization):
+            result = seed_roles(
+                organization=organization, prune=not options["no_prune"]
+            )
+            self.stdout.write(self.style.SUCCESS(f"Seeded. {result}"))
 
-        if options["csv"]:
-            self._write_csv(options["csv"])
+            if options["csv"]:
+                self._write_csv(options["csv"], organization)
 
     # -- output helpers ----------------------------------------------------
 
@@ -114,8 +120,8 @@ class Command(BaseCommand):
             )
         )
 
-    def _write_csv(self, path: str):
-        rows = matrix_report()
+    def _write_csv(self, path: str, organization):
+        rows = matrix_report(organization)
         with open(path, "w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(
                 handle,

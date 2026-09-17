@@ -77,14 +77,14 @@ def create_admin(
     "create a second admin" path here — subsequent admins are granted through
     the normal, audited user-management flow by the first one.
     """
-    admin_role = Role.objects.filter(code=RoleCode.ADMIN, is_active=True).first()
-    if admin_role is None:
-        raise BootstrapError(
-            "The Admin role does not exist. Run `manage.py seed_roles` first."
-        )
-
-    if UserRole.objects.filter(
-        role=admin_role, is_active=True, user__is_active=True
+    # ANY organization's active Admin closes bootstrap, deliberately and
+    # explicitly: it is a one-time founding path, and once a deployment has an
+    # administrator anywhere, further admins come from an authenticated flow.
+    if UserRole.objects.all_orgs().filter(
+        role__code=RoleCode.ADMIN,
+        role__is_active=True,
+        is_active=True,
+        user__is_active=True,
     ).exists():
         raise BootstrapError(
             "An active Admin already exists. Bootstrap is one-time; grant further "
@@ -99,6 +99,20 @@ def create_admin(
     from core.middleware import acting_as
 
     organization = organization or _bootstrap_organization()
+
+    # The Admin role OF THIS ORGANIZATION. It was looked up before the
+    # organization was known, by code alone -- and role codes are unique only
+    # per organization, so the founding Admin could be granted another
+    # company's Admin role.
+    admin_role = (
+        Role.objects.all_orgs()
+        .filter(organization=organization, code=RoleCode.ADMIN, is_active=True)
+        .first()
+    )
+    if admin_role is None:
+        raise BootstrapError(
+            "The Admin role does not exist. Run `manage.py seed_roles` first."
+        )
 
     # Bootstrap is reachable over HTTP, and that route is `access_exempt` --
     # so RBACPermission short-circuits and the access layer never resolves a

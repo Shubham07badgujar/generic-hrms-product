@@ -46,6 +46,7 @@ COMMANDS = [
     ("audit_candidate_identity", {}),
     ("purge_candidates", {}),
     ("repair_application_stages", {}),
+    ("seed_roles", {}),
 ]
 
 
@@ -461,3 +462,34 @@ def test_seed_all_keeps_its_organization_bound_through_every_step(
     assert AttendanceRecord.objects.all_orgs().filter(
         organization=organization, employee__user__email__endswith=f"@{DEMO_DOMAIN}"
     ).exists(), "the attendance step wrote no records"
+
+
+def test_seed_roles_exports_only_the_named_organizations_matrix(org_a, org_b, tmp_path):
+    """
+    `--csv` read every permission row in the database.
+
+    So one customer's export was every customer's matrix concatenated,
+    including the cells each had customized. It must contain exactly the named
+    organization's active permission rows.
+    """
+    import csv
+
+    from apps.accounts.models import RolePermission
+
+    out = tmp_path / "matrix.csv"
+    call_command("seed_roles", organization=org_a.slug, csv=str(out))
+
+    with out.open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+
+    expected = RolePermission.objects.all_orgs().filter(
+        organization=org_a.organization, is_active=True
+    ).count()
+    other = RolePermission.objects.all_orgs().filter(
+        organization=org_b.organization, is_active=True
+    ).count()
+    assert other, "the other organization must have a matrix, or this proves nothing"
+    assert len(rows) == expected, (
+        f"exported {len(rows)} rows; the organization has {expected} and the "
+        f"other has {other}"
+    )

@@ -165,9 +165,13 @@ def _sync_permissions(role, spec, result: SeedResult, *, prune: bool) -> list:
     return to_create
 
 
-def matrix_report() -> list[dict]:
+def matrix_report(organization) -> list[dict]:
     """
-    Flatten the seeded matrix for review or export.
+    Flatten ONE organization's seeded matrix for review or export.
+
+    The organization is an argument. This used to read every permission row
+    in the database, so the export for one customer was every customer's
+    matrix concatenated -- including the cells each of them had customized.
 
     Reads the DATABASE, not the spec file, so it reflects any administrator
     customisation — which is what a reviewer actually needs to see.
@@ -176,7 +180,8 @@ def matrix_report() -> list[dict]:
 
     rows = []
     for perm in (
-        RolePermission.objects.filter(is_active=True)
+        RolePermission.objects.all_orgs()
+        .filter(organization=organization, is_active=True)
         .select_related("role")
         .order_by("role__layer", "role__name", "resource", "action")
     ):

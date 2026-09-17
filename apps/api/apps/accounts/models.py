@@ -330,7 +330,15 @@ class UserRole(OrgOwnedModel):
         if not self.is_active or self.role_id is None or self.user_id is None:
             return
 
-        siblings = UserRole.objects.filter(user_id=self.user_id, is_active=True)
+        # This user's other grants IN THE SAME ORGANIZATION as the role being
+        # granted, named explicitly. `clean()` runs before save stamps the
+        # row, and a role belongs to exactly one organization, so the role is
+        # where the organization comes from -- not whatever is bound.
+        siblings = UserRole.objects.all_orgs().filter(
+            organization_id=self.role.organization_id,
+            user_id=self.user_id,
+            is_active=True,
+        )
         if self.pk:
             siblings = siblings.exclude(pk=self.pk)
 

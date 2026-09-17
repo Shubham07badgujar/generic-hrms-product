@@ -501,7 +501,10 @@ def check_role_invariants(app_configs, **kwargs):
         from apps.accounts.models import Role
 
         bad = list(
-            Role.objects.filter(is_read_only=True, can_manage_users=True).values_list(
+            # Every organization's roles, deliberately: this is a build-time
+            # integrity check with no organization to be bound to, and a bad
+            # role in ANY tenant is a configuration error worth failing on.
+            Role.objects.all_orgs().filter(is_read_only=True, can_manage_users=True).values_list(
                 "code", flat=True
             )
         )
