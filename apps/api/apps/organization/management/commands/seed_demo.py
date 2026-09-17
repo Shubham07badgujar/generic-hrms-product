@@ -7,6 +7,28 @@ with known passwords — exactly what you never want reachable in production.
 Idempotent: safe to re-run. It creates the org structure, one person per role,
 and a small recruitment pipeline in various states so every screen has
 something real to render.
+
+ONE ORGANIZATION, NAMED
+-----------------------
+This command predates tenancy, and three things were wrong with it afterwards.
+
+It found its organization with `Organization.objects.first()`, which on a
+database holding more than one customer is whichever sorts first. It upserted
+structure by code -- `Department.objects.update_or_create(code="HR")` -- and a
+department code is unique per organization, not globally, so that call matched
+and rewrote ANOTHER company's department. And it never created a membership, so
+every account it made resolved to no organization and was denied everything:
+the demo produced logins that could not see a single screen.
+
+Now it inherits `OrganizationCommand`: `--organization <slug>`, the only
+organization when there is exactly one, and a refusal to guess when there are
+several. Every lookup is scoped to that organization explicitly, and every
+person it creates is a member of it.
+
+One consequence is deliberate. The demo logins are `<role>@demo.test`, and a
+login email is unique across the whole platform, so this seeds one demo
+organization per database. Asking it for a second fails on the membership
+constraint rather than quietly moving the first company's people.
 """
 
 from __future__ import annotations
@@ -14,24 +36,27 @@ from __future__ import annotations
 import datetime as dt
 
 from django.conf import settings
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import CommandError
 from django.db import transaction
 from django.utils import timezone
+
+from core.management.orgcommand import OrganizationCommand
+from core.models import org_scoped
 
 DEMO_PASSWORD = "demo-password-12345"
 
 
-class Command(BaseCommand):
+class Command(OrganizationCommand):
     help = "Seed a demo organisation, staff and recruitment pipeline (DEBUG only)."
 
     def add_arguments(self, parser):
+        super().add_arguments(parser)
         parser.add_argument(
             "--force",
             action="store_true",
             help="Run even when DEBUG is off. Never use this on a real deployment.",
         )
 
-    @transaction.atomic
     def handle(self, *args, **options):
         if not settings.DEBUG and not options["force"]:
             raise CommandError(
@@ -40,6 +65,19 @@ class Command(BaseCommand):
                 "throwaway environment."
             )
 
+        from apps.organization.models import Organization, OrgStatus
+
+        # A fresh database has no organization at all, and this command has
+        # always made one then. ONLY then: with any organization present, the
+        # base class decides which, and refuses to guess between several.
+        if not Organization.objects.exists():
+            Organization.objects.create(
+                name="Demo Health Dev", slug="demo-health-dev", status=OrgStatus.ACTIVE
+            )
+        return super().handle(*args, **options)
+
+    @transaction.atomic
+    def handle_for_organization(self, organization, *args, **options):
         from apps.accounts.models import Role, User, UserRole
         from apps.employees.models import Employee
         from apps.organization.models import (
@@ -47,32 +85,39 @@ class Command(BaseCommand):
             Designation,
             EmployeeLevel,
             Location,
+            OrganizationMembership,
             OrgSettings,
         )
         from apps.recruitment.models import Application, Candidate, JobOpening, JobStatus
         from apps.workflows.models import HiringWorkflow
         from core.access.catalog import DepartmentKind, Layer
 
-        roles = {role.code: role for role in Role.objects.all()}
+        roles = {role.code: role for role in org_scoped(Role, organization)}
         if not roles:
-            raise CommandError("Run `manage.py seed_roles` first.")
-        if not HiringWorkflow.objects.exists():
-            raise CommandError("Run `manage.py seed_workflows` first.")
-
-        # --- organisation ------------------------------------------------
-        from apps.organization.models import Organization, OrgStatus
-
-        organization = Organization.objects.first()
-        if organization is None:
-            organization = Organization.objects.create(
-                name="Demo Health Dev", slug="demo-health-dev", status=OrgStatus.ACTIVE
+            raise CommandError(
+                f"{organization.slug} has no roles yet. Provisioning an "
+                f"organization seeds them; seed them before running this."
             )
+        if not org_scoped(HiringWorkflow, organization).exists():
+            raise CommandError(
+                f"{organization.slug} has no hiring workflows. Run `manage.py "
+                f"seed_workflows --organization {organization.slug}` first."
+            )
+
         OrgSettings.for_org(organization)
+
+        def join(user) -> None:
+            # Membership is the sole source of tenant identity. Without it a
+            # user holds roles in an organization they do not belong to, and
+            # resolves to nothing at all.
+            OrganizationMembership.objects.get_or_create(
+                organization=organization, user=user
+            )
 
         # `state` is not decoration: Professional Tax is a state levy, and a
         # location without one has no PT jurisdiction, so payroll would silently
         # deduct nothing for everybody working there.
-        location, _ = Location.objects.update_or_create(
+        location, _ = org_scoped(Location, organization).update_or_create(
             code="HO",
             defaults={
                 "name": "Head Office", "city": "Pune", "state": "MH",
@@ -87,7 +132,7 @@ class Command(BaseCommand):
             (DepartmentKind.HR, "Human Resources", "HR"),
             (DepartmentKind.FINANCE, "Finance", "FIN"),
         ]:
-            departments[kind], _ = Department.objects.update_or_create(
+            departments[kind], _ = org_scoped(Department, organization).update_or_create(
                 code=code, defaults={"name": name, "kind": kind}
             )
 
@@ -99,7 +144,7 @@ class Command(BaseCommand):
             (Layer.EXECUTIVE, "Executive", "L4", 40),
             (Layer.STAFF, "Staff", "L5", 50),
         ]:
-            levels[layer], _ = EmployeeLevel.objects.update_or_create(
+            levels[layer], _ = org_scoped(EmployeeLevel, organization).update_or_create(
                 code=code, defaults={"name": name, "layer": layer, "rank": rank}
             )
 
@@ -110,7 +155,7 @@ class Command(BaseCommand):
             ("Office Boy", DepartmentKind.OPERATIONS),
             ("HR Executive", DepartmentKind.HR),
         ]:
-            designations[title], _ = Designation.objects.update_or_create(
+            designations[title], _ = org_scoped(Designation, organization).update_or_create(
                 title=title, department=departments[kind], defaults={}
             )
 
@@ -127,8 +172,11 @@ class Command(BaseCommand):
             if created:
                 user.set_password(DEMO_PASSWORD)
                 user.save(update_fields=["password"])
-            UserRole.objects.get_or_create(user=user, role=roles[role_code])
-            employee, _ = Employee.objects.update_or_create(
+            join(user)
+            org_scoped(UserRole, organization).get_or_create(
+                user=user, role=roles[role_code]
+            )
+            employee, _ = org_scoped(Employee, organization).update_or_create(
                 user=user,
                 defaults={
                     "employee_code": f"EMP{counter[0]:05d}",
@@ -168,7 +216,8 @@ class Command(BaseCommand):
         hire("employee", DepartmentKind.OPERATIONS, "Ekta", "Sharma", Layer.STAFF)
 
         # CEO and Admin are system principals with no Employee record — that is
-        # the approved design, not an omission.
+        # the approved design, not an omission. They still need a membership:
+        # without one they would be principals of no organization at all.
         for code, first in [("ceo", "Chair"), ("admin", "Root")]:
             user, created = User.objects.get_or_create(
                 email=f"{code}@demo.test", defaults={"first_name": first}
@@ -180,13 +229,16 @@ class Command(BaseCommand):
                     user.is_staff = True
                     user.is_superuser = True
                     user.save(update_fields=["is_staff", "is_superuser"])
-            UserRole.objects.get_or_create(user=user, role=roles[code])
+            join(user)
+            org_scoped(UserRole, organization).get_or_create(user=user, role=roles[code])
 
         # --- jobs --------------------------------------------------------
-        therapist_workflow = HiringWorkflow.objects.get(name="Therapist hiring")
-        office_workflow = HiringWorkflow.objects.get(name="Office Boy hiring")
+        workflows = org_scoped(HiringWorkflow, organization)
+        therapist_workflow = workflows.get(name="Therapist hiring")
+        office_workflow = workflows.get(name="Office Boy hiring")
 
-        therapist_job, _ = JobOpening.objects.update_or_create(
+        jobs = org_scoped(JobOpening, organization)
+        therapist_job, _ = jobs.update_or_create(
             title="Therapist",
             defaults={
                 "workflow": therapist_workflow,
@@ -203,7 +255,7 @@ class Command(BaseCommand):
                 "requirements": "Relevant qualification and registration.",
             },
         )
-        office_job, _ = JobOpening.objects.update_or_create(
+        office_job, _ = jobs.update_or_create(
             title="Office Boy",
             defaults={
                 "workflow": office_workflow,
@@ -225,7 +277,7 @@ class Command(BaseCommand):
         from apps.workflows.models import Decision
 
         def candidate_at(job, first, last, email, advance_to: int):
-            candidate, _ = Candidate.objects.update_or_create(
+            candidate, _ = org_scoped(Candidate, organization).update_or_create(
                 email=email,
                 defaults={
                     "first_name": first,
@@ -239,7 +291,7 @@ class Command(BaseCommand):
                     "notice_period_days": 30,
                 },
             )
-            application, created = Application.objects.get_or_create(
+            application, created = org_scoped(Application, organization).get_or_create(
                 candidate=candidate,
                 job_opening=job,
                 defaults={"current_stage": job.workflow.first_stage},
@@ -254,27 +306,32 @@ class Command(BaseCommand):
             )
             slot = timezone.now() + dt.timedelta(days=3, hours=counter[0] % 12)
 
-            if advance_to >= 20:
-                record_decision(
-                    application=application,
-                    actor=staff["recruiter"].user,
-                    decision=Decision.PASS,
-                )
+            # Applications land DIRECTLY in Recruiter verification (order 20):
+            # there is no "received" holding stage and no PASS before the
+            # recruiter's VERIFY. This command still recorded that old PASS,
+            # then had HR verify, so it raised on the very first candidate --
+            # and since nothing ran it, nobody saw that it no longer worked.
             if advance_to >= 30:
                 record_decision(
                     application=application,
-                    actor=staff["hr_manager"].user,
+                    actor=staff["recruiter"].user,
                     decision=Decision.VERIFY,
                 )
-            for index, (order, role_code) in enumerate(zip((30, 40), interview_roles)):
+            for index, (order, role_code) in enumerate(
+                zip((30, 40), interview_roles, strict=True)
+            ):
                 if advance_to <= order:
                     break
                 stage = job.workflow.stages.get(order=order)
+                # Scheduled by the HR Head. Only HR Head and Admin hold
+                # INTERVIEW/CREATE: a recruiter may see every interview but
+                # not book one, and this command still booked them as the
+                # recruiter from before the permission matrix said so.
                 interview = schedule_interview(
                     application=application,
                     stage=stage,
                     interviewer=staff[role_code],
-                    actor=staff["recruiter"].user,
+                    actor=staff["hr_head"].user,
                     scheduled_at=slot + dt.timedelta(hours=index * 2),
                 )
                 answers = {
@@ -320,7 +377,7 @@ class Command(BaseCommand):
 
         self.stdout.write(
             self.style.SUCCESS(
-                "Demo organisation seeded.\n"
+                f"Demo organisation {organization.slug} seeded.\n"
                 f"  Sign in with <role>@demo.test / {DEMO_PASSWORD}\n"
                 "  e.g. hr_head@demo.test, medical_director@demo.test, "
                 "clinic_doctor@demo.test, recruiter@demo.test, ceo@demo.test, admin@demo.test"

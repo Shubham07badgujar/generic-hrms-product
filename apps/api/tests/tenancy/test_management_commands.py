@@ -93,6 +93,165 @@ def test_a_command_accepts_the_only_organization_without_being_told(organization
     call_command("purge_import_staging")
 
 
+def _structure_of(organization):
+    """Every department, location and level one organization owns, by content."""
+    from apps.organization.models import Department, EmployeeLevel, Location
+
+    return {
+        model.__name__: sorted(
+            model.objects.all_orgs()
+            .filter(organization=organization)
+            .values_list("pk", "name", "code")
+        )
+        for model in (Department, Location, EmployeeLevel)
+    }
+
+
+def test_seed_demo_seeds_its_own_organization_and_leaves_another_untouched(
+    org_a, org_b, settings
+):
+    """
+    The demo seeder upserted structure by code, and codes are unique per company.
+
+    That is not hypothetical here: the other organization already owns
+    department `HR`, location `HO` and levels `L2` and `L5` -- the exact codes
+    this command writes. A bare `update_or_create(code="HR")` matches that row,
+    so seeding one company's demo rewrote another company's People department.
+    """
+    from apps.organization.models import Department, OrganizationMembership
+
+    settings.DEBUG = True
+    call_command("seed_workflows", organization=org_a.slug)
+
+    other_before = _structure_of(org_b.organization)
+    assert any(code == "HR" for _, _, code in other_before["Department"]), (
+        "the other organization must own an `HR` department, or this proves nothing"
+    )
+
+    call_command("seed_demo", organization=org_a.slug)
+
+    assert _structure_of(org_b.organization) == other_before, (
+        "seeding one organization's demo changed another organization's structure"
+    )
+
+    # Positive control: the demo really was built, in the right place.
+    seeded_codes = set(
+        Department.objects.all_orgs()
+        .filter(organization=org_a.organization)
+        .values_list("code", flat=True)
+    )
+    assert {"MED", "OPS", "HR", "FIN"} <= seeded_codes
+
+    # And every demo login belongs to that organization. Without a membership
+    # a user resolves to no organization and is denied everything, which is
+    # what this command used to produce.
+    from apps.accounts.models import User
+
+    demo_users = User.objects.filter(email__endswith="@demo.test")
+    assert demo_users.exists()
+    for user in demo_users:
+        assert OrganizationMembership.objects.filter(
+            user=user, organization=org_a.organization
+        ).exists(), f"{user.email} has no membership in {org_a.slug}"
+
+
+DEMO_DOMAIN = "demo-company.example"
+
+
+def test_seed_demo_company_builds_its_own_company_and_touches_no_other(
+    org_a, org_b, settings, tmp_path
+):
+    """
+    This command used to rename an arbitrary organization and hire into another.
+
+    It picked "an organization with an admin, else the first", renamed it, and
+    acted as "the first admin on the platform" -- and `create_employee` places a
+    new hire in the ACTOR's organization. With two customers, one could be
+    renamed and the other could receive the demo staff.
+    """
+    from apps.accounts.models import User
+    from apps.employees.models import Employee
+    from apps.organization.models import Organization, OrganizationMembership
+
+    settings.MEDIA_ROOT = tmp_path
+    other = org_b.organization
+    other_identity = (other.name, other.slug)
+    other_structure = _structure_of(other)
+
+    call_command(
+        "seed_demo_company",
+        organization=org_a.slug,
+        company="Tenancy Demo Co",
+        domain=DEMO_DOMAIN,
+    )
+
+    other.refresh_from_db()
+    assert (other.name, other.slug) == other_identity, "another organization was renamed"
+    assert _structure_of(other) == other_structure, "another organization's structure changed"
+
+    demo_users = User.objects.filter(email__endswith=f"@{DEMO_DOMAIN}")
+    assert demo_users.count() == 18, "one account per role, as the command promises"
+    for user in demo_users:
+        assert OrganizationMembership.objects.filter(
+            user=user, organization=org_a.organization
+        ).exists(), f"{user.email} is not a member of {org_a.slug}"
+
+    demo_employees = Employee.objects.all_orgs().filter(
+        user__email__endswith=f"@{DEMO_DOMAIN}"
+    )
+    assert demo_employees.exists()
+    assert set(demo_employees.values_list("organization_id", flat=True)) == {
+        org_a.organization.pk
+    }, "a demo employee was hired into another organization"
+
+    # The credentials file sits inside the seeded organization's own subtree,
+    # so a second organization's demo cannot overwrite it.
+    renamed = Organization.objects.get(pk=org_a.organization.pk)
+    expected = tmp_path / "organizations" / str(renamed.pk) / "demo-credentials.txt"
+    assert expected.exists()
+
+
+def test_seed_demo_company_remove_takes_only_its_own_members(
+    org_a, org_b, settings, tmp_path
+):
+    """
+    `--remove` selected by email DOMAIN, across every organization.
+
+    An account elsewhere that happened to share the domain went with the demo.
+    Seeded here as an outsider in the other organization on the same domain.
+    """
+    from apps.accounts.models import User
+    from apps.organization.models import OrganizationMembership
+
+    settings.MEDIA_ROOT = tmp_path
+    call_command(
+        "seed_demo_company", organization=org_a.slug, domain=DEMO_DOMAIN
+    )
+    # Seeding renames the organization to the demo company, slug included --
+    # that is the command's contract -- so the slug it answers to changed.
+    org_a.organization.refresh_from_db()
+    seeded_slug = org_a.organization.slug
+
+    outsider = User.objects.create_user(
+        email=f"outsider@{DEMO_DOMAIN}", password="not-a-demo-password-123"
+    )
+    OrganizationMembership.objects.create(
+        organization=org_b.organization, user=outsider
+    )
+
+    call_command(
+        "seed_demo_company", organization=seeded_slug, domain=DEMO_DOMAIN, remove=True
+    )
+
+    assert User.objects.filter(pk=outsider.pk).exists(), (
+        "removing one organization's demo deleted an account in another"
+    )
+    remaining = User.objects.filter(email__endswith=f"@{DEMO_DOMAIN}").exclude(
+        pk=outsider.pk
+    )
+    assert not remaining.exists(), "the seeded organization's demo accounts were not removed"
+
+
 def test_an_unknown_slug_is_refused_by_name(org_a):
     with pytest.raises(CommandError) as refusal:
         call_command("purge_import_staging", organization="no-such-company")

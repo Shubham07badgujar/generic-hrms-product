@@ -22,10 +22,33 @@ Two of the eighteen roles have no Employee record by design: `admin` and `ceo`
 are system principals (`requires_employee=False`). That is the architecture,
 not an omission, and the documentation says so.
 
-    manage.py seed_demo_company                              # the default demo company
-    manage.py seed_demo_company --company "Acme Traders"      # any name you like
-    manage.py seed_demo_company --credentials                 # rewrite the credentials file only
-    manage.py seed_demo_company --remove                      # delete every demo account cleanly
+    manage.py seed_demo_company                              # the only organization
+    manage.py seed_demo_company --organization acme          # a named one
+    manage.py seed_demo_company --company "Acme Traders"      # any display name you like
+    manage.py seed_demo_company --remove                      # delete this org's demo accounts
+
+ONE ORGANIZATION, NAMED
+-----------------------
+Written for a single-company database, this command did real damage in a
+multi-customer one:
+
+  * It chose "an organization that has an admin", else the first organization --
+    and then RENAMED it. With several customers that renames one of them.
+  * It took "the first admin on the platform" as the actor, and `create_employee`
+    places a new hire in the ACTOR's organization, so the demo people could land
+    in a different company from the structure built for them.
+  * It upserted departments, levels and locations by code, and those codes are
+    unique per organization, so it rewrote another company's rows.
+  * `Role.objects.get(code=...)` raised MultipleObjectsReturned outright once a
+    second organization had its roles seeded.
+  * Confirming employment and `--remove` both selected by email DOMAIN across
+    every organization.
+  * Every organization wrote the same credentials file, so one company's demo
+    passwords overwrote another's.
+
+Now it inherits `OrganizationCommand`, scopes every lookup to that organization,
+acts as that organization's own admin, confines removal to that organization's
+members, and keeps the credentials file inside that organization's media subtree.
 """
 
 from __future__ import annotations
@@ -35,21 +58,37 @@ import secrets
 import string
 from pathlib import Path
 
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import CommandError
 from django.db import transaction
 
 from core.access.catalog import DepartmentKind, Layer
+from core.management.orgcommand import OrganizationCommand
+from core.models import org_scoped
 
 #: Unmistakably not a real person's address (RFC 2606 reserves .example),
 #: and trivially greppable. Overridable with --domain.
 DEFAULT_EMAIL_DOMAIN = "demo-healthcare.example"
 DEFAULT_COMPANY = "Demo Healthcare Pvt Ltd"
 
-#: Written under MEDIA_ROOT so it lands wherever this deployment keeps files.
-def _credentials_path() -> Path:
+
+def _credentials_path(organization) -> Path:
+    """
+    Under THIS organization's media subtree.
+
+    It was one file for the whole deployment, so seeding a second organization's
+    demo overwrote the first one's passwords. Every other tenant file already
+    lives under `organizations/<uuid>/`, and this one belongs there for the same
+    reason.
+    """
     from django.conf import settings
 
-    return Path(settings.MEDIA_ROOT) / "demo-credentials.txt"
+    return (
+        Path(settings.MEDIA_ROOT)
+        / "organizations"
+        / str(organization.pk)
+        / "demo-credentials.txt"
+    )
+
 
 LEVELS = [
     ("L1", "Leadership", Layer.LEADERSHIP, 10),
@@ -147,15 +186,14 @@ def make_password() -> str:
             return candidate
 
 
-class Command(BaseCommand):
+class Command(OrganizationCommand):
     help = ("Seed a fictional demo company with one account per template role "
             "(unique strong passwords). Safe starter data only - no real people.")
 
     def add_arguments(self, parser):
+        super().add_arguments(parser)
         parser.add_argument("--remove", action="store_true",
-                            help="Delete every demo account and its employee record.")
-        parser.add_argument("--credentials", action="store_true",
-                            help="Rewrite the credentials file for existing accounts.")
+                            help="Delete this organization's demo accounts and their employee records.")
         parser.add_argument("--company", default=DEFAULT_COMPANY,
                             help="Display name for the demo organisation.")
         parser.add_argument("--legal-name", default="",
@@ -163,7 +201,8 @@ class Command(BaseCommand):
         parser.add_argument("--domain", default=DEFAULT_EMAIL_DOMAIN,
                             help="Email domain for the demo accounts.")
 
-    def handle(self, *args, **options):
+    def handle_for_organization(self, organization, *args, **options):
+        self.organization = organization
         self.company = options.get("company") or DEFAULT_COMPANY
         self.legal_name = options.get("legal_name") or f"{self.company}."
         self.domain = options.get("domain") or DEFAULT_EMAIL_DOMAIN
@@ -182,23 +221,29 @@ class Command(BaseCommand):
             OrganizationMembership, OrgSettings,
         )
 
-        # --- organisation ------------------------------------------------
-        # The demo company IS the admin's organization, not a second one beside
-        # it. Every employee below is created through `create_employee` with the
-        # admin as actor, and that service places the new hire in the ACTOR's
-        # organization -- so seeding a separate one here would put the company's
-        # name on one row and all of its people in another.
-        actor_org = Organization.objects.filter(
-            memberships__user__user_roles__role__code="admin",
-            memberships__is_active=True,
-        ).first()
-        organization = actor_org or Organization.objects.first()
-        if organization is None:
-            raise CommandError(
-                "No organization exists. Run bootstrap_admin first — it creates "
-                "the founding Admin and the organization they administer."
-            )
+        organization = self.organization
 
+        # --- the acting admin --------------------------------------------
+        # THIS organization's admin, and resolved first. `create_employee`
+        # places a new hire in the actor's organization, so an admin from any
+        # other company would put every demo person there instead -- which is
+        # what "the first admin on the platform" did. Using a real admin also
+        # means `assert_creator_may_grant` runs rather than being sidestepped.
+        admin_grant = (
+            org_scoped(UserRole, organization)
+            .filter(role__code="admin", is_active=True)
+            .select_related("user")
+            .first()
+        )
+        if admin_grant is None:
+            raise CommandError(
+                f"{organization.slug} has no admin account. Run bootstrap_admin, "
+                f"or provision the organization -- this command deliberately will "
+                f"not mint its own authority."
+            )
+        actor = admin_grant.user
+
+        # --- organisation ------------------------------------------------
         from django.utils.text import slugify
 
         organization.name = self.company
@@ -219,7 +264,7 @@ class Command(BaseCommand):
 
         # `state` is not cosmetic: Professional Tax is a state levy, and a
         # location without one means PT silently computes to nothing.
-        location, _ = Location.objects.update_or_create(
+        location, _ = org_scoped(Location, organization).update_or_create(
             code="HO",
             defaults={"name": "Head Office", "city": "Pune", "state": "MH",
                       "is_head_office": True},
@@ -227,20 +272,20 @@ class Command(BaseCommand):
 
         levels = {}
         for code, name, layer, rank in LEVELS:
-            levels[layer], _ = EmployeeLevel.objects.update_or_create(
+            levels[layer], _ = org_scoped(EmployeeLevel, organization).update_or_create(
                 code=code, defaults={"name": name, "layer": layer, "rank": rank},
             )
 
         departments = {}
         for kind, name, code in DEPARTMENTS:
-            departments[kind], _ = Department.objects.update_or_create(
+            departments[kind], _ = org_scoped(Department, organization).update_or_create(
                 code=code, defaults={"name": name, "kind": kind},
             )
 
         designations = {}
         for kind, titles in DESIGNATIONS.items():
             for title in titles:
-                designations[title], _ = Designation.objects.update_or_create(
+                designations[title], _ = org_scoped(Designation, organization).update_or_create(
                     title=title, department=departments[kind], defaults={},
                 )
 
@@ -249,25 +294,15 @@ class Command(BaseCommand):
             f"{len(designations)} designations, 1 location"
         )
 
-        # --- the acting admin --------------------------------------------
-        # Every employee is created BY somebody, and that somebody must hold
-        # the authority to grant the role. Using the real admin means
-        # `assert_creator_may_grant` runs for real rather than being sidestepped.
-        actor = User.objects.filter(user_roles__role__code="admin").first()
-        if actor is None:
-            raise CommandError(
-                "No admin account exists. Run bootstrap_admin first — this "
-                "command deliberately will not mint its own authority."
-            )
-
         credentials = []
         created = {}
         joined = dt.date.today() - dt.timedelta(days=400)
+        roles = org_scoped(Role, organization)
 
         # --- system principals -------------------------------------------
         for role_code, first, last in SYSTEM_PEOPLE:
             email = f"{role_code}@{self.domain}"
-            role = Role.objects.get(code=role_code)
+            role = roles.get(code=role_code)
             user = User.objects.filter(email=email).first()
             password = make_password()
             if user is None:
@@ -277,7 +312,9 @@ class Command(BaseCommand):
             else:
                 user.set_password(password)
                 user.save(update_fields=["password"])
-            UserRole.objects.get_or_create(user=user, role=role, defaults={"assigned_by": actor})
+            org_scoped(UserRole, organization).get_or_create(
+                user=user, role=role, defaults={"assigned_by": actor}
+            )
             # These two are the only accounts this command builds WITHOUT going
             # through `create_employee`, because admin and ceo are system
             # principals with no Employee record -- so they are also the only
@@ -353,40 +390,54 @@ class Command(BaseCommand):
         # Straight to CONFIRMED so scope tests are not distorted by probation
         # states. Set directly and only here, in a seeding command — the
         # probation service remains the only path in the application itself.
+        #
+        # Scoped to THIS organization as well as the demo domain. Selecting by
+        # domain alone confirmed every matching employee in every organization.
         from apps.employees.models import EmployeeStatus, ProbationStatus
 
-        Employee.objects.filter(
+        org_scoped(Employee, organization).filter(
             user__email__endswith=f"@{self.domain}"
         ).update(status=EmployeeStatus.CONFIRMED, probation_status=ProbationStatus.CONFIRMED)
 
         self._write_credentials(credentials)
         self.stdout.write(self.style.SUCCESS(
             f"\nSeeded {len(credentials)} demo accounts. "
-            f"Credentials: {_credentials_path()}"
+            f"Credentials: {_credentials_path(organization)}"
         ))
 
     # ---------------------------------------------------------------- remove
     @transaction.atomic
     def _remove(self):
         from apps.accounts.models import User
+        from apps.employees.models import Employee
 
-        users = User.objects.filter(email__endswith=f"@{self.domain}")
+        organization = self.organization
+
+        # Members of THIS organization on the demo domain, and nobody else.
+        # Selecting by domain alone deleted any matching account in any
+        # organization -- a real employee somewhere else whose address happened
+        # to share the domain would have gone with the demo.
+        users = User.objects.filter(
+            email__endswith=f"@{self.domain}",
+            memberships__organization=organization,
+        ).distinct()
         count = users.count()
         if not count:
-            self.stdout.write("No demo accounts found.")
+            self.stdout.write(f"No demo accounts found in {organization.slug}.")
             return
 
         # Employee rows are PROTECTed from several directions, so delete the
         # employee first and let the user follow.
-        from apps.employees.models import Employee
+        org_scoped(Employee, organization).filter(user__in=users).delete()
+        User.objects.filter(pk__in=list(users.values_list("pk", flat=True))).delete()
 
-        Employee.objects.filter(user__in=users).delete()
-        users.delete()
+        path = _credentials_path(organization)
+        if path.exists():
+            path.unlink()
 
-        if _credentials_path().exists():
-            _credentials_path().unlink()
-
-        self.stdout.write(self.style.SUCCESS(f"Removed {count} demo accounts."))
+        self.stdout.write(self.style.SUCCESS(
+            f"Removed {count} demo accounts from {organization.slug}."
+        ))
 
     # ----------------------------------------------------------- credentials
     def _write_credentials(self, credentials):
@@ -396,7 +447,7 @@ class Command(BaseCommand):
             "",
             "CONFIDENTIAL once the instance is reachable from the internet.",
             "Remove the demo before the instance holds real employee data:",
-            "    manage.py seed_demo_company --remove",
+            f"    manage.py seed_demo_company --organization {self.organization.slug} --remove",
             "",
             f"{'ROLE':<20} {'EMAIL':<44} PASSWORD",
             "-" * 90,
@@ -407,6 +458,7 @@ class Command(BaseCommand):
 
         lines += ["", f"Sign in at {settings.FRONTEND_URL.rstrip('/')}/login", ""]
 
-        _credentials_path().parent.mkdir(parents=True, exist_ok=True)
-        _credentials_path().write_text("\n".join(lines), encoding="utf-8")
-        _credentials_path().chmod(0o600)
+        path = _credentials_path(self.organization)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines), encoding="utf-8")
+        path.chmod(0o600)
