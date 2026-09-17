@@ -75,7 +75,10 @@ class PublicApplyView(APIView):
 
     def get(self, request, token: str):
         job = public_intake.job_for_token(token)
-        return Response(public_intake.public_job_summary(job))
+        # Bound for the read too: the summary reads the job's form fields
+        # and structure, which are organization-owned like everything else.
+        with acting_as(None, organization=job.organization_id):
+            return Response(public_intake.public_job_summary(job))
 
     def post(self, request, token: str):
         job = public_intake.job_for_token(token)
@@ -138,7 +141,10 @@ class PublicSlotView(APIView):
         from apps.recruitment.services import slots
 
         invite = slots.invite_for_token(token)
-        return Response(slots.public_invite_summary(invite))
+        # Bound for the read too: the summary checks which times other
+        # candidates of the same round have taken.
+        with acting_as(None, organization=invite.organization_id):
+            return Response(slots.public_invite_summary(invite))
 
     def post(self, request, token: str):
         from apps.recruitment.services import slots

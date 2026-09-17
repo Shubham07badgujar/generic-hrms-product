@@ -12,11 +12,11 @@ tells you which ones and what can be done about them.
 
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.db.models import Count
 
 from apps.recruitment.models import Candidate
+from core.management.orgcommand import OrganizationCommand
 from core.phone import to_e164_in
 
 
@@ -41,17 +41,18 @@ def _is_empty(candidate) -> bool:
     )
 
 
-class Command(BaseCommand):
+class Command(OrganizationCommand):
     help = "Report candidate identity problems that block the 0009 constraints."
 
     def add_arguments(self, parser):
+        super().add_arguments(parser)
         parser.add_argument(
             "--apply",
             action="store_true",
             help="Retire duplicates that carry no applications, offers or files.",
         )
 
-    def handle(self, *args, **options):
+    def handle_for_organization(self, organization, *args, **options):
         apply = options["apply"]
         problems = 0
 

@@ -43,6 +43,9 @@ COMMANDS = [
         },
     ),
     ("essl_check", {}),
+    ("audit_candidate_identity", {}),
+    ("purge_candidates", {}),
+    ("repair_application_stages", {}),
 ]
 
 
@@ -257,3 +260,204 @@ def test_an_unknown_slug_is_refused_by_name(org_a):
         call_command("purge_import_staging", organization="no-such-company")
 
     assert "no-such-company" in str(refusal.value)
+
+
+# ------------------------------------------------------------ recruitment
+#
+# These three are the destructive half of the operator interface: one
+# anonymises personal data, one moves candidates through a hiring pipeline, and
+# one retires candidate rows. Running without error proves little about them,
+# so each is run with --apply against organization A while organization B holds
+# a row that qualifies for exactly the same treatment -- and B's row must come
+# out untouched. Each also asserts that A's row WAS changed, because a command
+# that had stopped doing anything would pass the isolation half on its own.
+
+
+def _acting_for(world):
+    from core.middleware import acting_as
+
+    return acting_as(None, organization=world.organization)
+
+
+def test_purge_candidates_anonymises_only_the_named_organizations_candidates(
+    org_a, org_b, settings
+):
+    from django.utils import timezone
+
+    from apps.recruitment.models import Candidate, LegalBasis
+
+    settings.CANDIDATE_UNAFFIRMED_RETENTION_DAYS = 90
+    due = {}
+    for world in (org_a, org_b):
+        with _acting_for(world):
+            candidate = Candidate.objects.create(
+                first_name="Overdue",
+                last_name="Import",
+                email=f"overdue@{world.slug}.example",
+                source="workindia",
+                consent_given=False,
+                legal_basis=LegalBasis.VOLUNTARILY_PROVIDED,
+                notice_due_at=timezone.now(),
+            )
+        Candidate.objects.all_orgs().filter(pk=candidate.pk).update(
+            created_at=timezone.now() - dt.timedelta(days=120)
+        )
+        due[world.slug] = candidate.pk
+
+    call_command("purge_candidates", organization=org_a.slug, apply=True)
+
+    names = dict(
+        Candidate.objects.all_orgs()
+        .filter(pk__in=due.values())
+        .values_list("pk", "first_name")
+    )
+    assert names[due[org_a.slug]] == "Redacted", "the named organization's overdue candidate was not purged"
+    assert names[due[org_b.slug]] == "Overdue", (
+        "purging one organization anonymised another organization's candidate"
+    )
+
+
+def test_repair_application_stages_moves_only_the_named_organizations_applications(
+    org_a, org_b
+):
+    from apps.recruitment.models import Application, ApplicationEvent, ApplicationStatus
+    from apps.workflows.models import StageKind, WorkflowStage
+
+    for world in (org_a, org_b):
+        with _acting_for(world):
+            WorkflowStage.objects.create(
+                workflow=world.rows["hiring_workflow"],
+                name="Not selected",
+                order=90,
+                kind=StageKind.TERMINAL,
+                is_terminal=True,
+                is_won=False,
+            )
+        # Closed status at a live stage: the incoherent shape the command repairs.
+        Application.objects.all_orgs().filter(pk=world.rows["application"].pk).update(
+            status=ApplicationStatus.REJECTED
+        )
+
+    call_command("repair_application_stages", organization=org_a.slug, apply=True)
+
+    def stage_of(world):
+        return (
+            Application.objects.all_orgs()
+            .select_related("current_stage")
+            .get(pk=world.rows["application"].pk)
+            .current_stage
+        )
+
+    assert stage_of(org_a).is_terminal, "the named organization's application was not repaired"
+    assert stage_of(org_b).pk == org_b.rows["workflow_stage"].pk, (
+        "repairing one organization moved another organization's candidate"
+    )
+    assert not ApplicationEvent.objects.all_orgs().filter(
+        application_id=org_b.rows["application"].pk,
+        actor_label="system · stage repair",
+    ).exists(), "a repair event was written into another organization's history"
+
+
+#: Everything `google_forms_check` prints, reporting a working integration, so
+#: the `--create-for` half can be reached without Google credentials.
+READY_REPORT = {
+    "credentials": True,
+    "kind": "service_account",
+    "client_email": "forms@example.test",
+    "token": True,
+    "drive_api": True,
+    "forms_api": True,
+    "file_upload_question": False,
+    "folder_id": "folder",
+    "share_with": "",
+    "errors": {},
+}
+
+
+@pytest.fixture
+def forms_ready(monkeypatch):
+    """A ready integration, recording which jobs a form was created for."""
+    from apps.recruitment.services import external_forms
+
+    created = []
+    monkeypatch.setattr(external_forms, "diagnose", lambda: READY_REPORT)
+    monkeypatch.setattr(
+        external_forms, "create_external_form", lambda job: created.append(job.pk)
+    )
+    return created
+
+
+def test_google_forms_check_will_not_build_a_form_for_another_organizations_job(
+    org_a, org_b, forms_ready
+):
+    """
+    `--create-for` took a bare job id and fetched it from every organization.
+
+    Refused as "not found" -- the same answer as a job that does not exist, so
+    the command does not confirm that the id belongs to someone.
+    """
+    other_job = org_b.rows["job_opening"]
+
+    with pytest.raises(CommandError) as refusal:
+        call_command(
+            "google_forms_check", organization=org_a.slug, create_for=str(other_job.pk)
+        )
+
+    assert "No job opening" in str(refusal.value)
+    assert org_b.slug not in str(refusal.value)
+    assert forms_ready == [], "a form was built for another organization's job"
+
+    # Positive control: the same command, with the organization's own job.
+    own_job = org_a.rows["job_opening"]
+    call_command(
+        "google_forms_check", organization=org_a.slug, create_for=str(own_job.pk)
+    )
+    assert forms_ready == [own_job.pk]
+
+
+def test_google_forms_check_names_an_organization_only_for_the_job_half(
+    org_a, org_b, forms_ready
+):
+    """
+    The credential check is about the deployment and needs no organization.
+    Building a job's form is about one organization, and refuses to guess.
+    """
+    call_command("google_forms_check")  # must not demand a slug
+
+    with pytest.raises(CommandError) as refusal:
+        call_command("google_forms_check", create_for=str(org_a.rows["job_opening"].pk))
+
+    assert "organization" in str(refusal.value).lower()
+    assert forms_ready == []
+
+
+def test_seed_all_keeps_its_organization_bound_through_every_step(
+    organization, settings, tmp_path
+):
+    """
+    `seed_all` bound the organization for its configuration seeds and nothing
+    after them.
+
+    People and transactional data were then written with no organization
+    bound, which raised `OrgContextMissing` on the first attendance row once
+    that app filtered at the manager. The command is the documented way to get
+    a hand-testable system, and nothing ran it.
+
+    Single-organization on purpose: the command refuses to choose between
+    several, so this is the only shape in which it does any work.
+    """
+    from apps.attendance.models import AttendanceRecord
+    from apps.recruitment.models import Application, JobOpening
+
+    settings.MEDIA_ROOT = tmp_path
+
+    call_command("seed_all", force=True, domain=DEMO_DOMAIN)
+
+    job = JobOpening.objects.all_orgs().get(title="Front Desk Executive")
+    assert job.organization_id == organization.pk
+    assert Application.objects.all_orgs().filter(
+        job_opening=job, organization=organization
+    ).exists(), "the recruitment step wrote no applications"
+    assert AttendanceRecord.objects.all_orgs().filter(
+        organization=organization, employee__user__email__endswith=f"@{DEMO_DOMAIN}"
+    ).exists(), "the attendance step wrote no records"

@@ -15,25 +15,25 @@ a bulk import without waiting for the nightly beat.
 
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand
-
 from apps.recruitment.services.retention import (
     candidates_due_for_purge,
     purge_expired_candidates,
 )
+from core.management.orgcommand import OrganizationCommand
 
 
-class Command(BaseCommand):
+class Command(OrganizationCommand):
     help = "Anonymise candidate personal data past its retention period."
 
     def add_arguments(self, parser):
+        super().add_arguments(parser)
         parser.add_argument(
             "--apply",
             action="store_true",
             help="Actually anonymise. Without this, nothing is written.",
         )
 
-    def handle(self, *args, **options):
+    def handle_for_organization(self, organization, *args, **options):
         apply = options["apply"]
 
         due = candidates_due_for_purge()

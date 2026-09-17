@@ -90,9 +90,20 @@ class PublicApplyResult:
 
 
 def job_for_token(token: str) -> JobOpening:
-    """The one job this token names, or a 404-shaped refusal."""
+    """
+    The one job this token names, or a 404-shaped refusal.
+
+    Looked up across EVERY organization, deliberately. This is the one place
+    the organization is not yet known: the caller is anonymous, so there is no
+    principal to derive it from, and the token is what carries it. The token
+    is a capability -- globally unique (`GLOBALLY_UNIQUE` in
+    `core/access/tenancy.py`) and unguessable -- so resolving it platform-wide
+    reveals nothing a holder of the link does not already have. Everything
+    after this runs with the job's own organization bound.
+    """
     job = (
-        JobOpening.objects.select_related("department", "location", "workflow", "designation")
+        JobOpening.objects.all_orgs()
+        .select_related("department", "location", "workflow", "designation")
         .filter(application_token=token, is_active=True)
         .first()
     )

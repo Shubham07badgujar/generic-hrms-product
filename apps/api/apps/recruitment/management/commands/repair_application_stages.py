@@ -15,21 +15,23 @@ anybody should run to "see what happens".
 
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from core.management.orgcommand import OrganizationCommand
 
-class Command(BaseCommand):
+
+class Command(OrganizationCommand):
     help = "Realign applications whose status and current_stage disagree."
 
     def add_arguments(self, parser):
+        super().add_arguments(parser)
         parser.add_argument(
             "--apply",
             action="store_true",
             help="Write the changes. Without this the command only reports.",
         )
 
-    def handle(self, *args, **options):
+    def handle_for_organization(self, organization, *args, **options):
         from apps.recruitment.models import Application, ApplicationEvent
         from apps.recruitment.services.engine import (
             CLOSED_STATUSES,

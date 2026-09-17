@@ -83,11 +83,27 @@ class Command(BaseCommand):
         self.domain = options["domain"]
         self.company = options["company"]
 
+        # The organization comes FIRST and stays bound for the whole run.
+        #
+        # This command used to bind it for the configuration seeds alone, and
+        # then create people and transactional data with nothing bound. That
+        # worked while no manager filtered; once attendance, leave and assets
+        # did, the third step raised `OrgContextMissing` on its first row --
+        # undetected, because no test drove this command.
+        organization = self._ensure_organization(options)
+        with acting_as(None, organization=organization):
+            self._build(organization, options)
+
+    def _build(self, organization, options):
         from apps.employees.models import Employee
 
         if options["reset"]:
             self.stdout.write(self.style.WARNING("Removing the existing demo…"))
-            call_command("seed_demo_company", "--remove", "--domain", self.domain)
+            call_command(
+                "seed_demo_company", "--remove",
+                "--organization", organization.slug,
+                "--domain", self.domain,
+            )
 
         outsiders = (
             Employee.objects.filter(is_active=True)
@@ -102,38 +118,34 @@ class Command(BaseCommand):
             )
 
         self._banner("1/3  Configuration")
-        # The organization has to exist and be BOUND before any of this runs.
-        # Org-owned rows take their organization from the acting context, so
-        # without it the first `LeaveType` raises `OrgContextMissing` -- which
-        # is exactly what this command did after the tenancy conversion, on
-        # every run, undetected because no test drives a seed command.
-        organization = self._ensure_organization(options)
         call_command("seed_statutory", verbosity=0)
         self.stdout.write(f"  {'statutory':<20} rate sets (drafts, for you to certify)")
-        with acting_as(None, organization=organization):
-            for _key, what, seed in CONFIG_SEEDS:
-                self.stdout.write(f"  {_key:<20} {what}")
-                seed(organization)
+        for _key, what, seed in CONFIG_SEEDS:
+            self.stdout.write(f"  {_key:<20} {what}")
+            seed(organization)
 
         self._banner("2/3  Company and people")
         self._ensure_bootstrap_admin()
         call_command(
             "seed_demo_company",
+            "--organization", organization.slug,
             "--company", self.company,
             "--legal-name", options["legal_name"] or f"{self.company}.",
             "--domain", self.domain,
             verbosity=0,
         )
+        # Seeding renames the organization to the demo company, slug included.
+        organization.refresh_from_db()
         people = self._people()
         self.stdout.write(f"  {len(people)} accounts, one per role")
 
         if options["skip_transactions"]:
             self.stdout.write(self.style.WARNING("\nSkipping transactional data."))
-            return self._finish()
+            return self._finish(organization)
 
         self._banner("3/3  Data to look at")
         self._seed_transactions(people)
-        self._finish()
+        self._finish(organization)
 
     # ---------------------------------------------------------------- pieces
     def _ensure_organization(self, options):
@@ -493,10 +505,14 @@ class Command(BaseCommand):
         )
 
     # ---------------------------------------------------------------- close
-    def _finish(self):
-        from pathlib import Path
+    def _finish(self, organization):
+        from apps.organization.management.commands.seed_demo_company import (
+            _credentials_path,
+        )
 
-        creds = Path(settings.MEDIA_ROOT) / "demo-credentials.txt"
+        # Where seed_demo_company actually wrote it: inside the organization's
+        # own subtree, not the MEDIA_ROOT top level this used to point at.
+        creds = _credentials_path(organization)
         url = settings.FRONTEND_URL.rstrip("/")
         self.stdout.write(self.style.SUCCESS(f"\n{self.company} is ready.\n"))
         self.stdout.write(f"  Sign in at   {url}/login")

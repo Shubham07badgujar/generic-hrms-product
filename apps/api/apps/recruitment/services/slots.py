@@ -303,8 +303,16 @@ def invite_count_for(application, stage) -> int:
 
 
 def invite_for_token(token: str) -> InterviewSlotInvite:
+    """
+    The one invite this token names, looked up across every organization.
+
+    Same reasoning as `public_intake.job_for_token`: the caller is anonymous,
+    the token is a globally unique capability, and it is the only thing that
+    knows which organization the invite belongs to.
+    """
     invite = (
-        InterviewSlotInvite.objects.select_related(
+        InterviewSlotInvite.objects.all_orgs()
+        .select_related(
             "application__job_opening", "stage", "candidate"
         )
         .filter(token=token, is_active=True)
