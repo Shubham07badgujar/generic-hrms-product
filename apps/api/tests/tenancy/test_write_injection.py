@@ -164,3 +164,47 @@ def test_the_same_payload_succeeds_with_its_own_organizations_rows(org_a, api_fo
     created = Employee.objects.all_orgs().get(first_name="Injected")
     assert created.organization_id == org_a.organization.pk
     assert dt.date(2025, 1, 6) == created.date_of_joining
+
+
+def test_a_payroll_run_cannot_be_scoped_to_another_organizations_location(
+    org_a, org_b, api_for
+):
+    """
+    `location` on run creation is read by hand in the view, not by a serializer
+    field, so the relation scoping mixin never saw it.
+
+    Before the organization app filtered at the manager it resolved another
+    company's location and stored it on A's run. After, the lookup finds
+    nothing -- and `None` means an ORGANIZATION-WIDE run, so an unchecked miss
+    would silently widen a location run to every employee. Both are wrong; the
+    only right answer is a refusal naming the field.
+    """
+    from apps.payroll.models import PayrollRun
+
+    client = api_for(org_a.admin)
+
+    foreign = client.post(
+        "/api/v1/payroll/runs/",
+        {"period_year": 2025, "period_month": 8, "location": str(org_b.location.pk)},
+        format="json",
+    )
+
+    assert foreign.status_code == 400, (
+        f"expected refusal, got {foreign.status_code}: {foreign.content[:300]}"
+    )
+    assert "location" in foreign.content.decode().lower()
+    assert not PayrollRun.objects.all_orgs().filter(
+        organization=org_a.organization, period_year=2025, period_month=8
+    ).exists(), "a run was created despite the refusal"
+
+    # Positive control: the same request with A's own location.
+    own = client.post(
+        "/api/v1/payroll/runs/",
+        {"period_year": 2025, "period_month": 8, "location": str(org_a.location.pk)},
+        format="json",
+    )
+    assert own.status_code == 201, (
+        f"A cannot create a run for its own location: {own.status_code} {own.content[:300]}"
+    )
+    run = PayrollRun.objects.all_orgs().get(pk=own.json()["id"])
+    assert run.location_id == org_a.location.pk

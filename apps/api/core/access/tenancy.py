@@ -108,6 +108,7 @@ STRICT_TENANT_APPS: frozenset[str] = frozenset({
     "notifications",
     "offboarding",
     "onboarding",
+    "organization",
     "recruitment",
     "workflows",
 })

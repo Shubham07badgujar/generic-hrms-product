@@ -206,8 +206,17 @@ def platform_admin_context(user) -> AccessContext:
     return AccessContext(user_id=user.pk, is_platform_admin=True)
 
 
-def _department_closure(department_id) -> frozenset:
-    """A department plus all of its descendants. Cycle-safe."""
+def _department_closure(department_id, *, organization_id) -> frozenset:
+    """
+    A department plus all of its descendants. Cycle-safe.
+
+    The organization is passed, not read from context. This runs INSIDE
+    `resolve_context`, which is what produces the organization to bind -- so
+    reading the bound one here would be circular, and on every path that
+    resolves before binding (`force_authenticate`, a service calling
+    `get_context(user)` outside a request) there is nothing bound yet. The
+    principal's own membership already answered the question; use that.
+    """
     if department_id is None:
         return frozenset()
 
@@ -217,8 +226,10 @@ def _department_closure(department_id) -> frozenset:
     queue = deque([department_id])
     while queue:
         current = queue.popleft()
-        children = Department.objects.filter(
-            parent_department_id=current, is_active=True
+        children = Department.objects.all_orgs().filter(
+            organization_id=organization_id,
+            parent_department_id=current,
+            is_active=True,
         ).values_list("pk", flat=True)
         for child in children:
             if child not in visited:
@@ -373,7 +384,9 @@ def resolve_context(user) -> AccessContext:
         can_manage_users=can_manage_users,
         employee_id=employee_id,
         department_id=department_id,
-        department_ids=_department_closure(department_id),
+        department_ids=_department_closure(
+            department_id, organization_id=organization_id
+        ),
         grants=grants,
         dashboard_key=dashboard_key,
     )

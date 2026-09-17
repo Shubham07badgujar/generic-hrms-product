@@ -433,7 +433,20 @@ class PayrollRunViewSet(ScopedModelViewSet):
         from apps.organization.models import Location
 
         location_id = request.data.get("location")
-        return Location.objects.filter(pk=location_id).first() if location_id else None
+        if not location_id:
+            return None
+        # An id that does not resolve is REFUSED, never read as "no location".
+        # `None` means an organization-wide run, so treating an unknown id --
+        # including another organization's, which the tenant manager does not
+        # return -- as None would silently widen a location-scoped run to every
+        # employee. Same answer for "not yours" and "does not exist".
+        try:
+            location = Location.objects.filter(pk=location_id).first()
+        except DjangoValidationError:
+            location = None
+        if location is None:
+            raise DRFValidationError({"location": "No such location."})
+        return location
 
     @action(detail=True, methods=["post"])
     def process(self, request, pk=None):

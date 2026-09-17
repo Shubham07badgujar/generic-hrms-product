@@ -18,6 +18,7 @@ from apps.organization.models import (
 from core.api.serializers import OrgScopedUniqueMixin
 
 from core.api.serializers import ScopedRelationsMixin
+from core.querysets import deferred
 
 class DepartmentSerializer(ScopedRelationsMixin, OrgScopedUniqueMixin, serializers.ModelSerializer):
     head_employee_name = serializers.CharField(
@@ -39,9 +40,7 @@ class DesignationSerializer(ScopedRelationsMixin, OrgScopedUniqueMixin, serializ
     #: Optional in the DATABASE (null=True) but the model omits blank=True, so
     #: DRF would demand it on create. A designation genuinely may be org-wide.
     department = serializers.PrimaryKeyRelatedField(
-        queryset=Designation._meta.get_field("department").related_model.objects.filter(
-            is_active=True
-        ),
+        queryset=deferred(Department).filter(is_active=True),
         required=False,
         allow_null=True,
         default=None,

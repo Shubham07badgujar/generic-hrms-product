@@ -35,19 +35,23 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 def _root_model(call: ast.Call) -> str | None:
-    """The model name if this call chain is rooted at `<Name>.objects.<method>`."""
+    """
+    What this call chain's manager hangs off, if it is rooted at `.objects`.
+
+    Any root, not only a bare name. `DesignationSerializer` reached its model
+    through `Designation._meta.get_field("department").related_model.objects`,
+    which a `<Name>.objects` pattern cannot see -- and it crashed URL loading
+    the moment the organization app filtered at the manager.
+    """
     cur: ast.AST = call
     while True:
         if isinstance(cur, ast.Call):
             cur = cur.func
         elif isinstance(cur, ast.Attribute):
             value = cur.value
-            if (
-                isinstance(value, ast.Attribute)
-                and value.attr == "objects"
-                and isinstance(value.value, ast.Name)
-            ):
-                return value.value.id
+            if isinstance(value, ast.Attribute) and value.attr == "objects":
+                owner = value.value
+                return owner.id if isinstance(owner, ast.Name) else ast.unparse(owner)
             cur = value
         else:
             return None
@@ -165,7 +169,13 @@ def test_the_scanner_catches_a_violation_when_one_exists():
         "    queryset = deferred(Asset).select_related('category')\n"
     )
 
+    reached_through_an_expression = (
+        "class S:\n"
+        "    field = F(queryset=M._meta.get_field('d').related_model.objects.filter(a=1))\n"
+    )
+
     assert _scan_source(offending, "probe") == [("probe", 2, "Asset")]
+    assert [hit[1] for hit in _scan_source(reached_through_an_expression, "probe")] == [2]
     assert {hit[2] for hit in _scan_source(nested, "probe")} == {"Asset", "Other"}
     assert _scan_source(inside_a_function, "probe") == []
     # `.all()` is not a recorded method, so this evaluates at import exactly
