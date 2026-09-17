@@ -180,11 +180,11 @@ def test_responses_flow_into_the_same_pipeline_and_are_idempotent(
     assert app.candidate_notifications.count() == 1
 
 
-def test_the_beat_task_is_a_noop_without_credentials(settings):
-    from apps.recruitment.tasks import sync_google_form_responses_task
+def test_the_beat_task_is_a_noop_without_credentials(settings, organization):
+    from apps.recruitment.tasks import sync_google_form_responses_for_organization
 
     settings.GOOGLE_FORMS_CREDENTIALS_FILE = ""
-    assert sync_google_form_responses_task() == {"skipped": True}
+    assert sync_google_form_responses_for_organization(organization.pk) == {"skipped": True}
 
 
 def test_publish_over_http_records_the_provider(therapist_job, staff, settings):

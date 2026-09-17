@@ -141,9 +141,16 @@ def test_the_beat_schedule_is_registered():
     assert task.interval.every == 5
 
 
-def test_the_task_noops_while_disabled(settings):
-    from apps.attendance.tasks import sync_essl
+def test_the_task_noops_while_disabled(settings, organization):
+    """
+    The per-ORGANIZATION task is what carries the behaviour now.
+
+    `attendance.sync_essl` is the dispatcher the beat row names; it queues one
+    of these per running customer and does no attendance work itself.
+    """
+    from apps.attendance.tasks import sync_essl_for_organization
 
     settings.ESSL_INTEGRATION_ENABLED = False
-    assert sync_essl() == {"skipped": True}
+    result = sync_essl_for_organization(organization.pk)
+    assert result["skipped"] is True
     assert EsslSyncRun.objects.count() == 0

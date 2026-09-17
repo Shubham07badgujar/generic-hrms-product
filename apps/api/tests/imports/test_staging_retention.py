@@ -206,12 +206,13 @@ def test_the_fingerprint_goes_too(attested_batch, workindia_xlsx):
     assert ImportRow.objects.filter(batch=batch).first().row_fingerprint == ""
 
 
-def test_the_scheduled_task_runs_the_purge(attested_batch, workindia_xlsx):
-    from apps.imports.tasks import purge_staging_pii_task
+def test_the_scheduled_task_runs_the_purge(attested_batch, workindia_xlsx, organization):
+    """The per-organization subtask; the beat row's task only fans out to it."""
+    from apps.imports.tasks import purge_staging_pii_for_organization
 
     _age_batch(attested_batch(workindia_xlsx()), hours=25)
 
-    result = purge_staging_pii_task(apply=True)
+    result = purge_staging_pii_for_organization(organization.pk, apply=True)
 
     assert result["uncommitted_rows"] == 2
 

@@ -264,12 +264,13 @@ def test_the_scheduled_task_runs_the_purge(staff, settings):
     Retention has to EXECUTE, not merely be recorded. This is the thing that
     was missing: the clock was written and nothing ever read it.
     """
-    from apps.recruitment.tasks import purge_expired_candidates_task
+    from apps.recruitment.tasks import purge_expired_candidates_for_organization
+    from tests.conftest import SESSION_ORG_ID
 
     settings.CANDIDATE_UNAFFIRMED_RETENTION_DAYS = 90
     candidate = _age(_imported(), days=120)
 
-    result = purge_expired_candidates_task(apply=True)
+    result = purge_expired_candidates_for_organization(SESSION_ORG_ID, apply=True)
     candidate.refresh_from_db()
 
     assert result["anonymised"] == 1
