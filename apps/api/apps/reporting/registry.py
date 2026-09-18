@@ -50,6 +50,10 @@ class MetricResult:
     scope_label: str
     generated_at: dt.datetime
     params: dict = field(default_factory=dict)
+    #: "live" or "snapshot". Said out loud rather than inferred: with
+    #: `generated_at` alone, a number computed last night and one computed this
+    #: second are indistinguishable to whoever is reading the dashboard.
+    source: str = "live"
 
     @property
     def total(self) -> float:

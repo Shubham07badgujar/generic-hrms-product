@@ -73,6 +73,13 @@ SCHEDULES: tuple[tuple[str, str, dict], ...] = (
         "recruitment.sync_google_form_responses",
         {"every": 10, "period": "minutes"},
     ),
+    (
+        # 04:10, after the 03:xx purges, so a snapshot never counts rows a
+        # purge is about to remove.
+        "BI metric snapshots",
+        "reporting.refresh_snapshots",
+        {"minute": "10", "hour": "4"},
+    ),
 )
 
 

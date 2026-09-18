@@ -94,6 +94,7 @@ class MetricView(APIView):
                 "shape": result.shape,
                 "scope_label": result.scope_label,
                 "generated_at": result.generated_at.isoformat(),
+                "source": result.source,
                 "params": result.params,
                 "points": [
                     {

@@ -639,9 +639,10 @@ class AuditLog(models.Model):            # plain Model — append-only sink
     ip INET; user_agent; request_id UUID; occurred_at
     # Index(occurred_at desc), Index(entity_type, entity_id), Index(actor, occurred_at desc)
 
-class MetricSnapshot(BaseModel):
-    metric_key; dimension JSON; period_start; period_end; value; computed_at
-    # UNIQUE(metric_key, dimension, period_start)
+class MetricSnapshot(OrgOwnedModel):
+    metric_key; dimension JSON; period_start; period_end; value; context JSON
+    label; sequence; computed_at
+    # UNIQUE(organization, metric_key, dimension, period_start)
 ```
 `AuditAction`: `CREATE · UPDATE · DELETE · APPROVE · REJECT · OVERRIDE · REVERSE · ALLOCATE · RETURN · LOGIN · LOGIN_FAILED · ACCESS_PII · EXPORT · PERMISSION_CHANGE · ROLE_CHANGE · CREDENTIAL_ISSUE · CREDENTIAL_VIEW`.
 
@@ -942,7 +943,7 @@ dedup_hash rotated; AuditLog(action=DELETE) written per candidate
 
 # PART 8 — BI, Notifications, Audit
 
-**BI** — `core/bi/` metric registry. **Every metric is scope-aware**: it takes the caller's `AccessContext` and runs its aggregate through `scope_queryset()`. A Medical Director calling `headcount` gets *their department's* number from the same function the CEO calls org-wide. There is no second, unscoped query path. Expensive aggregates materialise nightly into `MetricSnapshot`; dashboards read snapshots with a live fallback. Served at `GET /api/v1/bi/{metric_key}`, rendered with Recharts. Families: HR (headcount, attrition, joiners/leavers, department distribution), recruitment (time-to-hire, funnel, offer acceptance, source of hire, stage aging), finance (payroll cost trend, department-wise cost, statutory liability), operations (attendance %, leave utilisation), medical (clinical staffing, therapist utilisation).
+**BI** — `core/bi/` metric registry. **Every metric is scope-aware**: it takes the caller's `AccessContext` and runs its aggregate through `scope_queryset()`. A Medical Director calling `headcount` gets *their department's* number from the same function the CEO calls org-wide. There is no second, unscoped query path. Expensive aggregates materialise nightly into `MetricSnapshot` (`reporting.refresh_snapshots` fans out one subtask per organization); dashboards read snapshots with a live fallback. A snapshot is the organisation-wide aggregate and cannot be narrowed on read, so `compute()` serves one **only** to a caller holding ALL scope on the metric's resource, only for the exact window stored, and only while it is fresh — everyone and everything else gets the live computation, and the result says which via `source`. Served at `GET /api/v1/bi/{metric_key}`, rendered with Recharts. Families: HR (headcount, attrition, joiners/leavers, department distribution), recruitment (time-to-hire, funnel, offer acceptance, source of hire, stage aging), finance (payroll cost trend, department-wise cost, statutory liability), operations (attendance %, leave utilisation), medical (clinical staffing, therapist utilisation).
 
 **Notifications** — polling at launch (§5). Events: new candidate application · candidate verification · interview scheduled · interview rescheduled · interview feedback submitted · **department rejection recommendation** · **HR final rejection** · candidate selection · offer sent/accepted · onboarding task assigned/overdue · asset allocated/returned/overdue · payroll processed/approved/paid · email account activated · document expiring · probation due · leave applied/decided. Per-user, per-kind preferences. Email delivery via Celery.
 
