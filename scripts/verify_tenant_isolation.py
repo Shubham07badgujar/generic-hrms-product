@@ -668,7 +668,422 @@ for w in WORLDS:
 
 
 # ---------------------------------------------------------------------------
-# 9. The report
+# 9. Every organization-owned model filters at the manager, and fails closed
+# ---------------------------------------------------------------------------
+#
+# Sections 1-8 are the HTTP surface. This one is underneath it: the layer that
+# covers what a view mixin cannot, because two thirds of this codebase's
+# queryset call sites are in services reached from commands and Celery as well
+# as from requests. Asked per model rather than once, because "the mechanism
+# exists" and "the mechanism is attached to this table" are different claims --
+# and the first was true for a whole stage while the second was false of every
+# table in the product.
+
+print()
+print("=" * 72)
+print("Manager coverage")
+print("=" * 72)
+
+from django.apps import apps as django_apps  # noqa: E402
+
+from core.access.checks import unfiltered_managers  # noqa: E402
+from core.models import (  # noqa: E402
+    OrgContextMissing,
+    OrgOwnedModel,
+    OrgOwnedTimestampedModel,
+)
+
+ORG_OWNED = [
+    model
+    for model in django_apps.get_models()
+    if issubclass(model, OrgOwnedModel | OrgOwnedTimestampedModel)
+]
+MANAGER_APPS = sorted({m._meta.app_label for m in ORG_OWNED})
+
+check(
+    f"9. the app registry offers {len(ORG_OWNED)} organization-owned models "
+    f"across {len(MANAGER_APPS)} apps",
+    len(ORG_OWNED) >= 90,
+    len(ORG_OWNED),
+)
+
+for model in sorted(ORG_OWNED, key=lambda m: m._meta.label):
+    label = model._meta.label
+    unfiltered = unfiltered_managers(model)
+
+    with acting_as(None, organization=None):
+        try:
+            model.objects.all()
+            refused_unbound, why = False, "returned a queryset with nothing bound"
+        except OrgContextMissing:
+            refused_unbound, why = True, ""
+        except Exception as exc:  # noqa: BLE001
+            refused_unbound, why = False, f"{type(exc).__name__}: {exc}"
+
+        try:
+            list(model.objects.all_orgs()[:1])
+            hatch, hatch_why = True, ""
+        except Exception as exc:  # noqa: BLE001
+            hatch, hatch_why = False, f"all_orgs(): {type(exc).__name__}: {exc}"
+
+    check(
+        f"9. {label} filters, refuses an unbound read, and keeps all_orgs()",
+        not unfiltered and refused_unbound and hatch,
+        "; ".join(p for p in (", ".join(unfiltered), why, hatch_why) if p),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 10. Scheduled work runs for one organization, or it fails
+# ---------------------------------------------------------------------------
+#
+# Every per-organization subtask the product ships, run for one of the three
+# organizations while the other two are watched. The dispatchers themselves are
+# NOT invoked: `fan_out` queues for every running organization on the
+# deployment, which on a development database means somebody else's demo data.
+# The subtask is where the tenancy lives anyway.
+
+print()
+print("=" * 72)
+print("Scheduled work")
+print("=" * 72)
+
+import uuid as _uuid  # noqa: E402
+
+from apps.attendance.tasks import sync_essl_for_organization  # noqa: E402
+from apps.imports.tasks import purge_staging_pii_for_organization  # noqa: E402
+from apps.leave.tasks import (  # noqa: E402
+    convert_short_leave_for_organization,
+    flag_absences_for_organization,
+    monthly_accrual_for_organization,
+)
+from apps.recruitment.tasks import (  # noqa: E402
+    purge_expired_candidates_for_organization,
+    sync_google_form_responses_for_job,
+    sync_google_form_responses_for_organization,
+)
+from apps.reporting.tasks import refresh_snapshots_for_organization  # noqa: E402
+from core.tasks import UnknownOrganization  # noqa: E402
+
+#: `apply=False` where the task destroys data. A dry run still exercises the
+#: selection, which is the part that could reach across a boundary; the
+#: destructive path is proved separately in section 12, against rows this
+#: script created.
+SUBTASKS = [
+    ("attendance.sync_essl", sync_essl_for_organization, {}),
+    ("leave.monthly_accrual", monthly_accrual_for_organization, {}),
+    ("leave.convert_short_leave", convert_short_leave_for_organization, {}),
+    ("leave.flag_absences", flag_absences_for_organization, {}),
+    ("imports.purge_staging_pii", purge_staging_pii_for_organization, {"apply": False}),
+    ("reporting.refresh_snapshots", refresh_snapshots_for_organization, {}),
+    (
+        "recruitment.purge_expired_candidates",
+        purge_expired_candidates_for_organization,
+        {"apply": False},
+    ),
+    (
+        "recruitment.sync_google_form_responses",
+        sync_google_form_responses_for_organization,
+        {},
+    ),
+]
+
+
+def _watched_state(worlds):
+    """Rows whose change would mean a task reached into another organization."""
+    from apps.employees.models import Employee
+    from apps.recruitment.models import Candidate
+
+    state = {}
+    for world in worlds:
+        org = world["organization"]
+        state[world["slug"]] = {
+            "employees": sorted(
+                Employee.objects.all_orgs()
+                .filter(organization=org)
+                .values_list("pk", "first_name", "is_active", "updated_at")
+            ),
+            "candidates": sorted(
+                Candidate.objects.all_orgs()
+                .filter(organization=org)
+                .values_list("pk", "first_name", "email")
+            ),
+        }
+    return state
+
+
+for name, task, kwargs in SUBTASKS:
+    for w in WORLDS:
+        others = [o for o in WORLDS if o is not w]
+        before = _watched_state(others)
+        try:
+            task(w["organization"].pk, **kwargs)
+            ran, failure = True, ""
+        except Exception as exc:  # noqa: BLE001
+            ran, failure = False, f"{type(exc).__name__}: {exc}"
+        after = _watched_state(others)
+        check(
+            f"10. {name} for {w['name']} changes no other organization's rows",
+            ran and after == before,
+            failure or "rows changed in another organization",
+        )
+
+    # An id that does not resolve is a fault, not an empty day's work. A task
+    # that returned quietly here would make a tenant that stopped being
+    # processed look exactly like a tenant with nothing to process.
+    try:
+        task(_uuid.uuid4(), **kwargs)
+        refused = False
+    except UnknownOrganization:
+        refused = True
+    except Exception as exc:  # noqa: BLE001
+        refused = False
+        check(f"10. {name} refuses an unknown organization", False, f"{type(exc).__name__}: {exc}")
+        continue
+    check(f"10. {name} refuses an unknown organization", refused)
+
+# THE CASE THAT MATTERS: a task bound to one tenant, handed another's object
+# id. It must RAISE. Silently finding nothing is indistinguishable from having
+# no work to do, which is how a customer stops being processed for a month with
+# nothing in any log.
+from apps.recruitment.models import JobOpening  # noqa: E402
+
+for w in WORLDS:
+    for other in WORLDS:
+        if other is w:
+            continue
+        foreign_job = other["rows"].get("job_opening")
+        if foreign_job is None:
+            continue
+        try:
+            sync_google_form_responses_for_job(w["organization"].pk, foreign_job.pk)
+            refused, detail = False, "the task accepted another organization's job"
+        except JobOpening.DoesNotExist:
+            refused, detail = True, ""
+        except Exception as exc:  # noqa: BLE001
+            refused, detail = False, f"{type(exc).__name__}: {exc}"
+        check(
+            f"10. a task for {w['name']} refuses {other['name']}'s job opening",
+            refused, detail,
+        )
+
+
+# ---------------------------------------------------------------------------
+# 11. Dashboard aggregates are one organization's, stored and served
+# ---------------------------------------------------------------------------
+#
+# The three organizations have DIFFERENT headcounts on purpose (20/15/10). A
+# snapshot that summed two tenants and one that counted a single tenant would
+# otherwise be told apart only by row ownership; a doubled number is the leak
+# that matters, and it is visible in the value itself.
+
+print()
+print("=" * 72)
+print("Dashboard aggregates")
+print("=" * 72)
+
+from apps.employees.models import Employee as _Emp  # noqa: E402
+from apps.reporting.models import MetricSnapshot  # noqa: E402
+
+TREND = "hr.headcount_trend"
+
+for w in WORLDS:
+    org = w["organization"]
+    refresh_snapshots_for_organization(org.pk)
+
+    rows = list(MetricSnapshot.objects.all_orgs().filter(organization=org))
+    own_headcount = (
+        _Emp.objects.all_orgs().filter(organization=org, is_active=True).count()
+    )
+    latest = max(
+        (r for r in rows if r.metric_key == TREND), key=lambda r: r.dimension["point"],
+        default=None,
+    )
+    check(
+        f"11. {w['name']}'s stored headcount is its own ({own_headcount})",
+        latest is not None and int(latest.value) == own_headcount,
+        f"stored {latest.value if latest else 'nothing'}, own headcount {own_headcount}",
+    )
+    check(
+        f"11. every snapshot row written for {w['name']} belongs to it",
+        bool(rows) and all(r.organization_id == org.pk for r in rows),
+        len(rows),
+    )
+
+for w in WORLDS:
+    client = CLIENTS[(w["slug"], "admin")]
+    response = client.get(f"/api/v1/bi/{TREND}/")
+    own_headcount = (
+        _Emp.objects.all_orgs()
+        .filter(organization=w["organization"], is_active=True)
+        .count()
+    )
+    served = []
+    if response.status_code == 200:
+        served = [p.get("value") for p in response.json().get("points", [])]
+    others = [
+        _Emp.objects.all_orgs()
+        .filter(organization=o["organization"], is_active=True)
+        .count()
+        for o in WORLDS
+        if o is not w
+    ]
+    check(
+        f"11. {w['name']}'s dashboard reports its own headcount, not a sum",
+        response.status_code == 200
+        and served
+        and served[-1] == own_headcount
+        and all(served[-1] != own_headcount + other for other in others),
+        f"{response.status_code} served {served[-3:]}, own {own_headcount}, others {others}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# 12. The cross-tenant defects found during the rollout, re-attempted
+# ---------------------------------------------------------------------------
+#
+# Each of these was a real breach, found by this kind of probing and fixed.
+# A fix without a standing attempt against it is a fix that can be undone
+# silently, so every one is re-run here against the live system.
+
+print()
+print("=" * 72)
+print("Defects found during the rollout")
+print("=" * 72)
+
+from django.core.management import call_command  # noqa: E402
+from django.utils import timezone as _tz  # noqa: E402
+
+from apps.accounts.models import Role as _Role  # noqa: E402
+from apps.accounts.models import UserRole as _UserRole  # noqa: E402
+from apps.audit.models import AuditAction as _AuditAction  # noqa: E402
+from apps.audit.models import AuditLog as _AuditLog  # noqa: E402
+from apps.payroll.models import PayrollRun as _PayrollRun  # noqa: E402
+from apps.recruitment.models import Candidate as _Candidate  # noqa: E402
+from apps.recruitment.models import LegalBasis as _LegalBasis  # noqa: E402
+from core.access.context import resolve_context as _resolve_context  # noqa: E402
+
+# 12a. A payroll run scoped to another organization's location. The view read
+# `location` by hand, so relation scoping never saw it: Org A's run was created
+# carrying Org B's location, and the response echoed B's location code. `None`
+# means an organization-wide run, so the same lookup failing quietly would
+# widen the run to every employee instead.
+for w in WORLDS:
+    client = CLIENTS[(w["slug"], "admin")]
+    for other in WORLDS:
+        if other is w:
+            continue
+        month = 7 + WORLDS.index(other)
+        foreign = client.post(
+            "/api/v1/payroll/runs/",
+            {"period_year": 2025, "period_month": month,
+             "location": str(other["rows"]["location"].pk)},
+            format="json",
+        )
+        made = _PayrollRun.objects.all_orgs().filter(
+            organization=w["organization"], period_year=2025, period_month=month
+        ).exists()
+        control = client.post(
+            "/api/v1/payroll/runs/",
+            {"period_year": 2025, "period_month": month,
+             "location": str(w["rows"]["location"].pk)},
+            format="json",
+        )
+        check(
+            f"12a. {w['name']} cannot scope a payroll run to {other['name']}'s location",
+            foreign.status_code == 400
+            and "location" in foreign.content.decode(errors="replace").lower()
+            and not made,
+            f"{foreign.status_code} {foreign.content[:140]}",
+            inconclusive=control.status_code != 201,
+        )
+
+# 12b. `purge_candidates --organization <slug> --apply` anonymised every
+# organization's overdue candidates, not just the named one's. Destructive, and
+# run here for real against candidates this script created.
+OVERDUE = {}
+for w in WORLDS:
+    with acting_as(None, organization=w["organization"]):
+        overdue = _Candidate.objects.create(
+            first_name="Overdue", last_name="Applicant",
+            email=f"overdue@{w['domain']}", source="workindia",
+            consent_given=False, legal_basis=_LegalBasis.VOLUNTARILY_PROVIDED,
+            notice_due_at=_tz.now(),
+        )
+    _Candidate.objects.all_orgs().filter(pk=overdue.pk).update(
+        created_at=_tz.now() - dt.timedelta(days=400)
+    )
+    OVERDUE[w["slug"]] = overdue.pk
+
+purged_for = WORLDS[0]
+call_command("purge_candidates", organization=purged_for["slug"], apply=True)
+names = dict(
+    _Candidate.objects.all_orgs()
+    .filter(pk__in=OVERDUE.values())
+    .values_list("pk", "first_name")
+)
+check(
+    f"12b. purging {purged_for['name']} anonymised its own overdue candidate",
+    names.get(OVERDUE[purged_for["slug"]]) == "Redacted",
+    names.get(OVERDUE[purged_for["slug"]]),
+)
+for w in WORLDS[1:]:
+    check(
+        f"12b. purging {purged_for['name']} left {w['name']}'s candidate intact",
+        names.get(OVERDUE[w["slug"]]) == "Overdue",
+        names.get(OVERDUE[w["slug"]]),
+    )
+
+# 12c. Authority was resolved from a user's role grants in EVERY organization,
+# so one Admin grant row sitting in another organization made an ordinary
+# employee an Admin in their own. The row is planted, asserted against, and
+# hard-deleted.
+for w in WORLDS:
+    other = next(o for o in WORLDS if o is not w)
+    foreign_admin_role = _Role.objects.all_orgs().get(
+        organization=other["organization"], code="admin"
+    )
+    planted = _UserRole(user=w["worker"], role=foreign_admin_role)
+    with acting_as(None, organization=other["organization"]):
+        _UserRole.objects.bulk_create([planted])
+    try:
+        ctx = _resolve_context(w["worker"])
+        check(
+            f"12c. a grant row in {other['name']} makes {w['name']}'s employee no Admin",
+            "admin" not in ctx.role_codes
+            and ctx.organization_id == w["organization"].pk,
+            sorted(ctx.role_codes),
+        )
+    finally:
+        _UserRole.objects.all_orgs().filter(pk=planted.pk).hard_delete()
+
+# 12d. The audit trail re-read a row through the tenant manager before an
+# update. With nothing bound that raised, failing a save that carries its own
+# organization; with another organization bound it found nothing and the update
+# went UNAUDITED.
+for w in WORLDS:
+    subject = w["rows"]["employee"]
+    with acting_as(None, organization=None):
+        subject.phone = f"98{secrets.randbelow(10**8):08d}"
+        try:
+            subject.save(update_fields=["phone", "updated_at"])
+            saved, why = True, ""
+        except Exception as exc:  # noqa: BLE001
+            saved, why = False, f"{type(exc).__name__}: {exc}"
+    audited = _AuditLog.objects.filter(
+        entity_type="employees.Employee",
+        entity_id=str(subject.pk),
+        action=_AuditAction.UPDATE,
+    ).exists()
+    check(
+        f"12d. an unbound update to {w['name']}'s employee is saved and audited",
+        saved and audited,
+        why or "no audit row was written",
+    )
+
+
+# ---------------------------------------------------------------------------
+# 13. The report
 # ---------------------------------------------------------------------------
 
 # Guards the guard. A run that performs no attempts reports no failures, and
@@ -676,11 +1091,17 @@ for w in WORLDS:
 # script that quietly did nothing would be indistinguishable from proof. This
 # is not hypothetical: piping this file into `manage.py shell` does precisely
 # that, because IPython treats a blank line inside a block as the end of it.
-if len(RESULTS) < 50 or not WALK:
+#
+# The floor rises with the script. It was 50 when sections 1-8 were all there
+# was; sections 9-12 alone contribute one check per organization-owned model
+# and one per shipped subtask, so a run that produced 50 now is a run that
+# stopped somewhere in the middle.
+if len(RESULTS) < 250 or not WALK or len(ORG_OWNED) < 90:
     raise SystemExit(
-        f"verify_tenant_isolation: ONLY {len(RESULTS)} CHECKS RAN and "
-        f"{len(WALK)} walks completed. The script did not execute properly -- "
-        f"no report has been written. Invoke it with "
+        f"verify_tenant_isolation: ONLY {len(RESULTS)} CHECKS RAN, "
+        f"{len(WALK)} walks completed and {len(ORG_OWNED)} organization-owned "
+        f"models were found. The script did not execute properly -- no report "
+        f"has been written. Invoke it with "
         f"`manage.py shell -c \"exec(open(...).read())\"`, not with `shell < file`."
     )
 
@@ -765,6 +1186,15 @@ w_("| Open an exit, or file a resignation, for another organization's employee "
    "employee unchanged |")
 w_("| Every detail route the URL resolver exposes | 403, 404 or 405 |")
 w_("| The same read as HR Head and as a plain employee | 403 or 404 |")
+w_("| Scope a payroll run to another organization's location | 400, naming the "
+   "location, and no run created |")
+w_("| Run each scheduled subtask for one organization | no other "
+   "organization's rows changed |")
+w_("| Hand a subtask another organization's job opening | raises, rather than "
+   "quietly finding nothing |")
+w_("| Purge one organization's overdue candidates | the others' left intact |")
+w_("| Plant an Admin grant for one organization's employee in another | no "
+   "Admin authority anywhere |")
 w_("")
 
 w_("### Why 404 and not 403")
@@ -818,6 +1248,107 @@ else:
     w_("None. Every route answered with a status code.")
 w_("")
 
+w_("## Underneath the HTTP surface: the manager")
+w_("")
+w_("Sections 1-8 above are the request surface. This is the layer beneath it, "
+   "and the one that covers what a view mixin cannot: two thirds of this "
+   "codebase's queryset call sites are in services, reached from management "
+   "commands and Celery as well as from requests, and DRF builds an unfiltered "
+   "queryset behind every writable relational serializer field. Those never "
+   "pass through a view. They do pass through the manager.")
+w_("")
+w_("Asked per model rather than once. \"The mechanism exists\" and \"the "
+   "mechanism is attached to this table\" are different claims, and the first "
+   "was true for a whole stage while the second was false of every table in "
+   "the product.")
+w_("")
+w_("| | |")
+w_("|---|---|")
+w_(f"| Organization-owned models found in the app registry | {len(ORG_OWNED)} |")
+w_(f"| Apps owning them | {len(MANAGER_APPS)} |")
+w_(f"| Whose managers filter, refuse an unbound read, and keep `all_orgs()` | "
+   f"{len([r for r in RESULTS if r[0].startswith('9. ') and r[1] == 'PASS']) - 1} |")
+w_(f"| Apps | {', '.join(MANAGER_APPS)} |")
+w_("")
+w_("Refusing is the requirement, not returning nothing: an empty queryset "
+   "inside a Celery task is indistinguishable from \"no work to do\", so the "
+   "manager raises. `all_orgs()` is the deliberate, greppable escape for "
+   "platform-wide work, and it must keep working or platform code has no way "
+   "out.")
+w_("")
+
+w_("## Scheduled work")
+w_("")
+w_("Every per-organization subtask the product ships, run for one organization "
+   "while the other two are watched for changes. The dispatchers themselves are "
+   "not invoked here: they queue for every running organization on the "
+   "deployment, which on a development database means somebody else's demo "
+   "data. The subtask is where the tenancy lives.")
+w_("")
+w_("The case that matters is the last one. A task bound to one tenant and "
+   "handed another's object id must RAISE. Silently finding nothing is "
+   "indistinguishable from having no work to do, which is how a customer stops "
+   "being processed for a month with nothing in any log -- and it is why the "
+   "manager raises rather than returning an empty queryset.")
+w_("")
+for name, _task, _kw in SUBTASKS:
+    passes = len([r for r in RESULTS if r[0].startswith(f"10. {name}") and r[1] == "PASS"])
+    total = len([r for r in RESULTS if r[0].startswith(f"10. {name}")])
+    w_(f"- `{name}` — {passes}/{total} checks passed")
+w_("")
+
+w_("## Dashboard aggregates")
+w_("")
+w_("A metric snapshot is an organisation-wide total, materialised nightly. The "
+   "three organizations are deliberately different sizes, so a snapshot that "
+   "summed two tenants is visible as a WRONG NUMBER rather than only as row "
+   "ownership.")
+w_("")
+w_("| Organization | Active employees | Headcount stored | Headcount served |")
+w_("|---|---|---|---|")
+for w2 in WORLDS:
+    org = w2["organization"]
+    own = _Emp.objects.all_orgs().filter(organization=org, is_active=True).count()
+    stored = [
+        r for r in MetricSnapshot.objects.all_orgs().filter(
+            organization=org, metric_key=TREND
+        )
+    ]
+    latest = max(stored, key=lambda r: r.dimension["point"], default=None)
+    response = CLIENTS[(w2["slug"], "admin")].get(f"/api/v1/bi/{TREND}/")
+    served = (
+        response.json()["points"][-1]["value"]
+        if response.status_code == 200 and response.json().get("points")
+        else "—"
+    )
+    w_(f"| {w2['name']} | {own} | {int(latest.value) if latest else '—'} | {served} |")
+w_("")
+
+w_("## The defects this exercise found, re-attempted")
+w_("")
+w_("Each of these was a real cross-tenant breach, found by probing of this kind "
+   "during the manager rollout and fixed. A fix with no standing attempt "
+   "against it is a fix that can be undone silently, so each is re-run here "
+   "against the live system rather than described.")
+w_("")
+w_("| Defect | What it did before | Re-attempted here |")
+w_("|---|---|---|")
+w_("| Payroll run location | `POST /payroll/runs/` read `location` by hand, so "
+   "relation scoping never saw it: one organization's run was created carrying "
+   "another's location, and the response echoed its code. An id that fails to "
+   "resolve means \"organization-wide\", so a quiet miss would widen the run to "
+   "every employee | 12a |")
+w_("| Candidate retention purge | `purge_candidates --organization <slug> "
+   "--apply` anonymised every organization's overdue candidates | 12b |")
+w_("| Authority from anywhere | permissions were built from a user's role "
+   "grants in EVERY organization, so one Admin grant row planted elsewhere made "
+   "an ordinary employee an Admin at home, and the admin sign-in door let them "
+   "in | 12c |")
+w_("| Unaudited updates | the audit trail re-read a row through the tenant "
+   "manager before an update: with nothing bound it raised, and with another "
+   "organization bound it found nothing and wrote no audit record | 12d |")
+w_("")
+
 w_("## Every check")
 w_("")
 w_("| Result | Check | Detail |")
@@ -833,9 +1364,11 @@ w_("Stated because a report that only lists what passed is not evidence, it is "
    "advertising.")
 w_("")
 w_("- **The organizations are built by this script, not by the platform "
-   "provisioning service**, which does not exist yet. `provision()` is the seam: "
-   "when that service lands, it replaces the body of that function and this "
-   "report starts proving the real creation path too.")
+   "provisioning service**, which now exists (`apps.platform.services."
+   "provisioning.provision_organization`). `provision()` is still the seam, and "
+   "pointing it at that service is the next thing this report should prove. "
+   "Until then the creation path itself is covered by the platform layer's own "
+   "tests rather than here.")
 w_(f"- **The walk reached {WALK[0][2] if WALK else 0} of the {ROUTES_TOTAL} "
    f"routes the resolver exposes.** A route is only asserted against when it "
    f"serves the CALLER's own row, because one that answers 405 or 404 for "
@@ -844,16 +1377,21 @@ w_(f"- **The walk reached {WALK[0][2] if WALK else 0} of the {ROUTES_TOTAL} "
    f"lack of an answer, not judged and passed. Most of the gap is "
    f"POST/PUT-only actions, file downloads with nothing uploaded, and the "
    f"`.json` suffix duplicates of routes already walked.")
-w_("- **Celery tasks are not exercised here.** A task's isolation is a separate "
-   "question with its own per-task tests, including the negative case where a "
-   "task given another organization's object id must fail rather than silently "
-   "do nothing.")
-w_("- **Per-organization email, files and configuration are not covered.** Those "
-   "arrive with the per-organization configuration work and get their own "
-   "checks.")
-w_("- **The platform layer is not covered**, because it does not exist yet. "
-   "Whether a platform administrator is kept out of customer HR data is a "
-   "question this report cannot yet answer.")
+w_("- **The dispatchers are not run, only the subtasks they queue.** `fan_out` "
+   "queues for every running organization on the deployment, which on a "
+   "development database means data this script did not create. The pairing "
+   "between a beat row and its subtask is asserted by the suite instead.")
+w_("- **Per-organization email, files and configuration are not covered here.** "
+   "They have their own tests: no message addressed outside the acting "
+   "organization, every upload under its own organization's subtree, and every "
+   "resolver taking an explicit organization.")
+w_("- **The platform boundary is not covered here.** Whether a platform "
+   "administrator is kept out of customer HR data is asserted by the platform "
+   "layer's own tests: they hold no role grant in any organization, so every "
+   "tenant queryset resolves to nothing and every tenant route refuses them.")
+w_("- **A passing report is evidence about this build, not a proof of the "
+   "design.** It re-runs on demand; it does not run on every commit. The gate "
+   "that does is the suite.")
 w_("")
 
 report_path = Path(settings.BASE_DIR).parent.parent / "TENANT_ISOLATION_TEST_REPORT.md"
