@@ -121,9 +121,14 @@ def test_working_days_skip_weekly_off_and_holidays(staff, leave_config):
 
 def test_half_day_counts_half_and_only_on_one_date(staff, leave_config):
     employee = staff["therapist"]
+    # A day that is actually WORKED, not merely one that is not a Sunday. The
+    # seeds declare real public holidays, so "today + 7" lands on one twice a
+    # year -- and a half day of no working day is correctly 0, which made this
+    # fail on the 18th of September for the 25th, and would again in November.
     day = timezone.localdate() + dt.timedelta(days=7)
-    if day.weekday() == 6:
+    while services.working_days(employee, day, day) == Decimal("0"):
         day += dt.timedelta(days=1)
+
     assert services.working_days(employee, day, day, half_day="first_half") == Decimal("0.5")
     with pytest.raises(LeaveError):
         services.working_days(employee, day, day + dt.timedelta(days=1), half_day="first_half")
