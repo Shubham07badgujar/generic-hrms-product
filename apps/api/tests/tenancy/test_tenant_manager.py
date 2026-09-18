@@ -7,8 +7,10 @@ task and management command read every customer's rows. A suite that passes
 proves nothing about a switch unless something asserts the switch DOES
 something. That is this file.
 
-Parametrised over `STRICT_TENANT_APPS`, so each app flipped in the rollout is
-covered the moment it is added to the set -- no line to remember here.
+Parametrised over EVERY organization-owned model the product declares, derived
+from the app registry. Filtering is unconditional now -- the `STRICT_TENANT_APPS`
+set this file once read is gone -- so a model added next year is covered the day
+it is written, with no line to remember here and none to add there.
 """
 
 from __future__ import annotations
@@ -16,7 +18,6 @@ from __future__ import annotations
 import pytest
 from django.apps import apps as django_apps
 
-from core.access.tenancy import STRICT_TENANT_APPS
 from core.middleware import acting_as
 from core.models import OrgContextMissing, OrgOwnedModel, OrgOwnedTimestampedModel
 
@@ -31,56 +32,62 @@ def _org_owned_models():
     ]
 
 
-def _strict_models():
-    return [m for m in _org_owned_models() if m._meta.app_label in STRICT_TENANT_APPS]
-
-
 #: Resolved once, with the ids as plain strings. An `ids=` callable crashed
-#: collection when the set was empty -- pytest hands it a placeholder, not a
-#: model -- so an unfinished rollout read as a broken test file rather than as
-#: the clean "nothing is strict" failure `test_the_strict_set_is_not_empty`
-#: exists to give.
-STRICT_MODELS = _strict_models()
+#: collection when this list was empty -- pytest hands it a placeholder, not a
+#: model -- so the file read as broken rather than giving the clean "nothing is
+#: covered" failure `test_every_organization_owned_model_is_covered` exists for.
+STRICT_MODELS = _org_owned_models()
 STRICT_MODEL_IDS = [m._meta.label for m in STRICT_MODELS]
 
 
-# ------------------------------------------------------- the switch is honest
+# ------------------------------------------------- the build enforces it
 
 
-def test_every_strict_app_label_names_an_app_that_owns_tenant_data():
+def test_no_organization_owned_model_escapes_the_filter():
     """
-    A typo must not read as a finished rollout.
+    access.E017, over the models the product actually ships.
 
-    `"notification"` for `"notifications"` would leave the real app unfiltered
-    while the set, and the rollout warning, both said it was done.
+    The successor to the `access.W001` warning that counted apps still waiting
+    on the rollout. The rollout is finished, so the honest state is an ERROR for
+    anything organization-owned that does not filter -- there is no longer a
+    transitional state for a warning to describe.
     """
-    owning = {m._meta.app_label for m in _org_owned_models()}
+    from core.access.checks import check_tenant_managers_filter
 
-    stray = STRICT_TENANT_APPS - owning
-    assert not stray, (
-        f"STRICT_TENANT_APPS names apps that own no organization-owned models: "
-        f"{sorted(stray)}. A misspelt label here filters nothing."
+    assert check_tenant_managers_filter(None) == []
+
+
+def test_the_build_error_bites_a_model_whose_manager_was_replaced():
+    """
+    Guards the check.
+
+    The way filtering can still be lost is `objects = models.Manager()` on a
+    model that is otherwise organization-owned: the column is there, the model
+    reads as protected, and every query returns every customer's rows. A check
+    that only ever reports nothing would say the same thing whether or not it
+    still detects that, so it is handed one.
+    """
+    from types import SimpleNamespace
+
+    from django.db import models
+
+    from core.access.checks import unfiltered_managers
+    from core.models import OrgOwnedManager
+
+    replaced = SimpleNamespace(
+        _meta=SimpleNamespace(label="fake.Replaced", default_manager=models.Manager()),
+        objects=models.Manager(),
     )
+    assert unfiltered_managers(replaced) == ["default manager", "objects"]
 
-
-def test_the_rollout_warning_names_exactly_the_apps_not_yet_strict():
-    """access.W001 must agree with the set, in both directions."""
-    from core.access.checks import check_tenant_manager_rollout
-
-    owning = {m._meta.app_label for m in _org_owned_models()}
-    pending = owning - STRICT_TENANT_APPS
-    messages = check_tenant_manager_rollout(None)
-
-    if not pending:
-        assert messages == []
-        return
-
-    (warning,) = messages
-    assert warning.id == "access.W001"
-    for label in pending:
-        assert f"{label} (" in warning.msg
-    for label in STRICT_TENANT_APPS:
-        assert f"{label} (" not in warning.msg
+    # And the shape that is correct reports nothing, so the assertion above is
+    # not satisfied by a function that flags everything.
+    scoped = OrgOwnedManager()
+    intact = SimpleNamespace(
+        _meta=SimpleNamespace(label="fake.Intact", default_manager=scoped),
+        objects=scoped,
+    )
+    assert unfiltered_managers(intact) == []
 
 
 # ---------------------------------------------------------- per strict model
@@ -106,14 +113,17 @@ def test_a_strict_model_keeps_its_escape_hatch(model):
         list(model.objects.all_orgs()[:1])
 
 
-def test_the_strict_set_is_not_empty():
+def test_every_organization_owned_model_is_covered():
     """
     Guards the parametrised tests above.
 
-    With an empty set they collect nothing and pass, which is exactly the
-    silent state this file exists to end.
+    With an empty list they collect nothing and pass, which is exactly the
+    silent state this file exists to end. The count is asserted against the app
+    registry rather than written down, so a new model joins by existing.
     """
-    assert STRICT_MODELS, "no app is strict yet, so nothing above ran"
+    assert STRICT_MODELS, "no organization-owned model was found, so nothing above ran"
+    assert len(STRICT_MODELS) == len(_org_owned_models())
+    assert len({m._meta.app_label for m in STRICT_MODELS}) >= 15
 
 
 # ------------------------------------------------ filtering, on real rows
@@ -128,8 +138,6 @@ def test_a_strict_app_returns_only_the_bound_organizations_rows(org_a, org_b):
     manager has to make safe.
     """
     from apps.notifications.models import Notification
-
-    assert "notifications" in STRICT_TENANT_APPS
 
     with acting_as(org_a.admin, organization=org_a.organization):
         mine = Notification.objects.create(

@@ -36,10 +36,11 @@ EXPECTED_CHECKS = {
     "check_all_api_views_are_mapped",
     "check_every_resource_has_a_spec",
     "check_role_invariants",
-    # Reports which apps still read across organizations at the manager. It is
-    # the check that would have said `TenantManager` was wired to nothing, so
-    # it gets the same guard against silently not running as the others.
-    "check_tenant_manager_rollout",
+    # Fails the build for an organization-owned model that does not filter by
+    # organization at the manager. It is the check that would have said
+    # `TenantManager` was wired to nothing, so it gets the same guard against
+    # silently not running as the others.
+    "check_tenant_managers_filter",
 }
 
 

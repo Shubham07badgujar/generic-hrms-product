@@ -11,7 +11,7 @@ that a new view had one.
 
 from __future__ import annotations
 
-from django.core.checks import Error, Tags, Warning, register
+from django.core.checks import Error, Tags, register
 
 from .permissions import PLATFORM_PATH_PREFIX
 
@@ -587,49 +587,81 @@ def check_every_resource_has_a_feature(app_configs, **kwargs):
 
 
 @register()
-def check_tenant_manager_rollout(app_configs, **kwargs):
+def check_tenant_managers_filter(app_configs, **kwargs):
     """
-    Report which apps still read across organizations at the service layer.
+    Every organization-owned model FILTERS by organization at the manager.
 
-    access.W001 -- a WARNING, not an error, because an unfinished rollout is a
-    known state rather than a broken one. It is here so the state is VISIBLE on
-    every build: `TenantManager` existed for a full stage, was wired to nothing,
-    and nothing said so. `manage.py check` reported no issues while every
-    service-layer query in the product read every customer's rows.
+    access.E017 -- an ERROR, and the successor to the `access.W001` warning that
+    counted apps still waiting on the rollout. That warning existed because the
+    rollout was per app: flipping one changed the default behaviour of every
+    query in it, so the remaining count had to be visible on every build rather
+    than tracked in somebody's head. It reached zero, the per-app set is gone,
+    and filtering is now unconditional in `TenantScopedManagerMixin`.
 
-    The message names the remaining apps and the model count, so the number has
-    to go down rather than being a line nobody parses. When it reaches zero the
-    check reports nothing and this whole transitional state is over.
+    What is left to check is the way it can still be lost: a model that declares
+    its own `objects = models.Manager()`, or inherits from a base that is not
+    `OrgOwnedModel`. Django resolves `Model.objects` and every related manager
+    through the default manager, so a plain one there silently reinstates
+    exactly the pre-tenancy behaviour -- `Model.objects.all()` returning every
+    customer's rows -- on a table that still carries the column and still looks
+    protected in a review.
+
+    An error rather than a warning because there is no longer a legitimate
+    transitional state to report. The answer for a new organization-owned model
+    is always the same, so the build says so instead of asking someone to
+    notice a line of output.
     """
     from django.apps import apps as django_apps
 
     from core.models import OrgOwnedModel, OrgOwnedTimestampedModel
 
-    from .tenancy import STRICT_TENANT_APPS
-
-    pending: dict[str, int] = {}
+    errors = []
     for model in django_apps.get_models():
         if not issubclass(model, OrgOwnedModel | OrgOwnedTimestampedModel):
             continue
-        label = model._meta.app_label
-        if label in STRICT_TENANT_APPS:
-            continue
-        pending[label] = pending.get(label, 0) + 1
+        for role in unfiltered_managers(model):
+            errors.append(
+                Error(
+                    f"{model._meta.label} is organization-owned but its "
+                    f"{role} does not filter by organization.",
+                    hint=(
+                        "Its queries would return every customer's rows to any "
+                        "service, Celery task or management command. Inherit "
+                        "from core.models.OrgOwnedModel (or "
+                        "OrgOwnedTimestampedModel) and do not replace `objects` "
+                        "with a plain Manager. A genuinely platform-wide query "
+                        "says so per call with `.all_orgs()`."
+                    ),
+                    id="access.E017",
+                    obj=model._meta.label,
+                )
+            )
 
-    if not pending:
-        return []
+    return errors
 
-    listing = ", ".join(f"{app} ({count})" for app, count in sorted(pending.items()))
-    return [
-        Warning(
-            f"{sum(pending.values())} organization-owned models in "
-            f"{len(pending)} app(s) do not filter by organization at the "
-            f"manager: {listing}.",
-            hint="Their queries are scoped by the view layer only, so any "
-                 "service, Celery task or management command reading them "
-                 "sees every customer's rows. Add the app to "
-                 "core.access.tenancy.STRICT_TENANT_APPS and fix the fallout.",
-            id="access.W001",
-            obj="core.access.tenancy",
-        )
-    ]
+
+def unfiltered_managers(model) -> list[str]:
+    """
+    Which of a model's managers do NOT apply the tenant predicate.
+
+    Both the DEFAULT manager and `objects`, which are the same object in every
+    model the product ships -- and a model that split them is exactly the
+    interesting case. Django builds related managers from the default one, so
+    `parent.children` goes through it whatever `objects` is; `objects` is what
+    services and serializers name directly.
+
+    Separate from the check so a test can hand it a model whose manager was
+    replaced, without registering one in the app registry for the rest of the
+    session. Same reason `serializer_lacks_relation_scoping` is its own
+    function.
+    """
+    from core.models import TenantScopedManagerMixin
+
+    unfiltered = []
+    for role, manager in (
+        ("default manager", getattr(model._meta, "default_manager", None)),
+        ("objects", getattr(model, "objects", None)),
+    ):
+        if manager is not None and not isinstance(manager, TenantScopedManagerMixin):
+            unfiltered.append(role)
+    return unfiltered

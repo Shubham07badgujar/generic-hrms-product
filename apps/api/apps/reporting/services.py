@@ -217,12 +217,12 @@ def _stored_points(
       * a snapshot older than `SNAPSHOT_MAX_AGE` is ignored. A missed refresh
         makes the dashboard slower, not wrong.
 
-    Tenancy is applied explicitly, as it is on the write side. `reporting` is
-    in STRICT_TENANT_APPS now, so the manager filters too -- but this predicate
-    comes from the CALLER'S resolved context rather than from whatever is
-    bound, and reading one organisation's aggregate into another's dashboard is
-    the worst version of this bug available. Two independent answers to the
-    same question is the right number here.
+    Tenancy is applied explicitly, as it is on the write side. The manager
+    filters these rows too -- but this predicate comes from the CALLER'S
+    resolved context rather than from whatever is bound, and reading one
+    organisation's aggregate into another's dashboard is the worst version of
+    this bug available. Two independent answers to the same question is the
+    right number here.
     """
     if not spec.snapshotable or group_by:
         return None

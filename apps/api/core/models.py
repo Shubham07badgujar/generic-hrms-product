@@ -166,19 +166,23 @@ class TenantScopedManagerMixin:
     every writable relational serializer field. Those never pass through a view
     mixin. They do pass through here.
 
-    Active only for apps named in `STRICT_TENANT_APPS`, because flipping it
-    changes the default behaviour of every query in an app at once. See that
-    set for why the rollout is per app.
+    UNCONDITIONAL. It was once active only for apps named in a
+    `STRICT_TENANT_APPS` set, because flipping it changes the default behaviour
+    of every query in an app at once and the fallout had to be read in
+    reviewable pieces. All fifteen apps completed that rollout, and the set is
+    gone: a per-app opt-in whose only correct answer is "yes" is a step someone
+    can forget, and forgetting it produces a new model that silently returns
+    every customer's rows. A new app is filtered the day it is written, with
+    nothing to add anywhere.
+
+    `access.E017` is the other half of that guarantee: an organization-owned
+    model whose manager does NOT mix this in fails `manage.py check`, so the
+    filtering cannot be dropped by declaring a plain manager either.
 
     The escape hatch is `Model.objects.all_orgs()` -- explicit, greppable, and
     reviewable. There is deliberately no ambient "disable tenancy" switch: a
     flag someone can set at a distance is how the original incident happened.
     """
-
-    def _is_strict(self) -> bool:
-        from core.access.tenancy import STRICT_TENANT_APPS
-
-        return self.model._meta.app_label in STRICT_TENANT_APPS
 
     def _parent_organization_id(self):
         """
@@ -204,9 +208,6 @@ class TenantScopedManagerMixin:
 
     def get_queryset(self):
         qs = super().get_queryset()
-        if not self._is_strict():
-            return qs
-
         parent_org_id = self._parent_organization_id()
         if parent_org_id is not None:
             return qs.filter(organization_id=parent_org_id)
@@ -335,10 +336,10 @@ class OrgOwnedManager(
     """
     Default manager for organization-owned models.
 
-    Stamps an organization on write always; FILTERS by one only for apps named
-    in `STRICT_TENANT_APPS`. There is one manager rather than two so that
-    flipping an app cannot mean swapping a class somewhere and missing a model
-    -- the behaviour is a property of the app label, checked on every query.
+    Stamps an organization on write, and filters by one on read. Both, always,
+    for every organization-owned table -- there is no per-app switch and no
+    second manager class to pick between, so a model cannot end up with the
+    stamping half and not the filtering half.
     """
 
 

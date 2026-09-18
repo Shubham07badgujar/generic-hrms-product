@@ -78,43 +78,28 @@ NULLABLE_TENANT: dict[str, str] = {
 PENDING_TENANCY: frozenset[str] = frozenset()
 
 
-#: Apps whose org-owned models FILTER by organization at the manager, not
-#: merely stamp one on write.
+#: FILTERING AT THE MANAGER IS UNCONDITIONAL. There is no set to join.
 #:
-#: THE DIFFERENCE THIS MAKES. Having the column is what lets the predicate be
-#: written; this set is what makes it run. Until an app is named here,
-#: `Model.objects.all()` inside a service returns every customer's rows, and
-#: the only thing standing between that and a cross-tenant read is the view
-#: layer -- which covers HTTP and nothing else. Celery tasks, management
-#: commands, and services called from other services all bypass it.
+#: There was one: `STRICT_TENANT_APPS`, listing the apps whose org-owned models
+#: filtered rather than merely stamping an organization on write. It existed
+#: because flipping an app changes the default behaviour of every query in it
+#: at once, including the ones that are SUPPOSED to be platform-wide and then
+#: raise -- so the fallout was read and fixed in reviewable pieces rather than
+#: as one wall of failures with the real breakages hidden among them.
 #:
-#: WHY IT IS A LIST AND NOT A FLAG. Flipping this changes the default
-#: behaviour of every query in an app at once, including the ones that are
-#: SUPPOSED to be platform-wide and will now raise. Per-app is how the fallout
-#: is read and fixed in reviewable pieces rather than as one wall of failures
-#: with the real breakages hidden among them.
+#: All fifteen apps and all 94 models completed that rollout, so the set is
+#: gone rather than left standing at "everything". A per-app opt-in whose only
+#: correct answer is "yes" is a step someone can forget, and forgetting it does
+#: not fail -- it produces a new model that quietly returns every customer's
+#: rows to every service, Celery task and management command that reads it. The
+#: predicate now runs for anything inheriting `OrgOwnedModel`, and
+#: `access.E017` fails the build for an organization-owned model whose manager
+#: does not apply it.
 #:
 #: The escape hatch for a genuinely platform-wide query is
 #: `Model.objects.all_orgs()` -- named, greppable, and reviewable, so
 #: `grep -rn all_orgs` is the audit of every place someone stepped outside
 #: tenancy on purpose.
-STRICT_TENANT_APPS: frozenset[str] = frozenset({
-    "accounts",
-    "assets",
-    "attendance",
-    "employees",
-    "imports",
-    "itaccounts",
-    "leave",
-    "notifications",
-    "offboarding",
-    "onboarding",
-    "organization",
-    "payroll",
-    "recruitment",
-    "reporting",
-    "workflows",
-})
 
 
 #: Values that are deliberately unique across the WHOLE platform, with the
