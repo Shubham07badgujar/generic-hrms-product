@@ -1,16 +1,21 @@
 # Generic HRMS
 
-> **⚠ In transition — being taken multi-tenant.**
-> This branch (`saas/multi-tenant`) is converting the product from one-organisation-per-deployment
-> into a multi-tenant SaaS platform. The decision record is
-> [`docs/ARCHITECTURE.md` PART 13](docs/ARCHITECTURE.md); the single-organisation product is
-> preserved at tag `pre-saas-baseline`. **Sections below still describe the single-organisation
-> product and are being rewritten as each stage lands** — where this README and PART 13
-> disagree, PART 13 is the intent and this README is the current state.
+> **Multi-tenant. The backend conversion is complete; the frontend is not.**
+> This branch (`saas/multi-tenant`) took the product from one-organisation-per-deployment to a
+> multi-tenant SaaS platform. Every organization-owned table filters by organization at the
+> manager, and the build refuses a model that does not. What remains is the employee-import
+> slice and the frontend SaaS surface — setup wizard, plan page and platform console — whose
+> APIs already exist. The decision record is
+> [`docs/ARCHITECTURE.md` PART 13](docs/ARCHITECTURE.md), the audit is
+> [`PRODUCTIZATION_AND_SAAS_AUDIT.md`](PRODUCTIZATION_AND_SAAS_AUDIT.md) (including what is
+> still missing), and the single-organisation product is preserved at tag `pre-saas-baseline`.
 
-A complete, self-hosted HRMS for a **single organisation per deployment** —
-recruitment, onboarding, attendance (biometric), leave, payroll with Indian
-statutory computation, assets, offboarding, dashboards and a full audit trail.
+A complete HRMS served as a **multi-tenant SaaS platform** — many companies on
+one deployment and one database, with complete isolation between them —
+covering recruitment, onboarding, attendance (biometric), leave, payroll with
+Indian statutory computation, assets, offboarding, dashboards and a full audit
+trail. It still runs as a single-company self-hosted install: that is the same
+code path with one organization in it, not a separate mode.
 
 ```
 React + TypeScript  →  Django + DRF  →  PostgreSQL
@@ -21,8 +26,8 @@ React + TypeScript  →  Django + DRF  →  PostgreSQL
 departments, designations, locations, working hours, leave policy, salary
 components, statutory rates, roles and permissions all live in the database
 and are managed from the Organisation screens (the frontend reads its identity
-from `GET /org/branding/`). Deploy the same code for Company A and Company B;
-only the database and `.env` differ.
+from `GET /org/branding/`). Company A and Company B are two rows, provisioned
+by a platform administrator — not two deployments.
 
 * **Setting up on a new PC (with test data):** [`docs/SETUP_ON_A_NEW_PC.md`](docs/SETUP_ON_A_NEW_PC.md)
 * **Running it in VS Code:** [`docs/RUNNING_IN_VS_CODE.md`](docs/RUNNING_IN_VS_CODE.md)
@@ -86,26 +91,54 @@ App: <http://localhost:5173>
 
 ---
 
-## What "single organisation" means
+## What "multi-tenant" means here
 
-Each deployment serves ONE company: its own database, its own `.env`, its own
-domain. There is deliberately no multi-tenancy — no `organization_id` on every
-row, no tenant switching, none of the failure modes that come with them. To
-serve three companies, run the stack three times.
-[`docs/NEW_COMPANY_SETUP.md`](docs/NEW_COMPANY_SETUP.md) takes a fresh
-deployment from empty database to first employee **without touching source
-code**.
+One deployment, one database, many companies. Every organization-owned table
+carries `organization_id` — all 94 of them — and the filter runs at the
+**manager**, so a query written without `organization=` anywhere in it still
+returns one customer's rows. That matters because two thirds of this codebase's
+queryset call sites are in services, reached from Celery and management
+commands as well as from HTTP, and a view-layer filter covers none of those.
+
+Tenant identity is derived from the **authenticated principal** and never from
+anything the client sends. With no organization bound, an organization-owned
+query **raises** rather than returning an empty result: an empty queryset
+inside a scheduled job is indistinguishable from "no work to do", and that is
+how a silent leak survives. The deliberate escape is `Model.objects.all_orgs()`
+— named and greppable, so `grep -rn all_orgs` is the audit of every place
+somebody stepped outside tenancy on purpose.
+
+A company is created by a platform administrator, who has **no access to any
+customer's HR data**: they hold no role grant in any organization, so every
+tenant queryset resolves to nothing. See
+[`docs/NEW_COMPANY_SETUP.md`](docs/NEW_COMPANY_SETUP.md) for that flow and
+[`docs/PLATFORM_ADMINISTRATION.md`](docs/PLATFORM_ADMINISTRATION.md) for the
+boundary.
+
+This is a rebuild of a mechanism that failed here once: a cross-tenant breach
+in 2026 caused by tenant context that had to be *set* before it was *read*. The
+proof that it is closed is generated, not asserted —
+[`TENANT_ISOLATION_TEST_REPORT.md`](TENANT_ISOLATION_TEST_REPORT.md) is written
+by the script that performs the attempts, and
+[`PRODUCTIZATION_AND_SAAS_AUDIT.md`](PRODUCTIZATION_AND_SAAS_AUDIT.md) records
+what the conversion found, including what is still missing.
 
 ## Starter templates, not assumptions
 
 The seeds provide **templates a company edits or replaces** — none are wired
-into the code as mandatory:
+into the code as mandatory. Provisioning runs them for a new organization
+automatically, from one list shared with the platform service so a real
+customer cannot silently lack what a hand-seeded one gets. Run by hand, each
+takes `--organization <slug>`: with exactly one organization the flag is
+optional, and with several the command **refuses to guess** rather than seeding
+the wrong customer's configuration, which `update_or_create` would report as
+success either way.
 
 | Seed | What it provides |
 |---|---|
 | `seed_roles` | 18 role templates across 5 authority layers with a reviewed permission matrix. Admins add, rename, deactivate roles and edit per-role permissions at runtime; custom roles need no code. |
 | `seed_leave` | A starter leave policy (types, accrual, notice rules) to edit under Organisation → Leave. |
-| `seed_demo_company` | A fully fictional company — "Demo Healthcare Pvt Ltd" by default; `--company/--legal-name/--domain` to change — one account per template role, strong unique passwords, removable with `--remove`. |
+| `seed_demo_company` | A fully fictional company — "Demo Healthcare Pvt Ltd" by default; `--company/--legal-name/--domain` to change — one account per template role, strong unique passwords, removable with `--remove`. Acts inside the named organization only: `--remove` takes that organization's members, not everybody who happens to share the email domain. |
 | `seed_demo` | DEBUG-only development fixture with known passwords and a populated recruitment pipeline. Refuses to run in production. |
 
 Statutory payroll (PF, ESI, Professional Tax, income tax) targets **India**;

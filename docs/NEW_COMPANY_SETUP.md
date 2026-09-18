@@ -1,188 +1,194 @@
-# Setting Up a New Company
+# Adding a Company to the Platform
 
-This takes one fresh deployment from nothing to a working HRMS for a new
-company, **without editing source code at any step**. Everything
-company-specific is either an environment variable (secrets, endpoints) or a
-database record you create through the app (structure, policy, branding).
+This takes one company from nothing to a working HRMS, **without editing source
+code at any step**. Everything company-specific is a database record created
+through the app, or a per-organization configuration row — never a code change,
+and no longer a separate deployment.
 
-Time budget: an hour for the infrastructure, then as long as your HR takes to
-enter the org structure.
+> **This document changed meaning on 2026-09-18.** It used to say: clone the
+> repository again, create another database, write another `.env`, point
+> another domain at it. That was correct while each deployment served one
+> company. The product is now multi-tenant — many companies share one
+> deployment and one database, isolated at the query layer — so adding a
+> company is a **provisioning action**, not an installation. The install steps
+> below still exist; they just happen once for the platform rather than once
+> per customer.
+
+Time budget: the deployment is an hour, once. A company after that is minutes
+to provision, then as long as its HR takes to enter the org structure.
 
 ---
 
-## Part 1 — Infrastructure (done once per company, by an operator)
+## Part 0 — The deployment (once, for the platform)
+
+Skip this entirely if the platform is already running; adding the second
+company does not repeat any of it.
 
 ### 1. Install
 
 ```bash
-git clone <this repository> company-a-hrms && cd company-a-hrms
+git clone <this repository> hrms-platform && cd hrms-platform
 ```
 
-Each company gets its **own clone, own database, own `.env`, own domain**.
-Nothing is shared between deployments.
+### 2. Database
 
-### 2. Configure the database
+Create an empty PostgreSQL 16 database and a user that owns it. **One
+database serves every customer.** Isolation is enforced by the tenant
+predicate at the manager, not by separate databases — see
+[`../PRODUCTIZATION_AND_SAAS_AUDIT.md`](../PRODUCTIZATION_AND_SAAS_AUDIT.md) §5
+for what enforces it and
+[`../TENANT_ISOLATION_TEST_REPORT.md`](../TENANT_ISOLATION_TEST_REPORT.md) for
+the evidence.
 
-Create an empty PostgreSQL 16 database and a user that owns it. Nothing else
-touches this database.
-
-### 3. Configure environment variables
+### 3. Environment variables
 
 ```bash
 cd apps/api && cp .env.example .env
 ```
 
-Fill in every value the file names. The critical ones:
+`.env` now carries **deployment** settings: the database, the secret key, the
+allowed hosts, the frontend URL, and the platform's own SMTP for mail sent
+before any customer exists. Per-company settings that used to live here — a
+company's own SMTP and sender identity, its HR mailbox, its biometric device
+endpoint and credentials — are configuration rows on the organization, resolved
+per organization with these as the fallback. Never another organization's.
 
-| Variable | What it is |
-|---|---|
-| `SECRET_KEY`, `JWT_SIGNING_KEY` | Fresh random values per company — the file shows the generation commands. Never reuse across companies. |
-| `FIELD_ENCRYPTION_KEY` | Encrypts PAN/Aadhaar/bank numbers at rest. **Back it up outside the database**; losing it makes that data permanently unreadable. |
-| `DATABASE_URL` | This company's database. |
-| `FRONTEND_URL` | The https URL employees will use. Appears in every email link. |
-| `EMAIL_*` | The company's SMTP. Use a mailbox on a domain whose SPF, DKIM and DMARC are set up, or credential emails will land in spam. |
-| `ADMIN_BOOTSTRAP_TOKEN` | A one-time token for step 6. **Remove it after bootstrap** — while unset, the bootstrap URL does not exist. |
-
-Integrations (eSSL biometric devices, Google Forms/Calendar) stay off until
-configured — the system runs fully without them.
-
-### 4. Start the application
+### 4. Start it
 
 ```bash
-cd deploy && docker compose up -d --build
+docker compose up -d --build
+docker compose exec api python manage.py migrate
+docker compose exec api python manage.py seed_statutory      # India PF/ESI/PT tables
+docker compose exec api python manage.py seed_plans          # the plans you sell
+docker compose exec api python manage.py sync_beat_schedule  # scheduled jobs
 ```
 
-(or run api + web + worker directly as in the README's Quick start).
-Migrations run automatically on API start. Then seed the role templates:
+`seed_statutory` is deliberately per-deployment, not per-customer: PF, ESI and
+Professional Tax tables are facts about the Republic of India, and one verified
+copy is the point. They arrive as **drafts** that each customer's Finance must
+certify in-app before a payroll run using them can be approved.
+
+### 5. Create the platform administrator
 
 ```bash
-docker compose exec api python manage.py seed_roles       # role templates + permission matrix
-docker compose exec api python manage.py seed_leave       # starter leave types & policy
-docker compose exec api python manage.py seed_statutory   # Indian rate sets, as DRAFTS to certify
-docker compose exec api python manage.py seed_onboarding  # document types, checklist, letters
-docker compose exec api python manage.py seed_workflows   # example hiring pipelines
-docker compose exec api python manage.py seed_offboarding # exit clearance template
+docker compose exec api python manage.py bootstrap_platform_admin --email ops@yourcompany.example
 ```
 
-Every one of these seeds **templates the company edits in the app** — nothing
-about them is mandatory. After bootstrap (next step), verify the install:
-
-```bash
-docker compose exec api python - <<'PY'
-import os, django
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
-django.setup()
-exec(open("scripts/verify_fresh_install.py").read())
-PY
-```
-
-### 5. (Optional) explore with a fictional company first
-
-```bash
-docker compose exec api python manage.py seed_demo_company
-```
-
-creates "Demo Healthcare Pvt Ltd" with one login per template role
-(credentials written to `demo-credentials.txt` under the media directory).
-When done: `manage.py seed_demo_company --remove`. Skip this entirely for a
-real rollout.
-
-### 6. Create the administrator
-
-```bash
-docker compose exec api python manage.py bootstrap_admin --email admin@company-a.example
-```
-
-Then **remove `ADMIN_BOOTSTRAP_TOKEN` from `.env`** and restart.
+A platform administrator runs the SaaS: organizations, plans, subscriptions,
+suspension and restoration. They hold **no role grant in any organization**, so
+every customer queryset resolves to nothing and every customer route refuses
+them. That is structural, not a policy — see
+[`PLATFORM_ADMINISTRATION.md`](PLATFORM_ADMINISTRATION.md).
 
 ---
 
-## Part 2 — Company configuration (done in the app, by the Admin)
+## Part 1 — Provision the company (platform administrator)
 
-Sign in as the administrator. Everything below is under **Organisation** in
-the left menu unless noted.
+One atomic service call creates the organization, its settings, a trial
+subscription, its full configuration (roles and the permission matrix, leave,
+onboarding, offboarding, workflows, attendance), the administrator's account,
+their membership and role grant, and the audit trail — then schedules the
+invitation email after commit. **A failure at any step rolls the whole
+organization back**, so a retry is clean and there is no half-provisioned
+tenant to diagnose.
 
-### 7. Company identity
+> **Known gap: there is no button or command for this yet.** The service is
+> complete and tested, but the console lists organizations read-only and no
+> management command wraps it, so today provisioning runs from a shell. A
+> `POST` route or a command is the missing piece, not the flow.
 
-Organisation → **Settings**: display name, legal name, GSTIN/PAN/TAN/CIN,
-EPF and ESI registration numbers, financial-year start month, currency,
-timezone, employee-code prefix and starting number.
+```bash
+docker compose exec api python manage.py shell -c "
+from apps.platform.services.provisioning import provision_organization
+result = provision_organization(
+    name='Company A',
+    slug='company-a',
+    admin_email='admin@company-a.example',
+    admin_first_name='Asha',
+    admin_last_name='Rao',
+    city='Pune',
+    state='MH',
+)
+print(result.organization.slug, result.admin.email)
+print('temporary password:', result.temporary_password)
+"
+```
 
-### 8. Upload the logo
+The new organization starts at **`PENDING_SETUP`**, which is a *working* state,
+not a locked one: the administrator can read and write, because they are about
+to do the setup. The temporary password forces a change at first sign-in.
 
-Same screen: logo and authorised-signatory signature images. The logo appears
-on the login screen, the app sidebar, the public job-application page, offer
-letters and payslips — all from this one upload. The signatory appears on
-generated letters.
-
-### 9. Departments — 10. Designations — 11. Locations — 12. Levels
-
-Create the company's own structure. Levels carry the authority **layer**
-(1 Leadership … 5 Staff) that the permission scopes and reporting-manager
-rules read; name them whatever the company likes.
-
-### 13. Roles and permissions
-
-Organisation → **Roles**. The seeded 18 roles are a starting template:
-rename, deactivate, or ignore them and create your own. Each role carries
-per-resource, per-action permission scopes (none / self / team / department /
-organisation) editable here. Two invariants the product enforces regardless
-of configuration: nobody both hires and releases pay, and payroll approval
-always requires a second person.
-
-### 14. Leave policy
-
-Organisation → **Leave**: leave types (paid/unpaid), annual entitlement,
-accrual, carry-forward, notice-period rules, the leave-year start, holiday
-calendars per location, weekly-off days.
-
-### 15. Attendance rules
-
-Attendance → **eSSL / shift rules**: per-location working hours, full-day
-hours, grace minutes, monthly late allowance, half-day threshold. If the
-company uses eSSL biometric devices, set the `ESSL_*` variables in `.env`,
-then register devices and map employee device-IDs (one per site an employee
-works at). Leave `ATTENDANCE_AFFECTS_PAYROLL=false` until attendance data is
-trusted; flip it deliberately.
-
-### 16. Payroll
-
-Payroll → **Settings**: salary components (earnings, and which count as PF
-wage), statutory rate sets. Rate tables for PF/ESI/PT/income-tax ship as
-fixtures; **Finance must review and certify each one in-app** — a run
-computed on uncertified rates cannot be approved. Per-employee statutory
-enrolment (PF/ESI/PT/TDS) is set on each salary structure.
-
-### 17. Email
-
-Already configured in `.env` (step 3). Optionally set the `HR_*` variables
-for a separate HR mailbox for credential emails. Sender identity should match
-a domain the company controls with SPF + DKIM + DMARC published.
-
-### 18. Integrations
-
-All optional, all env-driven: eSSL (`ESSL_*`), Google Forms application
-intake (`GOOGLE_FORMS_*`), Calendar/Meet interview invites
-(`GOOGLE_CALENDAR_*`). Each degrades gracefully when unset — recruitment
-falls back to the built-in public application link, which needs nothing.
-
-### 19. Administrator hygiene
-
-Confirm the bootstrap token is removed (step 6), and that
-`demo-credentials.txt` is deleted if the demo seed was ever run on this
-instance.
-
-### 20. Start adding employees
-
-People → Employees → **Add employee**. Creating an employee atomically
-creates their login, assigns their role, issues an onboarding checklist and
-emails credentials to their personal address. From here the system runs
-itself: onboarding → attendance → leave → payroll.
+Hand the administrator their address and the sign-in URL. Do not send the
+temporary password over the same channel as the address.
 
 ---
 
-## Re-deploying for another company
+## Part 2 — The setup wizard (the company's administrator)
 
-Repeat this document with a new clone, new database, new `.env`, new domain.
-No step above ever required editing a source file — if you find one that
-does, that is a product bug; please report it.
+Sign in, change the password, and the app opens the setup wizard. Ten steps,
+each writing to the real domain tables through endpoints that already exist:
+
+| # | Step | Required to finish | Done when |
+|---|---|---|---|
+| 1 | Company profile | Yes | Legal name, address and statutory identifiers are recorded |
+| 2 | Departments | Yes | At least one exists |
+| 3 | Locations | Yes | At least one exists |
+| 4 | Designations | Yes | At least one exists |
+| 5 | Roles and permissions | Yes | The seeded role set is reviewed — rename, deactivate, or add your own |
+| 6 | Leave policy | Yes | Types and accrual rules are in place |
+| 7 | Attendance policy | Yes | Working hours and shift rules are set |
+| 8 | Payroll and compliance | No | Salary components and statutory configuration are set |
+| 9 | Email configuration | No | The company's sender identity is configured, or the platform's is accepted |
+| 10 | Employees | No | At least one employee exists |
+
+The last three are optional on purpose: a company can go live and start using
+attendance and leave before payroll is configured, before it has replaced the
+platform's sender identity, and before anybody is hired into it.
+
+**Progress is computed, never stored.** Each step's completion is derived from
+the real tables, so closing the browser loses nothing and deleting the last
+department honestly reopens that step. There is no wizard state to go stale.
+
+`POST /org/setup/finish/` is the single transition out of `PENDING_SETUP` to
+`ACTIVE`. It refuses while a required step is unsatisfied and **names** the
+steps that are missing rather than failing vaguely.
+
+### Roles are yours
+
+The seeded roles are **defaults, not system roles**. Rename them, deactivate
+them, edit their permission scopes, or create entirely different ones — no code
+path tests for a role code. A brand-new role works through the API with no
+code change.
+
+---
+
+## Part 3 — Running it
+
+Adding an employee atomically creates their login, assigns their role, issues
+an onboarding checklist and emails credentials to their personal address. From
+there the system runs itself: onboarding → attendance → leave → payroll.
+
+Two things worth knowing on day one:
+
+- **One login belongs to one company.** Email is the username and is unique
+  platform-wide, so if an address already has an account anywhere on the
+  platform, another company cannot invite it. That is a deliberate V1 clamp —
+  see [`../PRODUCTIZATION_AND_SAAS_AUDIT.md`](../PRODUCTIZATION_AND_SAAS_AUDIT.md) §7.
+- **Seats are enforced at creation**, under a row lock, and refuse with a
+  message naming the limit rather than failing at some later step.
+
+---
+
+## Adding another company
+
+Repeat **Part 1 only**. No new clone, no new database, no new `.env`, no new
+domain, no downtime for the customers already running. If you find a step that
+requires editing a source file, that is a product bug; please report it.
+
+## Running a single company on your own hardware
+
+Unchanged, and it is the same code path rather than a separate mode: install as
+in Part 0, provision one organization, and every command that takes
+`--organization` accepts being told nothing at all while exactly one exists.
+With several, those commands **refuse to guess** — seeding or purging the wrong
+customer reports success either way, so stopping is the only safe answer.
