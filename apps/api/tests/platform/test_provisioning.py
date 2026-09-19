@@ -292,3 +292,143 @@ def test_statutory_rates_are_not_seeded_per_organization():
     around.
     """
     assert not any(key == "statutory" for key, _what, _fn in CONFIG_SEEDS)
+
+
+# ---------------------------------------------------------------------------
+# The command: the operator's door to the same service
+# ---------------------------------------------------------------------------
+
+
+def test_the_command_provisions_a_customer(db, settings):
+    """
+    `manage.py provision_organization` is the entry point a deployment without
+    a console still needs -- and the one that existed for neither for a stage,
+    while the service was reachable only from a Django shell.
+    """
+    from django.core.management import call_command
+
+    from apps.accounts.models import Role
+    from apps.organization.models import (
+        Organization,
+        OrganizationMembership,
+        OrgStatus,
+    )
+
+    call_command(
+        "provision_organization",
+        name="Aperture Systems",
+        admin_email="admin@aperture.example",
+        city="Pune",
+        verbosity=0,
+    )
+
+    organization = Organization.objects.get(slug="aperture-systems")
+    assert organization.status == OrgStatus.PENDING_SETUP
+    membership = OrganizationMembership.objects.get(organization=organization)
+    assert membership.user.email == "admin@aperture.example"
+    assert membership.user.must_change_password
+    assert Role.objects.all_orgs().filter(organization=organization).exists()
+
+
+def test_the_command_refuses_rather_than_traces_back(db):
+    """
+    A taken slug is an answer, not a crash. `CommandError` prints one line;
+    an unhandled `ProvisioningError` prints a traceback that reads like a bug
+    in the product.
+    """
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    from apps.organization.models import Organization
+
+    call_command(
+        "provision_organization",
+        name="Aperture Systems",
+        admin_email="admin@aperture.example",
+        verbosity=0,
+    )
+
+    with pytest.raises(CommandError, match="already taken"):
+        call_command(
+            "provision_organization",
+            name="Aperture Systems",
+            admin_email="second@aperture.example",
+            verbosity=0,
+        )
+
+    with pytest.raises(CommandError, match="one organization"):
+        call_command(
+            "provision_organization",
+            name="Another Company",
+            admin_email="admin@aperture.example",
+            verbosity=0,
+        )
+
+    assert Organization.objects.filter(name="Another Company").count() == 0
+
+
+@pytest.fixture
+def invitation(monkeypatch):
+    """
+    Control whether the invitation reaches the administrator, and let it run.
+
+    Two pieces of test machinery, both needed for an honest assertion. The send
+    is scheduled with `transaction.on_commit`, which never fires inside a test's
+    transaction -- so without running it inline, `invitation_sent` is False here
+    whatever the mail layer does, and the fallback branch would look correct for
+    the wrong reason. And the send itself is replaced, because "the SMTP server
+    refused it" is the condition under test and a working locmem backend cannot
+    produce it.
+    """
+    from django.db import transaction
+
+    from apps.accounts.services import passwords
+
+    monkeypatch.setattr(transaction, "on_commit", lambda fn, **kw: fn())
+
+    def _set(delivered: bool):
+        monkeypatch.setattr(
+            passwords, "send_account_created_email", lambda **kwargs: delivered
+        )
+
+    return _set
+
+
+def test_the_command_prints_the_password_only_when_the_invitation_failed(
+    db, invitation
+):
+    """
+    Mail is the intended channel: it does not leave the credential in a
+    terminal scrollback or a shell history. But a fresh deployment often has no
+    SMTP yet, and an administrator who cannot be told their password cannot
+    sign in to the company just created for them -- so the fallback exists, and
+    announces itself.
+    """
+    from io import StringIO
+
+    from django.core.management import call_command
+
+    invitation(True)
+    sent = StringIO()
+    call_command(
+        "provision_organization",
+        name="Mailed Co",
+        admin_email="admin@mailed.example",
+        stdout=sent,
+    )
+    assert "invitation" in sent.getvalue().lower()
+    assert "Temporary password" not in sent.getvalue()
+
+    # Mail that did not go out: the organization is still provisioned
+    # correctly, and the credential is printed BECAUSE it reached nobody else.
+    invitation(False)
+    unsent = StringIO()
+    call_command(
+        "provision_organization",
+        name="Unmailed Co",
+        admin_email="admin@unmailed.example",
+        stdout=unsent,
+    )
+    output = unsent.getvalue()
+    assert "did NOT go out" in output
+    assert "Temporary password:" in output

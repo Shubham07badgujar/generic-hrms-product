@@ -350,3 +350,154 @@ def _fill(company, count):
                 level=level,
                 date_of_joining=dt.date(2024, 1, 1),
             )
+
+
+# ---------------------------------------------------------------------------
+# Provisioning: the entry point the service spent a stage without
+# ---------------------------------------------------------------------------
+#
+# `provision_organization()` was atomic, audited and tested, and reachable from
+# nothing but the test suite: the console listed organizations read-only and no
+# command wrapped it, so onboarding a customer meant a Django shell. These
+# cover both doors, and the thing neither may do -- put a live credential in a
+# response body.
+
+
+def test_the_console_provisions_a_customer(console, plans):
+    from apps.accounts.models import Role, UserRole
+    from apps.organization.models import Organization, OrganizationMembership
+
+    response = console.post(
+        "/api/v1/platform/organizations/",
+        {
+            "name": "Aperture Systems",
+            "slug": "aperture",
+            "admin_email": "admin@aperture.example",
+            "admin_first_name": "Asha",
+            "city": "Pune",
+            "state": "MH",
+            "plan": "starter",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201, response.content[:300]
+    body = response.json()
+    assert body["slug"] == "aperture"
+    assert body["status"] == "pending_setup", "a new customer starts in setup"
+    assert body["subscription"]["plan_code"] == "starter"
+    assert body["admin_email"] == "admin@aperture.example"
+
+    organization = Organization.objects.get(slug="aperture")
+    admin = OrganizationMembership.objects.get(organization=organization).user
+    assert admin.email == "admin@aperture.example"
+    assert admin.must_change_password
+
+    # The configuration came with it: an administrator lands in a working
+    # company, not an empty row.
+    assert Role.objects.all_orgs().filter(organization=organization).count() >= 18
+    assert UserRole.objects.all_orgs().filter(
+        user=admin, role__organization=organization, role__code="admin"
+    ).exists()
+
+
+def test_provisioning_never_returns_the_temporary_password(console, plans):
+    """
+    The credential goes by email, to the person who needs it.
+
+    A response body travels through logs, proxies and browser tooling on its
+    way to the console, and the password is stored nowhere afterwards -- so
+    putting it here would be the one copy that leaks. `invitation_sent` is what
+    the operator gets instead, because nobody should be told credentials were
+    sent when they were not.
+    """
+    from apps.accounts.models import User
+
+    response = console.post(
+        "/api/v1/platform/organizations/",
+        {"name": "Fairhaven Retail", "admin_email": "admin@fairhaven.example"},
+        format="json",
+    )
+    assert response.status_code == 201, response.content[:300]
+
+    serialized = response.content.decode()
+    assert "password" not in serialized.lower(), serialized[:300]
+
+    # The credential the service generated is genuinely absent, not merely
+    # unnamed: nothing in the body authenticates as this administrator.
+    admin = User.objects.get(email="admin@fairhaven.example")
+    for value in response.json().values():
+        assert not (isinstance(value, str) and admin.check_password(value))
+
+    # The operator is told whether it reached them, which is the part they can
+    # act on. False here rather than True: the send is scheduled with
+    # `on_commit`, which does not fire inside a test's transaction. Its
+    # accuracy is asserted where it can be -- see the command's own test.
+    assert "invitation_sent" in response.json()
+
+
+def test_the_console_refuses_a_slug_that_is_taken(console, company):
+    response = console.post(
+        "/api/v1/platform/organizations/",
+        {"name": "Second Northwind", "slug": "northwind",
+         "admin_email": "second@northwind.example"},
+        format="json",
+    )
+
+    assert response.status_code == 422, response.content[:300]
+    assert "northwind" in response.content.decode().lower()
+
+
+def test_the_console_refuses_an_address_that_already_has_an_account(console, company):
+    """
+    The V1 identity clamp, surfaced where an operator will meet it: one login
+    belongs to one organization, so the second company cannot have this admin.
+    """
+    response = console.post(
+        "/api/v1/platform/organizations/",
+        {"name": "Third Company", "admin_email": company.admin.email},
+        format="json",
+    )
+
+    assert response.status_code == 422, response.content[:300]
+    assert "one organization" in response.content.decode().lower()
+
+
+def test_an_organization_admin_cannot_provision_a_company(company, plans):
+    """
+    The platform boundary, in the direction that matters commercially.
+
+    A customer's Admin holds Scope.ALL across their own company; creating
+    companies is not theirs, and the route refuses them like every other
+    platform route.
+    """
+    from apps.organization.models import Organization
+
+    client = _signed_in(company.admin)
+    response = client.post(
+        "/api/v1/platform/organizations/",
+        {"name": "Self Serve", "admin_email": "self@serve.example"},
+        format="json",
+    )
+
+    assert response.status_code in (403, 404), response.content[:200]
+    assert not Organization.objects.filter(slug="self-serve").exists()
+
+
+def test_organizations_cannot_be_edited_or_deleted_through_the_console(console, company):
+    """
+    Read and create, nothing else.
+
+    Commercial state moves through `subscription-status`, which holds the rules
+    and writes the audit row. There is deliberately no API that deletes a
+    customer's data in one call: that is a lifecycle sequence with waiting
+    periods, not a verb.
+    """
+    detail = f"/api/v1/platform/organizations/{company.organization.pk}/"
+
+    assert console.patch(detail, {"name": "Renamed"}, format="json").status_code == 405
+    assert console.put(detail, {"name": "Renamed"}, format="json").status_code == 405
+    assert console.delete(detail).status_code == 405
+
+    company.organization.refresh_from_db()
+    assert company.organization.name == "Northwind Health"

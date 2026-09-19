@@ -36,7 +36,11 @@ from rest_framework.routers import DefaultRouter
 from apps.organization.models import OPERATIONAL_STATUSES, Organization
 from apps.platform.models import Plan, Subscription
 from apps.platform.services import subscriptions as subscription_services
-from core.access.drf import PlatformAPIView, PlatformReadOnlyModelViewSet
+from core.access.drf import (
+    PlatformAPIView,
+    PlatformModelViewSet,
+    PlatformReadOnlyModelViewSet,
+)
 from core.api.exceptions import BusinessRuleError
 from core.querysets import deferred
 
@@ -86,7 +90,33 @@ class PlatformOrganizationSerializer(serializers.ModelSerializer):
         return SubscriptionSerializer(subscription).data
 
 
-class PlatformOrganizationViewSet(PlatformReadOnlyModelViewSet):
+class ProvisionOrganizationSerializer(serializers.Serializer):
+    """
+    What creating a customer takes. Shape only -- every rule lives in the
+    service, which refuses before the first write.
+
+    `slug` is optional because the service derives one from the name and
+    refuses if that does not reduce to something usable; `plan` is a code
+    rather than an id, because an operator types a plan they sell, not a UUID.
+    """
+
+    name = serializers.CharField(max_length=200)
+    admin_email = serializers.EmailField()
+    slug = serializers.SlugField(max_length=60, required=False, allow_blank=True)
+    legal_name = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    admin_first_name = serializers.CharField(max_length=80, required=False, allow_blank=True)
+    admin_last_name = serializers.CharField(max_length=80, required=False, allow_blank=True)
+    primary_email = serializers.EmailField(required=False, allow_blank=True)
+    phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    city = serializers.CharField(max_length=80, required=False, allow_blank=True)
+    state = serializers.CharField(max_length=80, required=False, allow_blank=True)
+    country = serializers.CharField(max_length=2, required=False, allow_blank=True)
+    timezone_name = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    currency = serializers.CharField(max_length=3, required=False, allow_blank=True)
+    plan = serializers.CharField(max_length=40, required=False, allow_blank=True)
+
+
+class PlatformOrganizationViewSet(PlatformModelViewSet):
     """
     Every organization on the deployment, which is the one queryset in the
     product that is SUPPOSED to span tenants.
@@ -95,9 +125,17 @@ class PlatformOrganizationViewSet(PlatformReadOnlyModelViewSet):
     declared TENANT_EXEMPT -- it IS the tenant, so scoping it by itself is
     circular -- and because reaching this view at all requires the platform
     flag.
+
+    READ AND CREATE, nothing else. `http_method_names` is what makes that true
+    rather than a convention: PUT, PATCH and DELETE answer 405. An
+    organization's commercial state moves through `subscription-status`, which
+    holds the rules and writes the audit row, and there is deliberately no API
+    that deletes a customer's data in one call -- that is a lifecycle sequence
+    with waiting periods, not a verb.
     """
 
     serializer_class = PlatformOrganizationSerializer
+    http_method_names = ["get", "post", "head", "options"]
     queryset = deferred(Organization)
     filterset_fields = ["status"]
     search_fields = ["name", "legal_name", "slug", "primary_email"]
@@ -145,6 +183,50 @@ class PlatformOrganizationViewSet(PlatformReadOnlyModelViewSet):
     def _refuse(self, exc):
         """A service refusal is 422: well-formed, permitted, and not allowed."""
         raise BusinessRuleError(str(exc)) from exc
+
+    def create(self, request, *args, **kwargs):
+        """
+        Provision a customer: organization, configuration, first administrator.
+
+        One atomic service call, so a failure anywhere leaves no organization
+        rather than half of one.
+
+        THE TEMPORARY PASSWORD IS NOT IN THE RESPONSE. The service returns it
+        to its caller and the invitation email carries it to the person who
+        needs it; putting it in an HTTP response would copy a live credential
+        into whatever logs, proxies and browser tooling sit between here and
+        the console. `invitation_sent` says whether that email actually went,
+        because nobody should be told credentials were sent when they were not
+        -- and when it is false the remedy is an operator setting a password
+        out of band, not a lookup, since it is stored nowhere.
+        """
+        from apps.platform.services.provisioning import (
+            ProvisioningError,
+            provision_organization,
+        )
+
+        payload = ProvisionOrganizationSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        fields = dict(payload.validated_data)
+
+        plan_code = fields.pop("plan", "")
+        plan = None
+        if plan_code:
+            plan = Plan.objects.filter(code=plan_code, is_active=True).first()
+            if plan is None:
+                raise BusinessRuleError(f"No active plan with code {plan_code!r}.")
+
+        try:
+            result = provision_organization(actor=request.user, plan=plan, **fields)
+        except ProvisioningError as exc:
+            self._refuse(exc)
+
+        body = self.get_serializer(
+            self.get_queryset().get(pk=result.organization.pk)
+        ).data
+        body["admin_email"] = result.admin.email
+        body["invitation_sent"] = result.invitation_sent
+        return Response(body, status=201)
 
     @action(detail=True, methods=["post"], url_path="change-plan")
     def change_plan(self, request, pk=None):
