@@ -231,13 +231,24 @@ flags at once.
 invitation email on commit → audit rows. A failure at any step rolls the
 organization back, so a retry is clean and there is no half-provisioned tenant.
 
-**No operator entry point to provisioning.** `provision_organization()` is
-complete, atomic and tested — and called from nothing but tests. The platform
-console's organization viewset is **read-only**, and no management command
-wraps the service, so creating a customer today means opening a Django shell.
-The service is the hard part and it exists; the missing piece is a `POST`
-route or a command, and until one lands "a platform admin creates an
-organization" is true of the service and not of the product (§12).
+**Two entry points, added after this audit first recorded their absence**
+(`967f92c`). For a stage, `provision_organization()` was atomic, audited and
+tested — and called by nothing but the test suite, so onboarding a customer
+meant a Django shell. Now: `manage.py provision_organization` for a deployment
+with no console, and `POST /api/v1/platform/organizations/` for one with. The
+viewset is read-and-create; PUT, PATCH and DELETE answer 405, because
+commercial state moves through `subscription-status` and no API deletes a
+customer's data in one call.
+
+Neither returns the temporary password. The service hands it to its caller and
+the invitation email carries it to the person who needs it; an HTTP body would
+copy a live credential through every log and proxy in between. The API reports
+`invitation_sent`; the command prints the password **only** when that
+invitation did not go out, because a fresh deployment often has no SMTP and an
+administrator who cannot be told their password cannot sign in at all.
+**Still missing: a resend.** A failed invitation needs an operator running
+`manage.py changepassword`, since the password is stored nowhere and there is
+no self-service reset.
 
 **Not built: `SupportGrant`.** The design exists in the plan — a time-limited,
 organization-approved, read-only grant whose scope comes from a code constant
@@ -361,7 +372,7 @@ Stated plainly, because the gaps are the useful half of an audit.
 | **Employee import (Stage 5e)** | Not started. `ImportBatch` still requires a job opening and has no `kind` discriminator; there is no `EmployeeSpec`. Three traps are already identified: 200 imported employees currently fire 200 separate welcome emails each bounded by a 15-second SMTP timeout; the employee-code counter must be locked once per batch, not per row; and plan limits must refuse the **whole batch** rather than import a partial staff list. |
 | **Frontend SaaS surface (Stage 6)** | Not started. No `hasFeature()`, no `/setup` or `/suspended` guards, no setup-wizard UI, no plan page, no platform console. Every backend endpoint they need exists. |
 | **Demo data profiles (Stage 6)** | Not started. Healthcare / Technology / Retail at 20/5/3, 15/4/2, 10/3/2, on deliberately different plans so every SaaS mechanism is exercisable by hand. |
-| **An operator entry point to provisioning** | Missing. The service is atomic and tested; nothing but tests calls it. The console lists organizations read-only and there is no `provision_organization` management command, so onboarding a customer requires a Django shell. |
+| **Resending an invitation** | Missing. Provisioning itself now has both a command and a console route (`967f92c`), but if the invitation email fails the only remedy is an operator running `manage.py changepassword`: the temporary password is stored nowhere and there is no self-service reset for an administrator, who has no Employee record and so cannot use the credential-reissue path. |
 | **Layer E: database composite foreign keys** | Not implemented. Raw SQL and bulk paths are covered by the manager and the stamping mixin, not by the database. |
 | **`SupportGrant`** | Not implemented (§8). |
 | **Database-level append-only audit** | `ARCHITECTURE.md` specifies `REVOKE UPDATE, DELETE ON audit_auditlog` from the application role. Nothing in this repository issues it — not a migration, not the deploy entrypoint. The Python guards hold, but a raw `UPDATE` would succeed. |
