@@ -40,6 +40,37 @@ export type Scope = 'none' | 'self' | 'team' | 'department' | 'all'
 export type DashboardKey = 'ceo' | 'admin' | 'department' | 'manager' | 'executive' | 'self'
 
 /** `GET /me/permissions/` — advisory projection of the server's AccessContext. */
+/**
+ * A module the organization's plan may include.
+ *
+ * Mirrors `core.access.features.FeatureCode`. The backend holds the negative
+ * form (which features a plan EXCLUDES, so that adding one does not switch it
+ * off for every existing customer) and inverts it here, so on this side
+ * absence means unavailable — the same truthiness rule as `grants`.
+ */
+export type FeatureCode =
+  | 'core'
+  | 'recruitment'
+  | 'onboarding'
+  | 'offboarding'
+  | 'attendance'
+  | 'attendance_biometric'
+  | 'leave'
+  | 'payroll'
+  | 'assets'
+  | 'it_accounts'
+  | 'reporting'
+
+/** Lifecycle of the organization itself, which decides whether it may be used. */
+export type OrganizationStatus =
+  | 'pending_setup'
+  | 'trial'
+  | 'active'
+  | 'suspended'
+  | 'cancelled'
+  | 'archived'
+  | ''
+
 export interface PermissionSnapshot {
   dashboard: DashboardKey
   read_only: boolean
@@ -48,6 +79,11 @@ export interface PermissionSnapshot {
   roles: RoleCode[]
   /** resource -> action -> scope */
   grants: Record<string, Record<string, Scope>>
+  /** What this organization's plan includes. Absence means unavailable. */
+  features: FeatureCode[]
+  /** Carried even on a denial, so a refusal can say WHY — a suspended
+   *  customer and a user without permission are otherwise the same 403. */
+  organization_status: OrganizationStatus
   notice: string
 }
 

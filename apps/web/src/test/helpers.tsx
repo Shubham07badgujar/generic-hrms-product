@@ -6,7 +6,29 @@ import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ToastProvider } from '@/components/ui/Toast'
 import { Permissions } from '@/lib/permissions'
-import type { PermissionSnapshot, RoleCode, Scope } from '@/lib/types'
+import type { FeatureCode, PermissionSnapshot, RoleCode, Scope } from '@/lib/types'
+
+/**
+ * Every module, for a test that is not about entitlement.
+ *
+ * The default is ALL features on purpose. A test asking whether an HR Head
+ * sees the payroll menu is asking about permissions; if the fixture quietly
+ * had no plan it would pass for the wrong reason, or fail for one. Tests that
+ * ARE about entitlement pass their own list.
+ */
+export const ALL_FEATURES: FeatureCode[] = [
+  'core',
+  'recruitment',
+  'onboarding',
+  'offboarding',
+  'attendance',
+  'attendance_biometric',
+  'leave',
+  'payroll',
+  'assets',
+  'it_accounts',
+  'reporting',
+]
 
 export function makeSnapshot(overrides: Partial<PermissionSnapshot> = {}): PermissionSnapshot {
   return {
@@ -16,6 +38,8 @@ export function makeSnapshot(overrides: Partial<PermissionSnapshot> = {}): Permi
     layers: [5],
     roles: [],
     grants: {},
+    features: ALL_FEATURES,
+    organization_status: 'active',
     notice: 'test',
     ...overrides,
   }

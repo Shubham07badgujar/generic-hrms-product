@@ -12,6 +12,7 @@
 
 import type { ReactNode } from 'react'
 import { ACTION, type Action, type Permissions, type Resource, RESOURCE } from '@/lib/permissions'
+import type { FeatureCode } from '@/lib/types'
 
 export interface NavItem {
   label: string
@@ -19,6 +20,21 @@ export interface NavItem {
   icon: ReactNode
   resource?: Resource
   action?: Action
+  /**
+   * The plan module this page belongs to, if it belongs to one.
+   *
+   * ENTITLEMENT, not permission, and the two are separate questions: `resource`
+   * asks whether this person may use the page, `feature` whether the company
+   * bought it. Both must pass.
+   *
+   * The authoritative map lives on the server (`FEATURE_OF_RESOURCE`, which a
+   * system check proves is total). This is a second, smaller statement of it,
+   * and the cost of the two disagreeing is bounded: a menu entry shown that
+   * should not be answers `feature_not_available` when clicked, and one hidden
+   * that should not be is reachable by URL. Neither is an access decision --
+   * the API refuses regardless of what this file believes.
+   */
+  feature?: FeatureCode
   /** Shown only when this predicate passes, for cases permissions can't express. */
   when?: (permissions: Permissions) => boolean
   /** Match child routes too (`/recruitment/jobs/123` highlights "Job openings"). */
@@ -28,6 +44,8 @@ export interface NavItem {
 export interface NavGroup {
   id: string
   label: string | null
+  /** Applies to every item in the group, for groups that ARE one module. */
+  feature?: FeatureCode
   items: NavItem[]
 }
 
@@ -71,6 +89,10 @@ export const NAV_SPEC: NavGroup[] = [
   {
     id: 'recruitment',
     label: 'Recruitment',
+    // The whole group is one module: a plan without recruitment has no
+    // pipeline, no jobs and no candidates, so the group disappears rather
+    // than emptying out one entry at a time.
+    feature: 'recruitment',
     items: [
       {
         label: 'Pipeline',
@@ -164,6 +186,7 @@ export const NAV_SPEC: NavGroup[] = [
         // The HR working queue: new joiners, overdue checklist items and
         // probations needing a decision.
         label: 'Onboarding',
+        feature: 'onboarding',
         to: '/onboarding',
         icon: ICONS.decision,
         resource: RESOURCE.ONBOARDING,
@@ -173,6 +196,7 @@ export const NAV_SPEC: NavGroup[] = [
         // Visible to anyone who can see an exit, which includes an employee
         // following their own. The page adapts to what they may do.
         label: 'Offboarding',
+        feature: 'offboarding',
         to: '/offboarding',
         icon: ICONS.offer,
         resource: RESOURCE.OFFBOARDING,
@@ -180,6 +204,7 @@ export const NAV_SPEC: NavGroup[] = [
       },
       {
         label: 'Assets',
+        feature: 'assets',
         to: '/assets',
         icon: ICONS.briefcase,
         resource: RESOURCE.ASSET,
@@ -199,6 +224,7 @@ export const NAV_SPEC: NavGroup[] = [
     items: [
       {
         label: 'Attendance',
+        feature: 'attendance',
         to: '/attendance',
         icon: ICONS.clock,
         resource: RESOURCE.ATTENDANCE,
@@ -207,17 +233,34 @@ export const NAV_SPEC: NavGroup[] = [
       // who hold SELF-scoped attendance rights — never see this item.
       {
         label: 'eSSL Integration',
+        // Its own feature, separate from attendance: a plan can include
+        // attendance without the biometric device integration, and that
+        // is a real difference in what was sold.
+        feature: 'attendance_biometric',
         to: '/attendance/essl',
         icon: ICONS.clock,
         resource: RESOURCE.ATTENDANCE_DEVICE,
       },
-      { label: 'Leave', to: '/leave', icon: ICONS.calendar, resource: RESOURCE.LEAVE_REQUEST },
-      { label: 'Payroll', to: '/payroll', icon: ICONS.wallet, resource: RESOURCE.PAYROLL_RUN },
+      {
+        label: 'Leave',
+        to: '/leave',
+        icon: ICONS.calendar,
+        resource: RESOURCE.LEAVE_REQUEST,
+        feature: 'leave',
+      },
+      {
+        label: 'Payroll',
+        to: '/payroll',
+        icon: ICONS.wallet,
+        resource: RESOURCE.PAYROLL_RUN,
+        feature: 'payroll',
+      },
       {
         // Package schedules. Everyone holds PACKAGE/VIEW at SELF for their
         // own summary (shown on My payslips), so the dashboard item needs
         // scope beyond self, not mere presence.
         label: 'Packages',
+        feature: 'payroll',
         to: '/payroll/packages',
         icon: ICONS.briefcase,
         resource: RESOURCE.PACKAGE,
@@ -228,18 +271,35 @@ export const NAV_SPEC: NavGroup[] = [
         // payroll staff who may only PROCESS runs still see (read-only) what
         // rules the figures came from, while employees see nothing.
         label: 'Payroll settings',
+        feature: 'payroll',
         to: '/payroll/settings',
         icon: ICONS.cog,
         resource: RESOURCE.STATUTORY_CONFIG,
       },
-      { label: 'Payslips', to: '/payslips', icon: ICONS.file, resource: RESOURCE.PAYSLIP },
+      {
+        label: 'Payslips',
+        to: '/payslips',
+        icon: ICONS.file,
+        resource: RESOURCE.PAYSLIP,
+        // Payroll, deliberately: a payslip is payroll output. On a
+        // downgrade the API keeps EXPORT and VIEW alive for a grace
+        // window so statutory records stay retrievable -- reachable by
+        // URL, which is why hiding a menu entry is not the control.
+        feature: 'payroll',
+      },
     ],
   },
   {
     id: 'insight',
     label: 'Insight',
     items: [
-      { label: 'Reports', to: '/reports', icon: ICONS.chart, resource: RESOURCE.REPORT },
+      {
+        label: 'Reports',
+        to: '/reports',
+        icon: ICONS.chart,
+        resource: RESOURCE.REPORT,
+        feature: 'reporting',
+      },
       { label: 'Audit log', to: '/audit', icon: ICONS.shield, resource: RESOURCE.AUDIT_LOG },
       {
         label: 'Settings',
@@ -252,11 +312,22 @@ export const NAV_SPEC: NavGroup[] = [
   },
 ]
 
-/** The groups this principal may see, with empty groups dropped. */
+/**
+ * The groups this principal may see, with empty groups dropped.
+ *
+ * Two independent questions, both of which must pass: does this person hold
+ * the permission, and does their organization's plan include the module. A
+ * customer on a plan without payroll has an HR Head who holds every payroll
+ * grant their role carries and no payroll to use them on -- so hiding the
+ * entry is about not offering a door that opens onto an upgrade prompt, and
+ * the API refuses the route either way.
+ */
 export function visibleNavigation(permissions: Permissions): NavGroup[] {
   return NAV_SPEC.map((group) => ({
     ...group,
     items: group.items.filter((item) => {
+      const feature = item.feature ?? group.feature
+      if (feature && !permissions.hasFeature(feature)) return false
       if (item.when && !item.when(permissions)) return false
       if (!item.resource) return true
       return permissions.can(item.resource, item.action ?? ACTION.VIEW)

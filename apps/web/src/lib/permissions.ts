@@ -13,7 +13,13 @@
  * Nothing more.
  */
 
-import type { PermissionSnapshot, RoleCode, Scope } from './types'
+import type {
+  FeatureCode,
+  OrganizationStatus,
+  PermissionSnapshot,
+  RoleCode,
+  Scope,
+} from './types'
 
 export const RESOURCE = {
   USER: 'user',
@@ -135,6 +141,39 @@ export class Permissions {
   get topLayer() {
     return Math.min(...(this.snapshot.layers.length ? this.snapshot.layers : [5]))
   }
+
+  /**
+   * Whether this organization's plan includes a module.
+   *
+   * The same truthiness rule as `can()`: absence means unavailable. A snapshot
+   * that arrived without a feature list therefore hides gated modules rather
+   * than showing them, which is the right way to be wrong here.
+   *
+   * ENTITLEMENT IS NOT PERMISSION, and the two are kept apart deliberately.
+   * `can()` asks whether this person may do a thing; this asks whether the
+   * company bought it. Both must be true to render a control, and NEITHER is
+   * what stops the request: a disabled module answers `feature_not_available`
+   * from the API whatever this returns.
+   */
+  hasFeature(feature: FeatureCode): boolean {
+    return (this.snapshot.features ?? []).includes(feature)
+  }
+
+  get features(): FeatureCode[] {
+    return this.snapshot.features ?? []
+  }
+
+  /**
+   * The organization's own lifecycle state.
+   *
+   * Not a permission: a suspended customer's users keep every grant they had
+   * and are refused anyway, which is exactly why this is carried separately.
+   * It is what lets the SPA show "this account is suspended" instead of a
+   * generic "you do not have access".
+   */
+  get organizationStatus(): OrganizationStatus {
+    return this.snapshot.organization_status ?? ''
+  }
 }
 
 /** Used before the snapshot loads, and for logged-out rendering. Denies all. */
@@ -145,5 +184,10 @@ export const DENY_ALL = new Permissions({
   layers: [],
   roles: [],
   grants: {},
+  // No features either: before a snapshot arrives the app knows neither what
+  // this person may do nor what their company bought, and both answers have
+  // to be "nothing" rather than "everything".
+  features: [],
+  organization_status: '',
   notice: 'No session.',
 })
