@@ -30,12 +30,18 @@ Neither is a coding problem, so neither has a half-written adapter.
 
 from __future__ import annotations
 
+from .employees import EMPLOYEES
 from .internshala import INTERNSHALA
 from .naukri import NAUKRI
 from .registry import ColumnSpec, PlatformSpec, get_platform, list_platforms, register
 from .unavailable import INDEED, LINKEDIN
 from .workindia import WORKINDIA
 
+# `EMPLOYEES` is deliberately NOT registered. This registry answers "which job
+# boards can we import candidates from", and `list_platforms()` is what the
+# candidate upload screen offers. A staff list is a different destination, not
+# another job board, and putting it here would offer "Employee list" as a
+# source of applicants. The employee importer holds its own spec directly.
 for _spec in (WORKINDIA, NAUKRI, INTERNSHALA, INDEED, LINKEDIN):
     register(_spec)
 
@@ -45,6 +51,7 @@ __all__ = [
     "get_platform",
     "list_platforms",
     "register",
+    "EMPLOYEES",
     "WORKINDIA",
     "NAUKRI",
     "INDEED",

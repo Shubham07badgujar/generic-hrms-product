@@ -73,22 +73,37 @@ def test_every_scheduled_task_exists_in_code():
     )
 
 
+#: Tasks queued by application code rather than by beat, each with the call
+#: site that queues it.
+#:
+#: An allowlist rather than a loosened rule. "Reachable" has to keep meaning
+#: something, and the failure this file exists to catch -- a task nobody ever
+#: runs -- looks identical to on-demand work unless somebody says which is
+#: which. Adding a name here is a claim that something calls it, and
+#: `test_on_demand_tasks_have_a_caller` checks the claim.
+ON_DEMAND_TASKS = {
+    "imports.send_import_welcome": "apps/imports/services/employee_import.py",
+}
+
+
 def test_every_task_in_code_is_reachable():
     """
     A task nobody schedules never runs. That is a decision, not an accident,
     so it has to be made here rather than by omission.
 
-    "Reachable" rather than "scheduled", because fanned-out work is deliberately
-    NOT in the schedule: a beat row per customer would make provisioning write
-    to the scheduler. A per-organization subtask is reachable when the
-    dispatcher it hangs off is scheduled, and that pairing is checked by name
-    so renaming one without the other fails here rather than in a worker log.
+    "Reachable" rather than "scheduled", for two reasons. Fanned-out work is
+    deliberately NOT in the schedule: a beat row per customer would make
+    provisioning write to the scheduler, so a per-organization subtask is
+    reachable when the dispatcher it hangs off is scheduled, checked by name so
+    renaming one without the other fails here rather than in a worker log. And
+    some work is queued by the product itself when a person does something --
+    those are named in ON_DEMAND_TASKS above.
     """
     scheduled = {task for _, task, _ in SCHEDULES}
 
     unreachable = set()
     for task in _declared_task_names():
-        if task in scheduled:
+        if task in scheduled or task in ON_DEMAND_TASKS:
             continue
         dispatcher = _dispatcher_of(task)
         if dispatcher is None or dispatcher not in scheduled:
@@ -96,8 +111,29 @@ def test_every_task_in_code_is_reachable():
 
     assert not unreachable, (
         f"Defined but never reached: {sorted(unreachable)}. Add it to "
-        f"SCHEDULES, give it a dispatcher that is scheduled, or delete it."
+        f"SCHEDULES, give it a dispatcher that is scheduled, declare it in "
+        f"ON_DEMAND_TASKS with the code that queues it, or delete it."
     )
+
+
+def test_on_demand_tasks_have_a_caller():
+    """
+    Guards the allowlist.
+
+    A name added here to silence the test above, for a task nothing actually
+    queues, would be exactly the dead task this file exists to find -- wearing
+    a label that says it is fine. So each entry names the file that queues it,
+    and that file has to mention the task.
+    """
+    for task, caller in ON_DEMAND_TASKS.items():
+        assert task in _declared_task_names(), (
+            f"{task} is listed as on-demand but no code declares it."
+        )
+        source = (APPS_ROOT / caller).read_text(encoding="utf-8")
+        attribute = task.rsplit(".", 1)[-1]
+        assert attribute in source, (
+            f"{caller} is named as what queues {task}, and does not mention it."
+        )
 
 
 def test_fanned_out_work_is_kept_out_of_the_schedule():

@@ -87,6 +87,35 @@ def _organization_id(organization):
 
 
 @transaction.atomic
+def seats_remaining(organization) -> int | None:
+    """
+    How many more employees this organization may have, or None for unlimited.
+
+    The read-only counterpart to `reserve_seats`, and deliberately NOT a second
+    opinion: both ask `active_employee_count` against the same limit. It takes
+    no lock, because nothing is being decided -- this is the number shown to a
+    person before they act, and by the time they do another hire may have
+    happened. The decision is `reserve_seats`, under a row lock, at the moment
+    of the write.
+
+    None for an organization with no subscription, matching `reserve_seats`
+    treating that as unlimited: a self-hosted deployment never bought seats.
+    """
+    from apps.platform.models import Subscription
+
+    subscription = (
+        Subscription.objects.filter(
+            organization_id=_organization_id(organization), is_active=True
+        )
+        .select_related("plan")
+        .first()
+    )
+    if subscription is None or subscription.employee_limit is None:
+        return None
+    used = active_employee_count(_organization_id(organization))
+    return max(subscription.employee_limit - used, 0)
+
+
 def reserve_seats(organization, *, count: int = 1):
     """
     Refuse if adding `count` employees would exceed the plan's seat limit.

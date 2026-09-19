@@ -289,18 +289,41 @@ def test_adding_import_granted_nothing_else():
     }
     assert holders == {"admin", "hr_head", "hr_manager", "recruiter"}
 
-    # And IMPORT appears on exactly one other resource: the eSSL sync
-    # trigger, which is the HR Head's alone (Admin's comes from RolePermission
-    # seeding of ADMIN_MANAGED, not from an explicit matrix cell).
+    # And IMPORT appears on exactly two other resources, both deliberate:
+    #
+    #   * ATTENDANCE_DEVICE, the eSSL sync trigger, which is the HR Head's
+    #     alone (Admin's comes from RolePermission seeding of ADMIN_MANAGED,
+    #     not from an explicit matrix cell);
+    #   * EMPLOYEE, bulk hire from a staff list, held by the three roles that
+    #     already hire one at a time. Separately grantable from EMPLOYEE/CREATE
+    #     for the same reason CANDIDATE/IMPORT is separate from CANDIDATE/
+    #     CREATE: hiring one person and hiring two hundred in a single action
+    #     are different amounts of trust.
+    #
+    # The set is asserted whole, not appended to, because the point of this
+    # test is that a new IMPORT cell has to be argued for HERE before it ships.
     elsewhere = {
         (spec.code, resource)
         for spec in ROLE_SPECS
         for resource, actions in spec.permissions.items()
         if Action.IMPORT in actions and resource != Resource.CANDIDATE
     }
-    assert elsewhere == {("hr_head", Resource.ATTENDANCE_DEVICE)}, (
-        f"IMPORT leaked onto {sorted(elsewhere)}"
-    )
+    assert elsewhere == {
+        ("hr_head", Resource.ATTENDANCE_DEVICE),
+        ("admin", Resource.EMPLOYEE),
+        ("hr_head", Resource.EMPLOYEE),
+        ("hr_manager", Resource.EMPLOYEE),
+    }, f"IMPORT leaked onto {sorted(elsewhere)}"
+
+    # Nobody below those three, and nothing that only VIEWS people: a recruiter
+    # bulk-ingests candidates and does not hire.
+    employee_importers = {
+        spec.code
+        for spec in ROLE_SPECS
+        if Action.IMPORT in spec.permissions.get(Resource.EMPLOYEE, {})
+    }
+    assert "recruiter" not in employee_importers
+    assert "employee" not in employee_importers
 
 
 def test_the_ceo_cannot_import_however_the_matrix_is_edited(everyone_grant, user_for):

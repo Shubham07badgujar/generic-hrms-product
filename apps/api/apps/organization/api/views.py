@@ -443,7 +443,12 @@ class MyPlanView(APIView):
         require(request.user, Resource.ORG_SETTINGS, Action.VIEW)
 
         from apps.platform.models import Subscription
-        from apps.platform.services.subscriptions import active_employee_count
+        from apps.platform.services.subscriptions import (
+            active_employee_count,
+        )
+        from apps.platform.services.subscriptions import (
+            seats_remaining as subscription_seats_remaining,
+        )
         from core.access.context import get_context
         from core.access.features import FeatureCode
 
@@ -485,7 +490,10 @@ class MyPlanView(APIView):
                 "features": subscription.enabled_features,
                 "employees_used": used,
                 "employee_limit": limit,
-                "seats_remaining": None if limit is None else max(limit - used, 0),
+                # One definition, shared with the employee importer, so the
+                # number a person reads here and the number that gates a bulk
+                # hire cannot drift apart.
+                "seats_remaining": subscription_seats_remaining(organization_id),
                 # Surfaced, not enforced. A storage cap that silently broke a
                 # payroll run's PDF generation would be worse than no cap, so
                 # this is a number the customer can see and act on rather than

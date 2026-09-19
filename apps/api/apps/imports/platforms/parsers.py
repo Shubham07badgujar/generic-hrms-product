@@ -115,3 +115,75 @@ def days(value) -> int | None:
     except ValueError:
         return None
     return parsed if 0 <= parsed <= 3650 else None
+
+
+#: A real date, written the way a spreadsheet writes one.
+_ISO_DATE = re.compile(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$")
+_DMY_DATE = re.compile(r"^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$")
+
+
+def iso_date(value):
+    """
+    A joining date, or None.
+
+    Order matters. `YYYY-MM-DD` is unambiguous and tried first; everything else
+    that is all digits is read DAY-FIRST, which is what every Indian HR
+    spreadsheet means by `03/04/2025` and what the rest of this product assumes
+    (`%d %b %Y` in every letter it renders).
+
+    THE AMBIGUITY IS REAL AND IS NOT RESOLVED HERE. `03/04/2025` is the third
+    of April to the person who typed it and the fourth of March to an American
+    spreadsheet, and a joining date is not cosmetic: it sets probation, leave
+    accrual and the first payroll period. So day-first is applied as the house
+    convention AND `is_ambiguous_date()` marks the row, which the employee
+    importer turns into a warning the reviewer sees before committing. Guessing
+    silently is what makes a wrong date arrive as a fact.
+
+    Returns None rather than raising for anything unrecognised: the caller
+    reports a missing required field, which is a better message than a parser
+    error about a cell nobody can see.
+    """
+    import datetime as dt
+
+    if isinstance(value, dt.datetime):
+        return value.date()
+    if isinstance(value, dt.date):
+        return value
+
+    raw = clean_text(value)
+    if not raw:
+        return None
+
+    match = _ISO_DATE.match(raw)
+    if match:
+        year, month, day = (int(part) for part in match.groups())
+    else:
+        match = _DMY_DATE.match(raw)
+        if not match:
+            return None
+        day, month, year = (int(part) for part in match.groups())
+
+    try:
+        return dt.date(year, month, day)
+    except ValueError:
+        # 31/02/2025 and friends. None, so the row reports a bad date rather
+        # than this raising into the middle of a 2,000-row walk.
+        return None
+
+
+def is_ambiguous_date(value) -> bool:
+    """
+    Whether this cell could be read as two different dates.
+
+    True only for the day-first/month-first overlap -- both parts 12 or under,
+    and not written in ISO. `25/12/2025` is unambiguous because there is no
+    25th month; `03/04/2025` is not.
+    """
+    raw = clean_text(value)
+    if not raw or _ISO_DATE.match(raw):
+        return False
+    match = _DMY_DATE.match(raw)
+    if not match:
+        return False
+    first, second, _year = (int(part) for part in match.groups())
+    return first <= 12 and second <= 12

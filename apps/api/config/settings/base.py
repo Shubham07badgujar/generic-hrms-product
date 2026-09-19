@@ -237,6 +237,10 @@ REST_FRAMEWORK = {
         # counters reset on restart and cannot express "rows" anyway.
         # Forty an hour lets HR work a stack of exports in one sitting.
         "candidate_import": "40/hour",
+        # The staff-list importer, same shape and same reasoning: parsing an
+        # uploaded spreadsheet and committing a batch are the expensive,
+        # abusable operations. A migration is a handful of uploads, not forty.
+        "employee_import": "40/hour",
         # The public application form: the only anonymous write in the API.
         # Per calling address. Twenty an hour is more than any person fills in
         # and far fewer than a script wants.

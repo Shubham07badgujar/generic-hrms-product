@@ -57,6 +57,13 @@ class PlatformSpec:
     key: str
     label: str
     columns: tuple[ColumnSpec, ...] = ()
+    #: The fields a mapping may name for THIS spec. Defaults to the candidate
+    #: set, so every adapter that existed before employee import is unchanged.
+    #: An employee export maps to departments and joining dates, which are not
+    #: candidate fields -- and a manual column remap must be refused against
+    #: the spec it is remapping, not against a constant that only knows about
+    #: one destination.
+    canonical_fields: tuple[str, ...] = CANONICAL_FIELDS
     #: Canonical fields without which a row cannot be imported at all. Identity
     #: is checked separately — a row needs a name AND some way to be recognised.
     required: frozenset[str] = frozenset({"first_name"})

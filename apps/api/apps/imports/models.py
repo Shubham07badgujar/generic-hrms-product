@@ -74,12 +74,37 @@ class MatchRule(models.TextChoices):
     NONE = "none", "No match — created"
 
 
-class ImportBatch(OrgOwnedModel):
-    """One uploaded file, targeted at one job opening."""
+class ImportKind(models.TextChoices):
+    """
+    What a batch is importing.
 
+    ONE MODEL, NOT TWO. An employee import is a different destination, not a
+    different mechanism: the same untrusted spreadsheet, the same expansion
+    budgets, the same staging, and above all the same two-phase commit with
+    crash recovery -- which this module's own docstring calls the easiest thing
+    in the design to get wrong and the most expensive to discover in
+    production. A second model would be a second copy of that, and the copy
+    that drifted would be the one nobody was watching.
+    """
+
+    CANDIDATES = "candidates", "Candidates"
+    EMPLOYEES = "employees", "Employees"
+
+
+class ImportBatch(OrgOwnedModel):
+    """One uploaded file, targeted at one job opening or at the staff list."""
+
+    kind = models.CharField(
+        max_length=20, choices=ImportKind.choices, default=ImportKind.CANDIDATES,
+        db_index=True,
+    )
     platform = models.CharField(max_length=40, db_index=True)
+    #: NULL for an employee import, which has no job to apply to. The check
+    #: constraint below is what keeps that from meaning "a candidate import
+    #: whose job went missing".
     job_opening = models.ForeignKey(
-        "recruitment.JobOpening", on_delete=models.PROTECT, related_name="import_batches"
+        "recruitment.JobOpening", on_delete=models.PROTECT,
+        related_name="import_batches", null=True, blank=True,
     )
     uploaded_by = models.ForeignKey(
         "accounts.User", on_delete=models.PROTECT, related_name="candidate_imports"
@@ -146,12 +171,25 @@ class ImportBatch(OrgOwnedModel):
         ]
         constraints = [
             # The consent floor, at the database rather than in a service a
-            # future refactor could route around. A batch cannot reach a
-            # committed state without an attestation naming a basis, a note
-            # explaining it and the person who made it.
+            # future refactor could route around. A CANDIDATE batch cannot
+            # reach a committed state without an attestation naming a basis, a
+            # note explaining it and the person who made it.
+            #
+            # Employee batches are exempt, and the distinction is the point of
+            # the attestation rather than an exception to it. It exists because
+            # an import cannot claim a candidate's consent -- those people
+            # agreed with a job board, not with this company, so one HR human
+            # states the ground on which the company holds data about somebody
+            # who never approached it. A company's own staff list is the other
+            # case entirely: the lawful basis is the employment contract that
+            # already exists with every person in the file. Demanding a
+            # 20-character note about it would be a ritual, and rituals are
+            # what people learn to click through -- including on the batch
+            # where it mattered.
             models.CheckConstraint(
                 condition=(
-                    ~models.Q(status__in=["committing", "completed", "partial"])
+                    models.Q(kind="employees")
+                    | ~models.Q(status__in=["committing", "completed", "partial"])
                     | (
                         models.Q(attested_by__isnull=False)
                         & models.Q(attested_at__isnull=False)
@@ -168,10 +206,23 @@ class ImportBatch(OrgOwnedModel):
                 | models.Q(legal_basis_note__length__gte=20),
                 name="ck_import_basis_note_minimum_length",
             ),
+            # A candidate batch applies people TO something; an employee batch
+            # hires them and has nothing to apply to. Stated at the database so
+            # a nullable column cannot quietly come to mean "a candidate import
+            # that lost its job", which is the shape that would send a real
+            # applicant into nobody's pipeline.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(kind="candidates", job_opening__isnull=False)
+                    | models.Q(kind="employees", job_opening__isnull=True)
+                ),
+                name="ck_import_job_matches_kind",
+            ),
         ]
 
     def __str__(self) -> str:
-        return f"{self.platform} → {self.job_opening_id} ({self.rows_total} rows)"
+        target = self.job_opening_id or self.get_kind_display()
+        return f"{self.platform} → {target} ({self.rows_total} rows)"
 
     @property
     def is_attested(self) -> bool:
@@ -230,6 +281,15 @@ class ImportRow(OrgOwnedTimestampedModel):
     )
     matched_candidate = models.ForeignKey(
         "recruitment.Candidate", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    #: What an EMPLOYEE row produced. Separate from `matched_candidate` rather
+    #: than a generic relation: the two are different destinations with
+    #: different lifecycles, and one column that sometimes points at a person
+    #: being hired and sometimes at one being considered is a column every
+    #: reader has to ask about.
+    created_employee = models.ForeignKey(
+        "employees.Employee", on_delete=models.SET_NULL, null=True, blank=True,
         related_name="+",
     )
     duplicate_of_row = models.PositiveIntegerField(null=True, blank=True)

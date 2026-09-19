@@ -34,11 +34,7 @@ from dataclasses import dataclass, field
 
 from django.core.exceptions import ValidationError
 
-from apps.imports.platforms.registry import (
-    CANONICAL_FIELDS,
-    PlatformSpec,
-    normalise_header,
-)
+from apps.imports.platforms.registry import PlatformSpec, normalise_header
 
 MAX_ROWS = 2_000
 #: Naukri's Response Management export genuinely ships 79 columns, so the
@@ -94,13 +90,17 @@ def _resolve_mapping(headers: list[str], spec: PlatformSpec, override: dict | No
     aliases = spec.alias_map()
     raw_override = override or {}
 
-    unknown = sorted(set(raw_override.values()) - set(CANONICAL_FIELDS))
+    # Against the SPEC's own fields, not a module constant: an employee import
+    # maps columns a candidate has never had, and the refusal has to be about
+    # the destination actually being imported into.
+    allowed = spec.canonical_fields
+    unknown = sorted(set(raw_override.values()) - set(allowed))
     if unknown:
         raise ParseError(
             {
                 "column_override": (
                     f"Cannot map a column to {', '.join(unknown)}. "
-                    f"Choose one of: {', '.join(CANONICAL_FIELDS)}."
+                    f"Choose one of: {', '.join(allowed)}."
                 )
             }
         )

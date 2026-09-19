@@ -212,7 +212,12 @@ def _transactional_headers(from_email: str) -> dict:
 
 
 def send_account_created_email(
-    *, user, temporary_password: str, employee=None, role=None, actor=None
+    *, user, temporary_password: str, employee=None, role=None, actor=None,
+    #: An already-open SMTP connection to send over. For a BULK send: an
+    #: employee import that opened one per message would hold a worker for
+    #: `EMAIL_TIMEOUT` seconds per person, two hundred times. Left None, this
+    #: opens and closes its own, which is right for a single hire.
+    connection=None,
 ) -> bool:
     """
     Tell the new employee how to sign in.
@@ -412,7 +417,7 @@ def send_account_created_email(
             from_email=from_email,
             to=[recipient],
             reply_to=[hr_contact] if hr_contact else None,
-            connection=_hr_mail_connection(config=mail_config),
+            connection=connection or _hr_mail_connection(config=mail_config),
             headers=_transactional_headers(from_email),
         )
         message.attach_alternative(html_body, "text/html")

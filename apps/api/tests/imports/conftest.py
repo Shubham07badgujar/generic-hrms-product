@@ -257,3 +257,32 @@ def everyone_grant(make_user):
         invalidate(user.pk)
 
     return _grant
+
+
+EMPLOYEE_HEADERS = [
+    "Employee Code", "Name", "Work Email", "Personal Email", "Mobile",
+    "Department", "Designation", "Location", "Level", "Reporting Manager",
+    "Role", "Employment Type", "Date of Joining",
+]
+
+
+@pytest.fixture
+def employee_xlsx(upload):
+    """
+    A staff list as a company actually keeps one.
+
+    Names are invented, addresses use the RFC 6761 reserved `.test` domain, and
+    phone numbers come from the documentation range -- the same rule the
+    candidate fixtures follow, and for the same reason.
+    """
+
+    def _make(rows=None, headers=None, name="staff.xlsx"):
+        rows = rows if rows is not None else [
+            ["", "Asha Rao", "asha@acme.test", "asha.personal@example.test",
+             "9876543210", "People", "", "", "", "", "", "", "2024-01-15"],
+            ["", "Vikram Bose", "vikram@acme.test", "vikram.personal@example.test",
+             "9876543211", "People", "", "", "", "", "", "", "2024-02-01"],
+        ]
+        return upload(name, _xlsx(headers or EMPLOYEE_HEADERS, rows))
+
+    return _make

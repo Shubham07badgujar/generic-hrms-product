@@ -327,6 +327,13 @@ ROLE_SPECS: tuple[RoleSpec, ...] = (
                     A.VIEW: S.ALL, A.CREATE: S.ALL, A.EDIT: S.ALL,
                     A.DELETE: S.ALL, A.OVERRIDE: S.ALL, A.IMPORT: S.ALL,
                 },
+                # Bulk hire from a staff list. `_manage` above grants CRUD
+                # only, so IMPORT has to be named -- which is the point of it
+                # being its own action: the first thing a company does on this
+                # platform is bring its existing people onto it, and the last
+                # thing it wants is that ability spread wider than the people
+                # who already hire.
+                R.EMPLOYEE: {A.IMPORT: S.ALL},
                 R.APPLICATION: {
                     A.VIEW: S.ALL, A.CREATE: S.ALL, A.EDIT: S.ALL,
                     A.DELETE: S.ALL, A.OVERRIDE: S.ALL,
@@ -407,6 +414,12 @@ ROLE_SPECS: tuple[RoleSpec, ...] = (
             # who collects paperwork without vouching for it, and that is only
             # expressible if the three are distinct.
             {R.EMPLOYEE_DOCUMENT: {A.APPROVE: S.ALL, A.REJECT: S.ALL}},
+            # Bulk hiring from a staff list, on top of the CRUD above and
+            # separately grantable from it -- the same split as CANDIDATE, and
+            # for the same reason: hiring one person and hiring two hundred in
+            # one action are different amounts of trust, and the second can be
+            # revoked without stopping the first.
+            {R.EMPLOYEE: {A.IMPORT: S.ALL}},
             _manage(S.ALL, R.JOB_OPENING, R.CANDIDATE, R.APPLICATION, R.INTERVIEW),
             _manage(S.ALL, R.OFFER, R.HIRING_WORKFLOW),
             {
@@ -598,7 +611,11 @@ ROLE_SPECS: tuple[RoleSpec, ...] = (
                 R.USER: {A.VIEW: S.ALL, A.CREATE: S.ALL},  # create, never delete
                 # Bulk candidate ingest, on top of the CRUD from _manage above.
                 R.CANDIDATE: {A.IMPORT: S.ALL},
-                R.EMPLOYEE: {A.VIEW: S.ALL, A.CREATE: S.ALL, A.EDIT: S.ALL},
+                # And bulk hiring: HR Manager already creates employees one at
+                # a time, and a migration onto the platform is their job.
+                R.EMPLOYEE: {
+                    A.VIEW: S.ALL, A.CREATE: S.ALL, A.EDIT: S.ALL, A.IMPORT: S.ALL,
+                },
                 R.EMPLOYEE_DOCUMENT: {
                     A.VIEW: S.ALL, A.CREATE: S.ALL, A.EDIT: S.ALL,
                     A.APPROVE: S.ALL, A.REJECT: S.ALL,
