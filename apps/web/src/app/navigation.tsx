@@ -309,6 +309,15 @@ export const NAV_SPEC: NavGroup[] = [
         action: ACTION.EDIT,
       },
       {
+        // VIEW rather than EDIT, unlike Settings above: reading which plan you
+        // are on and how many seats are left is not administration, and the
+        // page offers nothing to change.
+        label: 'Plan and usage',
+        to: '/plan',
+        icon: ICONS.wallet,
+        resource: RESOURCE.ORG_SETTINGS,
+      },
+      {
         // Only while there is setup left to do, and only for whoever can do
         // it. The wizard sends an administrator out to these very screens, so
         // without a way back the only route to the checklist is the browser's

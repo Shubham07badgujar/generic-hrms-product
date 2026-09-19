@@ -41,6 +41,7 @@ import { OffboardingPage } from '@/features/offboarding/OffboardingPage'
 import { ExitDetailPage } from '@/features/offboarding/ExitDetailPage'
 import { AssetsPage } from '@/features/employees/AssetsPage'
 import { OrganisationPage } from '@/features/organisation/OrganisationPage'
+import { PlanPage } from '@/features/organisation/PlanPage'
 import { SetupPage } from '@/features/organisation/SetupPage'
 import { SuspendedPage } from '@/features/organisation/SuspendedPage'
 import { PayrollPage } from '@/features/payroll/PayrollPage'
@@ -308,6 +309,19 @@ export function AppRoutes() {
           element={
             <RequirePermission resource={RESOURCE.ORG_SETTINGS}>
               <SetupPage />
+            </RequirePermission>
+          }
+        />
+        {/*
+          VIEW, not EDIT, and there is no write route beside it: the plan is
+          read-only to the customer by design. Changing it is a commercial
+          conversation, and the endpoint offers nothing to change it with.
+        */}
+        <Route
+          path="plan"
+          element={
+            <RequirePermission resource={RESOURCE.ORG_SETTINGS}>
+              <PlanPage />
             </RequirePermission>
           }
         />

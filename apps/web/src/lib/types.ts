@@ -61,6 +61,41 @@ export type FeatureCode =
   | 'it_accounts'
   | 'reporting'
 
+/** Commercial state of the subscription, which is not access state. */
+export type SubscriptionStatus =
+  | 'trialing'
+  | 'active'
+  | 'past_due'
+  | 'cancelled'
+  | 'expired'
+
+export interface PlanSummary {
+  code: string
+  name: string
+  description: string
+  support_level: 'community' | 'standard' | 'priority' | string
+}
+
+/**
+ * What this organization is on, and how much of it is used.
+ *
+ * `plan` is null on a deployment that sells nothing — a self-hosted install
+ * that never bought a seat count — and that is reported as unlimited rather
+ * than as an error, because that is what it is.
+ */
+export interface MyPlan {
+  plan: PlanSummary | null
+  status: SubscriptionStatus | null
+  features: FeatureCode[]
+  employees_used: number
+  /** null means no limit. */
+  employee_limit: number | null
+  seats_remaining: number | null
+  /** Surfaced, not enforced: a cap that silently broke payroll would be worse. */
+  storage_limit_mb: number | null
+  trial_ends_at?: ISODateTime | null
+}
+
 /**
  * One step of the setup checklist, as the server reports it.
  *
