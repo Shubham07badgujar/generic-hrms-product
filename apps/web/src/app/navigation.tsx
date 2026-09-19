@@ -308,6 +308,19 @@ export const NAV_SPEC: NavGroup[] = [
         resource: RESOURCE.ORG_SETTINGS,
         action: ACTION.EDIT,
       },
+      {
+        // Only while there is setup left to do, and only for whoever can do
+        // it. The wizard sends an administrator out to these very screens, so
+        // without a way back the only route to the checklist is the browser's
+        // back button -- and once the organization is active the entry would
+        // be a link to a finished list.
+        label: 'Finish setup',
+        to: '/setup',
+        icon: ICONS.building,
+        resource: RESOURCE.ORG_SETTINGS,
+        action: ACTION.EDIT,
+        when: (permissions) => permissions.organizationStatus === 'pending_setup',
+      },
     ],
   },
 ]

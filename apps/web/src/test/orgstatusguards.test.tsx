@@ -210,3 +210,30 @@ describe('an organization still in setup', () => {
     expect(landedOn('/reports')).toBe('/me')
   })
 })
+
+describe('the way back to the checklist', () => {
+  it('appears only while setup is outstanding, and only for who can do it', async () => {
+    const { visibleNavigation } = await import('@/app/navigation')
+    const { Permissions } = await import('@/lib/permissions')
+    const { snapshotForRole } = await import('./helpers')
+
+    const navFor = (role: 'admin' | 'employee', status: string) =>
+      visibleNavigation(
+        new Permissions({
+          ...snapshotForRole(role),
+          organization_status: status as never,
+        }),
+      ).flatMap((group) => group.items.map((item) => item.label))
+
+    // The wizard sends an administrator out to the settings screens; without
+    // an entry, the only route back is the browser button.
+    expect(navFor('admin', 'pending_setup')).toContain('Finish setup')
+
+    // Once the organization is active it would be a link to a finished list.
+    expect(navFor('admin', 'active')).not.toContain('Finish setup')
+
+    // And an employee cannot finish setup, so offering it would be a door
+    // that opens onto a refusal.
+    expect(navFor('employee', 'pending_setup')).not.toContain('Finish setup')
+  })
+})
