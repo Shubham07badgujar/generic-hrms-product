@@ -61,6 +61,35 @@ export type FeatureCode =
   | 'it_accounts'
   | 'reporting'
 
+/**
+ * One step of the setup checklist, as the server reports it.
+ *
+ * `complete` is COMPUTED from the real domain tables on every read, never
+ * stored: closing the browser loses nothing, and deleting the last department
+ * honestly reopens that step.
+ */
+export interface SetupStep {
+  key: string
+  title: string
+  required: boolean
+  /** Where the step is actually done — an existing page, not a wizard form. */
+  route: string
+  detail: string
+  complete: boolean
+}
+
+export interface SetupState {
+  status: OrganizationStatus
+  in_setup: boolean
+  steps: SetupStep[]
+  completed: number
+  total: number
+  /** Required steps still outstanding, by key. */
+  blocking: string[]
+  /** The server's verdict, not a count computed here. */
+  can_finish: boolean
+}
+
 /** Lifecycle of the organization itself, which decides whether it may be used. */
 export type OrganizationStatus =
   | 'pending_setup'

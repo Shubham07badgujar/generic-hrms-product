@@ -41,6 +41,8 @@ import { OffboardingPage } from '@/features/offboarding/OffboardingPage'
 import { ExitDetailPage } from '@/features/offboarding/ExitDetailPage'
 import { AssetsPage } from '@/features/employees/AssetsPage'
 import { OrganisationPage } from '@/features/organisation/OrganisationPage'
+import { SetupPage } from '@/features/organisation/SetupPage'
+import { SuspendedPage } from '@/features/organisation/SuspendedPage'
 import { PayrollPage } from '@/features/payroll/PayrollPage'
 import { PayrollRunDetailPage } from '@/features/payroll/PayrollRunDetailPage'
 import { PayrollSettingsPage } from '@/features/payroll/PayrollSettingsPage'
@@ -101,6 +103,21 @@ export function AppRoutes() {
         element={
           <RequireAuth>
             <HandbookPage />
+          </RequireAuth>
+        }
+      />
+
+      {/*
+        Bare, like the two above, and for the sharpest version of the same
+        reason: while the organization is stopped the application shell is
+        exactly what is NOT available. Rendering navigation around this
+        message would offer a menu of pages the API refuses.
+      */}
+      <Route
+        path="/suspended"
+        element={
+          <RequireAuth>
+            <SuspendedPage />
           </RequireAuth>
         }
       />
@@ -277,6 +294,20 @@ export function AppRoutes() {
           element={
             <RequirePermission resource={RESOURCE.DEPARTMENT}>
               <OrganisationPage />
+            </RequirePermission>
+          }
+        />
+        {/*
+          Inside the shell, unlike /suspended: an organization in setup is
+          WORKING, and the administrator walking the checklist needs the
+          navigation to reach the pages each step links to. ORG_SETTINGS is
+          the same resource the endpoint behind it requires.
+        */}
+        <Route
+          path="setup"
+          element={
+            <RequirePermission resource={RESOURCE.ORG_SETTINGS}>
+              <SetupPage />
             </RequirePermission>
           }
         />
