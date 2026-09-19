@@ -40,6 +40,7 @@ export function makeSnapshot(overrides: Partial<PermissionSnapshot> = {}): Permi
     grants: {},
     features: ALL_FEATURES,
     organization_status: 'active',
+    is_platform_admin: false,
     notice: 'test',
     ...overrides,
   }

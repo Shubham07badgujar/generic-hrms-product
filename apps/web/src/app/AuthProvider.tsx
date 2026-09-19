@@ -36,12 +36,30 @@ import type { Me, PermissionSnapshot } from '@/lib/types'
 
 type Status = 'booting' | 'authenticated' | 'anonymous'
 
+/**
+ * Which door a sign-in goes through.
+ *
+ * THREE DOORS, ONE PER AUDIENCE, and the backend is what makes them different:
+ * each path applies its own throttle and refuses anyone who does not belong to
+ * it, with a message identical to a wrong password so the response never
+ * reveals which kind of account an address is. A named union rather than a
+ * boolean because there are three of them now, and `login(email, pw, true,
+ * false)` is how the wrong one gets used.
+ */
+export type Entrance = 'organization' | 'admin' | 'platform'
+
+const ENTRANCE_PATHS: Record<Entrance, string> = {
+  organization: '/auth/login/',
+  admin: '/auth/login/admin/',
+  platform: '/auth/login/platform/',
+}
+
 interface AuthState {
   status: Status
   user: Me | null
   permissions: Permissions
   mustChangePassword: boolean
-  login: (email: string, password: string, adminEntrance?: boolean) => Promise<void>
+  login: (email: string, password: string, entrance?: Entrance) => Promise<void>
   logout: () => Promise<void>
   reloadPermissions: () => Promise<void>
   /** Re-fetch /me/ so guards reading its flags (onboarding, handbook) see
@@ -163,12 +181,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [loadSession])
 
   const login = useCallback(
-    async (email: string, password: string, adminEntrance = false) => {
-      const path = adminEntrance ? '/auth/login/admin/' : '/auth/login/'
-      const result = await apiPost<{ access: string; must_change_password: boolean }>(path, {
-        email,
-        password,
-      })
+    async (email: string, password: string, entrance: Entrance = 'organization') => {
+      const result = await apiPost<{ access: string; must_change_password: boolean }>(
+        ENTRANCE_PATHS[entrance],
+        {
+          email,
+          password,
+        },
+      )
       setAccessToken(result.access)
       // The refresh token was set as an httpOnly cookie by this response; the
       // client never sees or stores it.

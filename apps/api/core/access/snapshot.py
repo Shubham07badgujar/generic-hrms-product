@@ -66,6 +66,19 @@ def build_snapshot(user) -> dict:
         "dashboard": ctx.dashboard_key,
         "read_only": ctx.read_only,
         "can_manage_users": ctx.can_manage_users,
+        # WHICH PRODUCT this session is for, not what it may do. A platform
+        # operator holds no grant in any organization, so `grants` is empty for
+        # them -- and empty is exactly what an organization user with a broken
+        # role assignment also looks like. Without this the SPA cannot tell a
+        # SaaS operator from a customer's employee who has been granted
+        # nothing, and would show the second one an empty HR app and the first
+        # one the same empty HR app instead of the console.
+        #
+        # It grants nothing. Every platform route re-checks the flag on the
+        # User row, and every tenant queryset still resolves to nothing for
+        # them; a tampered snapshot changes which screens a browser draws, not
+        # which requests succeed.
+        "is_platform_admin": ctx.is_platform_admin,
         "layers": sorted(ctx.layers),
         "roles": sorted(ctx.role_codes),
         "grants": grants,

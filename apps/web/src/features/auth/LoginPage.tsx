@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { useAuth } from '@/app/AuthProvider'
+import { useAuth, type Entrance } from '@/app/AuthProvider'
 import { Button } from '@/components/ui/Button'
 import { TextInput } from '@/components/ui/Field'
 import { Banner } from '@/components/ui/Misc'
@@ -17,7 +17,18 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>
 
-export function LoginPage({ adminEntrance = false }: { adminEntrance?: boolean }) {
+/**
+ * The customer's sign-in, in two forms: the ordinary one and the restricted
+ * administrator entrance.
+ *
+ * The SaaS operator's entrance is NOT a third form of this page. This one
+ * reads `useBranding()` and paints the resolved organization's logo, legal
+ * name and HR copy across half the screen, which is right for a customer and
+ * wrong — on a multi-customer deployment, disclosive — for an operator. It
+ * lives in `features/platform/PlatformLoginPage`, unbranded and unlinked.
+ */
+export function LoginPage({ entrance = 'organization' }: { entrance?: Entrance }) {
+  const adminEntrance = entrance === 'admin'
   const branding = useBranding()
   const { login } = useAuth()
   const navigate = useNavigate()
@@ -35,7 +46,7 @@ export function LoginPage({ adminEntrance = false }: { adminEntrance?: boolean }
   async function onSubmit(values: FormValues) {
     setFormError(null)
     try {
-      await login(values.email, values.password, adminEntrance)
+      await login(values.email, values.password, entrance)
       navigate(redirectTo, { replace: true })
     } catch (error) {
       // The API returns a deliberately generic message for bad credentials —

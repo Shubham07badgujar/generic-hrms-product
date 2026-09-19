@@ -164,6 +164,17 @@ export class Permissions {
   }
 
   /**
+   * A SaaS operator, who gets the console instead of the HR application.
+   *
+   * Not an authority: every platform route re-checks the flag on the user row,
+   * and every tenant queryset resolves to nothing for them regardless. What
+   * this decides is which of the two products the browser draws.
+   */
+  get isPlatformAdmin(): boolean {
+    return this.snapshot.is_platform_admin ?? false
+  }
+
+  /**
    * The organization's own lifecycle state.
    *
    * Not a permission: a suspended customer's users keep every grant they had
@@ -189,5 +200,6 @@ export const DENY_ALL = new Permissions({
   // to be "nothing" rather than "everything".
   features: [],
   organization_status: '',
+  is_platform_admin: false,
   notice: 'No session.',
 })

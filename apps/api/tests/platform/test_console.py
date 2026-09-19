@@ -501,3 +501,22 @@ def test_organizations_cannot_be_edited_or_deleted_through_the_console(console, 
 
     company.organization.refresh_from_db()
     assert company.organization.name == "Northwind Health"
+
+
+def test_the_snapshot_says_which_product_this_session_is_for(console, company):
+    """
+    A platform operator and a customer's employee with no grants look
+    identical in `grants` -- both empty. The SPA has to tell them apart, or it
+    shows the operator the same empty HR app it shows the broken account.
+
+    The flag grants nothing: platform routes re-check it on the User row and
+    every tenant queryset still resolves to nothing for them. It decides which
+    screens a browser draws, not which requests succeed.
+    """
+    operator = console.get("/api/v1/me/permissions/").json()
+    assert operator["is_platform_admin"] is True
+    assert operator["grants"] == {}, "an operator holds no grant in any organization"
+
+    customer = _signed_in(company.admin).get("/api/v1/me/permissions/").json()
+    assert customer["is_platform_admin"] is False
+    assert customer["grants"], "the positive control: a customer admin holds grants"

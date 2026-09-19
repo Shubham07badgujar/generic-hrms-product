@@ -9,6 +9,8 @@
 
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from './AppShell'
+import { usePermissions } from './AuthProvider'
+import { PlatformRoutes } from './platformRoutes'
 import { RequireAnonymous, RequireAuth, RequirePermission } from './guards'
 import { ACTION, RESOURCE } from '@/lib/permissions'
 import { ChangePasswordPage } from '@/features/auth/ChangePasswordPage'
@@ -52,9 +54,32 @@ import { PayslipDetailPage, PayslipsPage } from '@/features/payroll/PayslipsPage
 import { AnalyticsPage } from '@/features/analytics/AnalyticsPage'
 import { AuditPage } from '@/features/audit/AuditPage'
 import { NotificationSettingsPage } from '@/features/notifications/NotificationSettingsPage'
+import { PlatformLoginPage } from '@/features/platform/PlatformLoginPage'
 import { NotFoundPage, PlaceholderPage } from '@/features/misc/Placeholder'
 
+/**
+ * Which of the two products this browser draws.
+ *
+ * TWO TREES, CHOSEN BETWEEN — not one tree with platform routes guarded
+ * inside it. A SaaS operator gets the console and cannot reach an HR route
+ * because no HR route exists in their tree; a customer's user gets the HR
+ * application and `/platform/...` is simply not a page there. Neither is the
+ * security boundary: the API refuses the platform routes to an organization
+ * user on the `platform_only` view flag, and every tenant queryset resolves to
+ * nothing for an operator, who holds no grant in any organization.
+ *
+ * `isPlatformAdmin` is false before the snapshot loads (DENY_ALL) and false
+ * for an anonymous visitor, so the sign-in pages — all three entrances — live
+ * in the organization tree. The switch flips the moment the snapshot says the
+ * session belongs to an operator, which is why the platform sign-in page
+ * navigates to `/platform` and the platform tree catches everything else.
+ */
 export function AppRoutes() {
+  const permissions = usePermissions()
+  return permissions.isPlatformAdmin ? <PlatformRoutes /> : <OrganizationRoutes />
+}
+
+function OrganizationRoutes() {
   return (
     <Routes>
       <Route
@@ -69,7 +94,21 @@ export function AppRoutes() {
         path="/login/admin"
         element={
           <RequireAnonymous>
-            <LoginPage adminEntrance />
+            <LoginPage entrance="admin" />
+          </RequireAnonymous>
+        }
+      />
+      {/*
+        The operator's entrance. It lives in this tree because nobody is a
+        platform admin until they have signed in — and it is its own page
+        rather than a third variant of `LoginPage`, which paints the resolved
+        organization's logo and name across half the screen. See the page.
+      */}
+      <Route
+        path="/login/platform"
+        element={
+          <RequireAnonymous>
+            <PlatformLoginPage />
           </RequireAnonymous>
         }
       />

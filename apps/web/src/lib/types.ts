@@ -145,6 +145,15 @@ export interface PermissionSnapshot {
   grants: Record<string, Record<string, Scope>>
   /** What this organization's plan includes. Absence means unavailable. */
   features: FeatureCode[]
+  /**
+   * Whether this session belongs to a SaaS operator rather than a customer.
+   *
+   * Which product to render, not what the person may do. An operator holds no
+   * grant in any organization, so `grants` is empty for them -- and empty is
+   * also what a customer's employee looks like when their role assignment is
+   * broken. Without this the SPA would show both the same empty HR app.
+   */
+  is_platform_admin: boolean
   /** Carried even on a denial, so a refusal can say WHY — a suspended
    *  customer and a user without permission are otherwise the same 403. */
   organization_status: OrganizationStatus
