@@ -59,7 +59,7 @@ reads — which turned out to be exactly right (§6).
 | Deliberately global tables | **5** (§4) |
 | Nullable-organization tables | 1 (`audit.AuditLog`: platform events belong to no customer) |
 | Models awaiting conversion | 0 — `PENDING_TENANCY` is empty |
-| Deliberate escapes from tenancy in product code | 13 `all_orgs()` call sites, each named and greppable |
+| Deliberate escapes from tenancy in product code | 14 `all_orgs()` call sites, each named and greppable |
 | Build-time structural checks | 16 error classes, `access.E001`–`access.E017` (`E009` unused) |
 | Organization-scoped management commands | 14 |
 | Backend tests | 2,223 passing, 10 skipped, 1 failing by design (§11) |
@@ -377,7 +377,7 @@ Stated plainly, because the gaps are the useful half of an audit.
 | **Frontend SaaS surface (Stage 6)** | Done (`f5dd48a`–`525b7fb`): `hasFeature()` and feature-gated navigation, `/setup` and `/suspended` guards, the setup wizard, a read-only plan page, and the platform console on a route tree disjoint from the HR application. All UX; the API remains the boundary. |
 | **Demo data profiles (Stage 6)** | Done (`0123e62`). Healthcare / Technology / Retail at 20/5/3, 15/4/2, 10/3/2 on Enterprise, Starter (no payroll) and a Growth trial days from expiry, each created through the provisioning service by `manage.py seed_demo_platform`. |
 | **`finish_setup` vs subscription status** | Fixed (`3f016c5`). Finishing setup lands on the status the subscription implies -- TRIAL during a trial -- instead of ACTIVE unconditionally. |
-| **Resending an invitation** | Missing. Provisioning itself now has both a command and a console route (`967f92c`), but if the invitation email fails the only remedy is an operator running `manage.py changepassword`: the temporary password is stored nowhere and there is no self-service reset for an administrator, who has no Employee record and so cannot use the credential-reissue path. |
+| **Resending an invitation** | Done. `POST /platform/organizations/{id}/resend-invitation/` and a console card, over one shared reissue path with the employee route (fresh password, forced change, refresh tokens revoked, mail, audit). **Only while the invitation is unaccepted:** once an administrator has set their own password the route answers 422, because an operator able to reset a working customer administrator would hold a lever over the customer's accounts. The resend is audited in the customer's own trail with the operator as actor. The 14th `all_orgs()` site is the console's `admin_invitation_pending` flag, a subquery beside the existing headcount one. |
 | **Layer E: database composite foreign keys** | Not implemented. Raw SQL and bulk paths are covered by the manager and the stamping mixin, not by the database. |
 | **`SupportGrant`** | Not implemented (§8). |
 | **Database-level append-only audit** | `ARCHITECTURE.md` specifies `REVOKE UPDATE, DELETE ON audit_auditlog` from the application role. Nothing in this repository issues it — not a migration, not the deploy entrypoint. The Python guards hold, but a raw `UPDATE` would succeed. |
@@ -390,7 +390,7 @@ Stated plainly, because the gaps are the useful half of an audit.
 
 ## 13. Risks worth keeping in view
 
-1. **The escape hatch is the audit surface.** 13 `all_orgs()` call sites in
+1. **The escape hatch is the audit surface.** 14 `all_orgs()` call sites in
    product code, each deliberate and each greppable. That number going up
    without review is the thing to watch — `grep -rn all_orgs` is the audit.
 2. **The manager protects the ORM, not raw SQL.** Nothing in this design stops

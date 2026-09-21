@@ -490,6 +490,36 @@ def reissue_credentials(*, employee, actor, reason: str = "") -> bool:
             {"employee": f"{employee.full_name}'s login is deactivated. Reactivate it first."}
         )
 
+    return reissue_temporary_password(
+        user=user,
+        actor=actor,
+        employee=employee,
+        recipient=employee.personal_email or user.email,
+    )
+
+
+def reissue_temporary_password(
+    *, user, actor, employee=None, recipient: str = "",
+    event: str = "credentials_reissued",
+    failed_event: str = "credentials_reissue_failed",
+) -> bool:
+    """
+    The core of every "send them their credentials again": one path.
+
+    Shared by the employee route above and by the platform's resend of a
+    customer administrator's invitation, because the steps are the same and
+    the order matters -- a fresh password (the old one is stored nowhere, and a
+    bounce sitting in an inbox dies with it), the forced change on next
+    sign-in, every refresh token revoked so a session opened on the old
+    credential ends, THEN the mail, THEN the audit row saying whether it went.
+    Two copies of that sequence would drift, and the one that drifted would be
+    the one nobody runs until an invitation is lost.
+
+    The password goes into the mail and nowhere else. The audit row records the
+    event, the address and the outcome; never the password, never a hash.
+    `event` and `failed_event` name what happened in the trail, depending on
+    whether the mail went.
+    """
     temporary_password = generate_temporary_password()
     user.set_password(temporary_password)
     user.must_change_password = True
@@ -517,8 +547,8 @@ def reissue_credentials(*, employee, actor, reason: str = "") -> bool:
     _audit(
         user,
         verb="update",
-        event="credentials_reissued" if sent else "credentials_reissue_failed",
+        event=event if sent else failed_event,
         actor=actor,
-        recipient=(employee.personal_email or user.email),
+        recipient=recipient or user.email,
     )
     return sent

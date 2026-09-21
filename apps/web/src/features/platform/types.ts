@@ -59,6 +59,11 @@ export interface PlatformOrganization {
   /** Active employees. A COUNT, and nothing that identifies one of them. */
   employee_count: number
   member_count: number
+  /**
+   * An administrator has never signed in, so their invitation may be resent.
+   * The same test the service applies, so the button and the refusal agree.
+   */
+  admin_invitation_pending: boolean
   /** Null on a deployment that sells nothing — a real state, not an error. */
   subscription: PlatformSubscription | null
   created_at: string
@@ -97,6 +102,11 @@ export interface PlatformSummary {
   organizations_total: number
   organizations_operational: number
   by_status: Partial<Record<PlatformOrganizationStatus, number>>
+}
+
+/** Who a resend reached, and whether each mail actually went. No password. */
+export interface InvitationResend {
+  invitations: Array<{ email: string; sent: boolean }>
 }
 
 /** What creating a customer takes. Every rule lives in the service. */

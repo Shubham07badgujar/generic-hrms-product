@@ -26,6 +26,7 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/Button'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Card, CardHeader, DescriptionList, PageHeader, Section } from '@/components/ui/Card'
 import { Select, TextInput } from '@/components/ui/Field'
 import { Banner } from '@/components/ui/Misc'
@@ -37,11 +38,12 @@ import {
   usePlatformOrganization,
   usePlatformPlans,
   useChangePlan,
+  useResendInvitation,
   useSeatOverride,
   useSetSubscriptionStatus,
 } from './queries'
 import { OrganizationStatusBadge, SubscriptionStatusBadge } from './status'
-import type { PlatformOrganization } from './types'
+import type { InvitationResend, PlatformOrganization } from './types'
 
 /** The commercial transitions. The service decides which are legal from here. */
 const SUBSCRIPTION_STATUSES = [
@@ -194,6 +196,100 @@ function SubscriptionStatusCard({ organization }: { organization: PlatformOrgani
           Update status
         </Button>
       </div>
+    </Card>
+  )
+}
+
+/**
+ * The administrator's invitation, resendable only while nobody has used it.
+ *
+ * The button exists only while `admin_invitation_pending` says an
+ * administrator has never signed in, and the service refuses on the same test
+ * -- so an operator is never offered a reset of a customer administrator who
+ * is already working. That line is the point of the feature: resending an
+ * unused invitation is support; resetting a live customer credential would be
+ * the platform reaching into the customer's accounts.
+ *
+ * Confirmed first, because a resend INVALIDATES the previous temporary
+ * password. Two quick clicks send two mails and only the second works, and the
+ * operator should know that before they click rather than after the customer
+ * calls.
+ *
+ * The result names who was mailed and whether each send went. No password: it
+ * went to the administrator's own address and nowhere else.
+ */
+function InvitationCard({ organization }: { organization: PlatformOrganization }) {
+  const resend = useResendInvitation(organization.id)
+  const toast = useToast()
+  const [refusal, setRefusal] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const [result, setResult] = useState<InvitationResend | null>(null)
+
+  // Not `useRefusal().run`, whose fixed success toast would announce "resent"
+  // for a mail that failed -- the one claim this feature exists not to make.
+  // The toast follows what the server says actually went.
+  async function confirm() {
+    setConfirming(false)
+    setRefusal(null)
+    try {
+      const outcome = await resend.mutateAsync()
+      setResult(outcome)
+      if (outcome.invitations.every((item) => item.sent)) {
+        toast.success('Invitation resent.')
+      } else {
+        toast.warning('The invitation could not be sent.')
+      }
+    } catch (error) {
+      setRefusal(error instanceof ApiError ? error.displayMessage : 'The resend was refused.')
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="Administrator invitation"
+        description="For an administrator who has never signed in. Once they have, account recovery is the customer's, not the platform's."
+      />
+      <div className="mt-4 space-y-4">
+        {refusal && (
+          <Banner tone="danger" title="Refused">
+            {refusal}
+          </Banner>
+        )}
+        {result && (
+          <ul className="space-y-1 text-sm">
+            {result.invitations.map((item) => (
+              <li key={item.email} className={item.sent ? 'text-ink' : 'text-danger-ink'}>
+                {item.sent
+                  ? `Sent to ${item.email}.`
+                  : `Could not be sent to ${item.email}. Nothing was delivered; try again or check the mail settings.`}
+              </li>
+            ))}
+          </ul>
+        )}
+        {organization.admin_invitation_pending ? (
+          <Button
+            variant="primary"
+            loading={resend.isPending}
+            onClick={() => setConfirming(true)}
+          >
+            Resend invitation
+          </Button>
+        ) : (
+          <p className="text-sm text-ink-muted">
+            Every administrator has signed in. There is no invitation to resend.
+          </p>
+        )}
+      </div>
+      <ConfirmDialog
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        onConfirm={() => void confirm()}
+        title="Resend the invitation?"
+        description="A new temporary password is emailed to the administrator. The one in any earlier invitation stops working."
+        confirmLabel="Resend"
+        loading={resend.isPending}
+      />
     </Card>
   )
 }
@@ -364,6 +460,7 @@ export function PlatformOrganizationDetailPage() {
                 <ChangePlanCard organization={organization} />
                 <SubscriptionStatusCard organization={organization} />
                 {subscription && <SeatOverrideCard organization={organization} />}
+                <InvitationCard organization={organization} />
               </div>
             </Section>
           </>

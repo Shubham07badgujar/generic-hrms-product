@@ -417,3 +417,55 @@ describe('changing what a customer is on', () => {
     expect(card.getByRole('button', { name: 'Save override' })).toBeEnabled()
   })
 })
+
+describe('resending an administrator invitation', () => {
+  function detailWith(pending: boolean) {
+    api.responses['/platform/organizations/org-1'] = {
+      ...ORGANIZATIONS.data[0],
+      admin_invitation_pending: pending,
+    }
+    renderPage(
+      <PlatformOrganizationDetailPage />,
+      '/platform/organizations/org-1',
+      '/platform/organizations/:id',
+    )
+  }
+
+  it('offers the resend only while an administrator has never signed in', async () => {
+    detailWith(false)
+
+    // A working customer administrator is the customer's to recover. The
+    // console does not offer the lever, and the service would refuse it.
+    expect(
+      await screen.findByText(/Every administrator has signed in/),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Resend invitation' })).not.toBeInTheDocument()
+  })
+
+  it('confirms first, then reports who was mailed', async () => {
+    api.postResult = { invitations: [{ email: 'admin@northwind.test', sent: true }] }
+    detailWith(true)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Resend invitation' }))
+    // Nothing is sent until the operator confirms: a resend invalidates the
+    // previous temporary password.
+    expect(api.posts).toHaveLength(0)
+    await userEvent.click(screen.getByRole('button', { name: 'Resend' }))
+
+    await waitFor(() => expect(api.posts).toHaveLength(1))
+    expect(api.posts[0].url).toBe('/platform/organizations/org-1/resend-invitation/')
+    expect(await screen.findByText('Sent to admin@northwind.test.')).toBeInTheDocument()
+  })
+
+  it('never claims an invitation went when it did not', async () => {
+    api.postResult = { invitations: [{ email: 'admin@northwind.test', sent: false }] }
+    detailWith(true)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Resend invitation' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Resend' }))
+
+    expect(await screen.findByText(/Could not be sent to admin@northwind.test/)).toBeInTheDocument()
+    expect(screen.queryByText('Invitation resent.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Sent to admin@northwind.test.')).not.toBeInTheDocument()
+  })
+})

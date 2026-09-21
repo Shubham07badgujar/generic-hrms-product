@@ -15,9 +15,9 @@ that a customer employs 118 people tells you nothing about any of them.
 
 THE WRITE SURFACE IS THIN ON PURPOSE
 
-Three actions -- change the plan, move the commercial status, override the seat
-limit -- and each one is a thin wrapper over a service that already holds the
-rules, the locking and the audit. The view's whole job is to translate a
+Four actions -- change the plan, move the commercial status, override the seat
+limit, resend an unaccepted invitation -- and each one is a thin wrapper over a
+service that already holds the rules, the locking and the audit. The view's whole job is to translate a
 service refusal into 422 and to require the reason that some of them need.
 Putting the logic here instead would have meant the platform API and a
 management command could disagree about whether a downgrade below the headcount
@@ -26,7 +26,7 @@ is allowed.
 
 from __future__ import annotations
 
-from django.db.models import Count, IntegerField, OuterRef, Subquery
+from django.db.models import Count, Exists, IntegerField, OuterRef, Subquery
 from django.db.models.functions import Coalesce
 from rest_framework import serializers
 from rest_framework.decorators import action
@@ -65,6 +65,11 @@ class SubscriptionSerializer(serializers.ModelSerializer):
 class PlatformOrganizationSerializer(serializers.ModelSerializer):
     employee_count = serializers.IntegerField(read_only=True)
     member_count = serializers.IntegerField(read_only=True)
+    #: Whether an administrator has never signed in -- the one state in which
+    #: the console may resend their invitation. A boolean, deliberately: the
+    #: console needs to know whether to offer the button, not who the
+    #: customer's administrators are.
+    admin_invitation_pending = serializers.BooleanField(read_only=True)
     is_operational = serializers.SerializerMethodField()
     subscription = serializers.SerializerMethodField()
 
@@ -74,8 +79,8 @@ class PlatformOrganizationSerializer(serializers.ModelSerializer):
             "id", "name", "legal_name", "slug", "status", "is_operational",
             "primary_email", "phone", "city", "state", "country",
             "timezone", "currency",
-            "employee_count", "member_count", "subscription",
-            "created_at",
+            "employee_count", "member_count", "admin_invitation_pending",
+            "subscription", "created_at",
         ]
 
     def get_is_operational(self, obj) -> bool:
@@ -163,6 +168,20 @@ class PlatformOrganizationViewSet(PlatformModelViewSet):
             .annotate(n=Count("id"))
             .values("n")[:1]
         )
+        # The same test `reissue_admin_invitation` applies, as a subquery, so
+        # the button the console offers and the refusal the service gives
+        # cannot disagree about who is waiting.
+        from apps.accounts.models import UserRole
+        from core.access.catalog import RoleCode
+
+        invitation_pending = UserRole.objects.all_orgs().filter(
+            organization_id=OuterRef("pk"),
+            role__code=RoleCode.ADMIN,
+            is_active=True,
+            user__is_active=True,
+            user__must_change_password=True,
+            user__memberships__organization_id=OuterRef("pk"),
+        )
         return (
             super()
             .get_queryset()
@@ -170,6 +189,7 @@ class PlatformOrganizationViewSet(PlatformModelViewSet):
             .annotate(
                 employee_count=Coalesce(Subquery(headcount, output_field=IntegerField()), 0),
                 member_count=Count("memberships", distinct=True),
+                admin_invitation_pending=Exists(invitation_pending),
             )
         )
 
@@ -227,6 +247,39 @@ class PlatformOrganizationViewSet(PlatformModelViewSet):
         body["admin_email"] = result.admin.email
         body["invitation_sent"] = result.invitation_sent
         return Response(body, status=201)
+
+    @action(detail=True, methods=["post"], url_path="resend-invitation")
+    def resend_invitation(self, request, pk=None):
+        """
+        A fresh invitation for an administrator who has not signed in yet.
+
+        No body: there is nothing to choose. The service targets this
+        organization's administrators whose invitation is still unaccepted, and
+        refuses with 422 when there are none -- a working customer
+        administrator's password is the customer's, not the operator's.
+
+        THE PASSWORD IS NOT IN THE RESPONSE, for the reason provisioning gives:
+        it goes to the administrator's own address and nowhere else. What the
+        console gets back is who was mailed and whether each send went, so it
+        never reports an invitation as sent when it was not.
+        """
+        from apps.platform.services.provisioning import (
+            InvitationError,
+            reissue_admin_invitation,
+        )
+
+        organization = self.get_object()
+        try:
+            resent = reissue_admin_invitation(organization, actor=request.user)
+        except InvitationError as exc:
+            self._refuse(exc)
+        return Response(
+            {
+                "invitations": [
+                    {"email": item.email, "sent": item.sent} for item in resent
+                ]
+            }
+        )
 
     @action(detail=True, methods=["post"], url_path="change-plan")
     def change_plan(self, request, pk=None):

@@ -286,7 +286,7 @@ Stated so the tables above are not read as a description of shipped software.
 | Archive, purge, and their retention windows | Not implemented. `ARCHIVED` exists as a status and nothing transitions into it |
 | Full-organization export before cancellation | Not implemented |
 | `SupportGrant` | Designed (§5), not implemented |
-| Resending an invitation | Not implemented; a lost temporary password means a reset, never a lookup |
+| Resending an invitation | **Built** — only while the administrator has never signed in; after that, recovery is the customer's |
 
 **Two writers, one mapping.** `Organization.status` is written in exactly two
 places: `subscriptions._apply_to_organization`, when commercial state moves, and

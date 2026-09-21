@@ -520,3 +520,143 @@ def test_the_snapshot_says_which_product_this_session_is_for(console, company):
     customer = _signed_in(company.admin).get("/api/v1/me/permissions/").json()
     assert customer["is_platform_admin"] is False
     assert customer["grants"], "the positive control: a customer admin holds grants"
+
+
+# ---------------------------------------------------------------------------
+# Resending an administrator's invitation
+# ---------------------------------------------------------------------------
+#
+# The gap: when provisioning's invitation failed -- or "succeeded" and was then
+# bounced by the provider -- the only remedy was `changepassword` on the server.
+# The line these tests hold is the one that keeps it from becoming a lever over
+# customer accounts: only an UNACCEPTED invitation may be resent.
+
+
+@pytest.fixture
+def invited(plans):
+    """A customer whose administrator has never signed in."""
+    return provision_organization(
+        name="Southwind Clinics",
+        slug="southwind",
+        admin_email="admin@southwind.example",
+        plan=plans["starter"],
+    )
+
+
+def _resend(console, organization):
+    return console.post(
+        f"/api/v1/platform/organizations/{organization.pk}/resend-invitation/"
+    )
+
+
+def test_an_unaccepted_invitation_can_be_resent(console, invited, mailoutbox):
+    admin = invited.admin
+    admin.refresh_from_db()
+    old_hash = admin.password
+    mailoutbox.clear()
+
+    response = _resend(console, invited.organization)
+
+    assert response.status_code == 200, response.content[:300]
+    assert response.json() == {
+        "invitations": [{"email": "admin@southwind.example", "sent": True}]
+    }
+    admin.refresh_from_db()
+    # A FRESH password: the lost one is stored nowhere, and one sitting in a
+    # bounced message must stop working.
+    assert admin.password != old_hash
+    assert admin.must_change_password
+    assert [m.to for m in mailoutbox] == [["admin@southwind.example"]]
+
+
+def test_the_new_password_is_in_the_mail_and_nowhere_else(console, invited, mailoutbox):
+    mailoutbox.clear()
+    response = _resend(console, invited.organization)
+
+    body = mailoutbox[0].body
+    marker = "Temporary password: "
+    password = body.split(marker, 1)[1].split()[0]
+    assert invited.admin.__class__.objects.get(pk=invited.admin.pk).check_password(password)
+    # Not in the response, not in the audit trail.
+    assert password not in response.content.decode()
+    from apps.audit.models import AuditLog
+
+    for entry in AuditLog.objects.filter(organization=invited.organization):
+        assert password not in str(entry.after or "")
+
+
+def test_a_working_administrator_is_the_customers_to_recover(console, company):
+    """
+    The refusal that matters. `company`'s administrator has signed in and set
+    their own password; an operator who could reset it would hold a lever over
+    the customer's own accounts.
+    """
+    admin = company.admin
+    admin.refresh_from_db()
+    before = admin.password
+
+    response = _resend(console, company.organization)
+
+    assert response.status_code == 422, response.content[:300]
+    assert "customer" in response.json()["error"]["message"]
+    admin.refresh_from_db()
+    assert admin.password == before, "a refused resend must not touch the password"
+
+
+def test_the_resend_is_in_the_customers_audit_trail(console, operator, invited):
+    """Who reset our administrator's password is the CUSTOMER's question."""
+    from apps.audit.models import AuditLog
+
+    _resend(console, invited.organization)
+
+    # Looked up by the event, not taken as "the latest row": provisioning wrote
+    # an `accounts.User` row for the original invitation moments earlier, and
+    # timestamps that close can tie.
+    entries = AuditLog.objects.filter(
+        organization=invited.organization,
+        entity_type="accounts.User",
+        after__event="invitation_reissued",
+    )
+    assert entries.count() == 1
+    assert entries.get().actor_id == operator.pk
+
+
+def test_a_failed_send_is_reported_not_claimed(console, invited, monkeypatch):
+    """Nobody should be told an invitation went when it did not."""
+    import apps.accounts.services.passwords as passwords
+
+    monkeypatch.setattr(passwords, "send_account_created_email", lambda **_: False)
+
+    response = _resend(console, invited.organization)
+
+    assert response.status_code == 200
+    assert response.json()["invitations"] == [
+        {"email": "admin@southwind.example", "sent": False}
+    ]
+
+
+def test_the_console_knows_whether_to_offer_the_button(console, invited, company):
+    """
+    `admin_invitation_pending` answers the same question the service asks, so
+    the button the console shows and the refusal the service gives agree.
+    """
+    listing = console.get("/api/v1/platform/organizations/").json()["data"]
+    # Only the two built here: the suite's session-wide seed organization is
+    # also on the platform once any earlier test has created it.
+    pending = {
+        row["slug"]: row["admin_invitation_pending"]
+        for row in listing
+        if row["slug"] in {"southwind", "northwind"}
+    }
+    assert pending == {"southwind": True, "northwind": False}
+
+
+def test_a_customer_cannot_resend_invitations(company, invited):
+    """A platform route: an organization's own administrator is refused it."""
+    client = _signed_in(company.admin)
+    response = client.post(
+        f"/api/v1/platform/organizations/{invited.organization.pk}/resend-invitation/"
+    )
+    assert response.status_code in (403, 404)
+    invited.admin.refresh_from_db()
+    assert invited.admin.must_change_password

@@ -15,6 +15,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiGet, apiPost, type Paginated } from '@/lib/api'
 import type {
+  InvitationResend,
   PlatformOrganization,
   PlatformPlan,
   PlatformSummary,
@@ -89,6 +90,15 @@ export function useSetSubscriptionStatus(id: string) {
         `/platform/organizations/${id}/subscription-status/`,
         body,
       ),
+    onSuccess: refresh,
+  })
+}
+
+export function useResendInvitation(id: string) {
+  const refresh = useRefreshPlatform()
+  return useMutation({
+    mutationFn: () =>
+      apiPost<InvitationResend>(`/platform/organizations/${id}/resend-invitation/`),
     onSuccess: refresh,
   })
 }

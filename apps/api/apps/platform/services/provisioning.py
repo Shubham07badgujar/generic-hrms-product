@@ -342,3 +342,84 @@ def provision_organization(
 
     transaction.on_commit(_invite)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Resending the administrator's invitation
+# ---------------------------------------------------------------------------
+
+
+class InvitationError(ProvisioningError):
+    """A resend the operator asked for and this service will not do."""
+
+
+@dataclass
+class InvitationResent:
+    email: str
+    sent: bool
+
+
+def reissue_admin_invitation(organization, *, actor) -> list[InvitationResent]:
+    """
+    Send an organization's administrator a fresh invitation.
+
+    The gap this closes: provisioning reports `invitation_sent` honestly, but
+    when it is false -- or true, and the provider bounced the message after
+    accepting it -- the only remedy was an operator running `changepassword` on
+    the server. The temporary password is stored nowhere, and an administrator
+    has no Employee record, so the employee credential-reissue route cannot
+    reach them.
+
+    ONLY WHILE THE INVITATION IS UNACCEPTED. The targets are this
+    organization's administrators who still carry `must_change_password` --
+    who have never signed in and set a password of their own. Once they have,
+    this refuses: an operator who could reset a working customer administrator
+    would hold a lever over the customer's own accounts, which is exactly the
+    implicit reach the platform is designed not to have. Account recovery after
+    that point belongs to the customer. The operator never sees the new
+    password either way; it goes to the administrator's own address.
+
+    Each call invalidates the previous temporary password, which is the point
+    -- a bounced invitation sitting in somebody's inbox stops working -- and
+    is audited in the CUSTOMER's trail with the operator as actor, because
+    "who reset our administrator's password" is the customer's question.
+    """
+    from apps.accounts.models import User, UserRole
+    from apps.accounts.services.passwords import reissue_temporary_password
+    from core.access.catalog import RoleCode
+
+    with acting_as(actor, organization=organization):
+        admin_ids = set(
+            UserRole.objects.filter(role__code=RoleCode.ADMIN, is_active=True)
+            .values_list("user_id", flat=True)
+        )
+        pending = list(
+            User.objects.filter(
+                pk__in=admin_ids,
+                is_active=True,
+                must_change_password=True,
+                memberships__organization=organization,
+            )
+            .distinct()
+            .order_by("date_joined")
+        )
+        if not pending:
+            raise InvitationError(
+                f"No administrator of {organization.slug} is waiting on an "
+                f"invitation. Once an administrator has signed in and set their "
+                f"own password, recovering the account is the customer's to do, "
+                f"not the platform's."
+            )
+
+        return [
+            InvitationResent(
+                email=user.email,
+                sent=reissue_temporary_password(
+                    user=user,
+                    actor=actor,
+                    event="invitation_reissued",
+                    failed_event="invitation_reissue_failed",
+                ),
+            )
+            for user in pending
+        ]
