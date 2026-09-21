@@ -101,18 +101,71 @@ FIRST_NAMES = [
 LAST_NAMES = ["Rao", "Menon", "Iyer", "Bose", "Kulkarni", "Nair", "Verma", "Sen"]
 
 
+def full_plan():
+    """
+    The plan the report's organizations are sold: one that disables NOTHING.
+
+    Provisioning without a plan puts a customer on the cheapest public one,
+    and on a deployment that sells Starter that switches payroll and reporting
+    off. Every payroll and dashboard probe then answers `feature_not_available`
+    for the caller's own row as well as the victim's -- so it is reported as
+    inconclusive at best, and the report quietly stops covering two modules.
+    That is what happened the first time this script ran through the service.
+
+    A deployment that sells nothing has no plans; then there is no
+    subscription and every module is on, which is what `None` gives. A
+    deployment whose plans ALL disable something cannot host a full proof, and
+    is told so rather than handed a report that covers less than it claims.
+    """
+    from apps.platform.models import Plan
+
+    plans = list(Plan.objects.filter(is_active=True).order_by("display_order", "code"))
+    if not plans:
+        return None
+    for plan in plans:
+        if not plan.disabled_features:
+            return plan
+    raise SystemExit(
+        "Every active plan disables at least one module, so no organization "
+        "here can be provisioned with everything switched on, and a report "
+        "covering fewer modules than it names would be worse than none. Create "
+        "or reactivate a plan with no disabled features (seed_plans ships "
+        "'enterprise')."
+    )
+
+
+FULL_PLAN = full_plan()
+
+
 def provision(slug_base, name, n_employees, n_departments, n_locations):
     """
     One complete organization with its own everything.
 
-    THIS FUNCTION IS THE SEAM. When the platform provisioning service lands it
-    replaces the body wholesale -- an organization is created by one atomic
-    service call, not by a script reaching into the ORM. Until then this builds
-    the same shape by hand so the isolation proof does not have to wait for the
-    platform layer to exist.
+    CREATED BY THE PLATFORM PROVISIONING SERVICE, the same atomic call the
+    console makes for a real customer: organization, settings, configuration
+    seeds, first administrator with membership and Admin grant, audit row,
+    invitation. It used to be built here by hand -- `Organization.objects.
+    create`, `seed_roles`, a hand-made admin -- which meant 295 checks proved
+    isolation between organizations that no real customer would ever resemble,
+    created by a path no real customer goes through. An isolation defect in
+    anything provisioning seeds (leave types, document types, shift rules,
+    hiring workflows, letter templates) was invisible to this report.
+
+    What stays hand-built is the DATA: departments, people, a payroll run, a
+    candidate. Those are the rows the walk needs to aim at, and a customer
+    creates them through the application after provisioning, exactly as here.
+
+    The organization then goes live through `finish_setup`, whose refusal on
+    an incomplete company makes reaching an operational status an assertion
+    in its own right.
     """
+    from django.core import mail
+    from django.test.utils import override_settings
+
     from apps.accounts.models import Role, User, UserRole
-    from apps.accounts.services.roles import seed_roles
+    from apps.audit.models import AuditLog
+    from apps.organization.setup import finish_setup
+    from apps.platform.services.provisioning import provision_organization
     from apps.assets.models import Asset, AssetCategory
     from apps.attendance.models import AttendanceRecord
     from apps.employees.models import Employee
@@ -122,9 +175,7 @@ def provision(slug_base, name, n_employees, n_departments, n_locations):
         Designation,
         EmployeeLevel,
         Location,
-        Organization,
         OrganizationMembership,
-        OrgStatus,
     )
     from apps.payroll.models import PayrollRun
     from apps.recruitment.models import Candidate
@@ -142,13 +193,51 @@ def provision(slug_base, name, n_employees, n_departments, n_locations):
 
     slug = f"{slug_base}-{NONCE}"
     domain = f"{slug}.example"
-    org = Organization.objects.create(name=name, slug=slug, status=OrgStatus.ACTIVE)
+
+    # The invitation goes to an in-memory outbox, whatever this deployment's
+    # mail settings say. Provisioning sends it on commit, and a report run
+    # against a server with real SMTP must never mail anybody -- `.example`
+    # cannot resolve, but a bounce is still mail leaving the building. The
+    # outbox also lets the report ASSERT the invitation was attempted, which is
+    # the last step of the provisioning path and the one most easily skipped.
+    with override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+        mail.outbox = []
+        provisioned = provision_organization(
+            name=name,
+            legal_name=f"{name} Private Limited",
+            slug=slug,
+            admin_email=f"admin@{domain}",
+            admin_first_name="Admin",
+            admin_last_name=name.split()[0],
+            plan=FULL_PLAN,
+        )
+        invitations = [m for m in mail.outbox if f"admin@{domain}" in m.to]
+    org = provisioned.organization
 
     world = {"organization": org, "name": name, "slug": slug, "domain": domain,
-             "passwords": {}, "rows": {}}
+             "passwords": {}, "rows": {},
+             "seeded": sorted(provisioned.seeded),
+             "plan": FULL_PLAN.code if FULL_PLAN else "none (every module on)",
+             "invitations": len(invitations),
+             "audited": AuditLog.objects.filter(
+                 organization=org,
+                 entity_type="organization.Organization",
+                 action="create",
+             ).exists()}
+
+    # The provisioned administrator arrives with a temporary password and
+    # `must_change_password`, which the API enforces on every request. That
+    # gate has its own tests; this report is about tenancy, so the
+    # administrator is given a password of this run's choosing -- generated,
+    # never written down -- the way a real one would after first sign-in.
+    admin = provisioned.admin
+    admin_password = secrets.token_urlsafe(18)
+    admin.set_password(admin_password)
+    admin.must_change_password = False
+    admin.save(update_fields=["password", "must_change_password"])
+    world["passwords"][admin.email] = admin_password
 
     with acting_as(None, organization=org):
-        seed_roles(organization=org)
         roles = {r.code: r for r in Role.objects.filter(organization=org)}
 
         locations = [
@@ -179,7 +268,6 @@ def provision(slug_base, name, n_employees, n_departments, n_locations):
             world["passwords"][user.email] = password
             return user
 
-        admin = make_user("admin", "admin")
         hr = make_user("hr_head", "hr")
         worker = make_user("employee", "employee")
 
@@ -269,6 +357,13 @@ def provision(slug_base, name, n_employees, n_departments, n_locations):
                 payroll_run=world["rows"]["payroll_run"],
             )
         )
+
+    # Live, through the wizard's own gate. It refuses while a required step
+    # is outstanding and names which, so a failure here is a sentence about
+    # what this builder forgot rather than a status quietly left pending.
+    finish_setup(org)
+    org.refresh_from_db()
+    world["status"] = org.status
     return world
 
 
@@ -278,11 +373,41 @@ print("=" * 72)
 
 WORLDS = [provision(*profile) for profile in PROFILES]
 
+from apps.organization.models import OPERATIONAL_STATUSES  # noqa: E402
+from apps.platform.services.provisioning import CONFIG_SEEDS  # noqa: E402
+
 for w in WORLDS:
     check(
         f"1. {w['name']} provisioned ({len(w['employees'])} employees, "
         f"{len(w['departments'])} departments, {len(w['locations'])} locations)",
         len(w["employees"]) > 0 and len(w["rows"]) >= 9,
+    )
+    # That it came through the SERVICE, and all of it. Each is something a
+    # hand-built organization would not have, so these fail if the seam above
+    # is ever quietly reverted to ORM calls.
+    expected_seeds = sorted(key for key, _what, _seed in CONFIG_SEEDS)
+    check(
+        f"1. {w['name']} carries every configuration seed provisioning applies",
+        w["seeded"] == expected_seeds,
+        f"seeded {w['seeded']}, expected {expected_seeds}",
+    )
+    check(
+        f"1. {w['name']}'s creation is in its own audit trail",
+        w["audited"],
+    )
+    check(
+        f"1. {w['name']} is on a plan that disables nothing ({w['plan']})",
+        FULL_PLAN is None or not FULL_PLAN.disabled_features,
+    )
+    check(
+        f"1. {w['name']}'s administrator invitation was attempted (in-memory outbox)",
+        w["invitations"] == 1,
+        f"{w['invitations']} invitation(s)",
+    )
+    check(
+        f"1. {w['name']} went live through finish_setup ({w['status']})",
+        w["status"] in OPERATIONAL_STATUSES and w["status"] != "pending_setup",
+        w["status"],
     )
 
 
@@ -1363,12 +1488,15 @@ w_("")
 w_("Stated because a report that only lists what passed is not evidence, it is "
    "advertising.")
 w_("")
-w_("- **The organizations are built by this script, not by the platform "
-   "provisioning service**, which now exists (`apps.platform.services."
-   "provisioning.provision_organization`). `provision()` is still the seam, and "
-   "pointing it at that service is the next thing this report should prove. "
-   "Until then the creation path itself is covered by the platform layer's own "
-   "tests rather than here.")
+w_("- **The organizations are provisioned by the platform service, but their "
+   "DATA is not created through the API.** `provision_organization` builds each "
+   "one exactly as the console does for a real customer -- configuration seeds, "
+   "first administrator, audit row, invitation -- and each goes live through "
+   "`finish_setup`. The departments, people, payroll run and candidates the "
+   "walk aims at are then written directly, because they are the targets of "
+   "the proof rather than its subject; whether the application's own create "
+   "endpoints keep a row in its organization is the write-injection matrix's "
+   "job, not this report's.")
 w_(f"- **The walk reached {WALK[0][2] if WALK else 0} of the {ROUTES_TOTAL} "
    f"routes the resolver exposes.** A route is only asserted against when it "
    f"serves the CALLER's own row, because one that answers 405 or 404 for "

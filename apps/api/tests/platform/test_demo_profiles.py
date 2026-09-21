@@ -18,7 +18,7 @@ Retail is the one chosen, because ten employees is the cheapest honest end-to-en
 run and the trial is the mechanism the other two do not exercise.
 
 WHAT IS NOT ASSERTED HERE. Cross-tenant isolation in general -- that has its own
-suite, a route walker and a 295-check report. What this file asserts is narrower
+suite, a route walker and a generated isolation report. What this file asserts is narrower
 and specific to demo data: that two demo companies seeded from one command are
 genuinely two customers, rather than two names over one set of rows.
 """

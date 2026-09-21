@@ -166,7 +166,16 @@ def build_extra_rows(
     rows["regularization"] = RegularizationRequest.objects.create(
         employee=worker_employee, date=dt.date(2025, 6, 4), reason="Missed punch"
     )
-    rows["shift_rule"] = ShiftRule.objects.create(
+    # The organization's DEFAULT rule (location IS NULL), of which there is
+    # exactly one per organization by constraint. An organization created by
+    # the provisioning service already has it -- `seed_shift_rules` is one of
+    # the configuration seeds -- so it is reused rather than duplicated, which
+    # would violate `uniq_default_shift_rule`. An organization built by hand,
+    # as the route walker's are, gets one created here exactly as before; for
+    # the walk either is the same kind of row, one per organization.
+    rows["shift_rule"] = ShiftRule.objects.filter(
+        location__isnull=True
+    ).first() or ShiftRule.objects.create(
         start_time=dt.time(9, 30), end_time=dt.time(18, 30)
     )
 
