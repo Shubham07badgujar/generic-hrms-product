@@ -193,8 +193,14 @@ def test_seed_demo_company_builds_its_own_company_and_touches_no_other(
     assert (other.name, other.slug) == other_identity, "another organization was renamed"
     assert _structure_of(other) == other_structure, "another organization's structure changed"
 
+    # Derived from the profile rather than written down: the roster is data
+    # now, and a hard-coded count would make adding a person to a demo company
+    # look like a tenancy failure.
+    from apps.organization.demo import HEALTHCARE
+
+    expected = len(HEALTHCARE.people) + len(HEALTHCARE.system_people)
     demo_users = User.objects.filter(email__endswith=f"@{DEMO_DOMAIN}")
-    assert demo_users.count() == 18, "one account per role, as the command promises"
+    assert demo_users.count() == expected, "the profile's whole roster, and only it"
     for user in demo_users:
         assert OrganizationMembership.objects.filter(
             user=user, organization=org_a.organization

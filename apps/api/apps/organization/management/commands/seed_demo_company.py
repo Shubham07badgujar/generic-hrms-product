@@ -60,15 +60,19 @@ from pathlib import Path
 
 from django.core.management.base import CommandError
 from django.db import transaction
+from django.utils.text import slugify
 
-from core.access.catalog import DepartmentKind, Layer
+from apps.organization.demo import LEVELS, PROFILES, get_profile
 from core.management.orgcommand import OrganizationCommand
 from core.models import org_scoped
 
-#: Unmistakably not a real person's address (RFC 2606 reserves .example),
-#: and trivially greppable. Overridable with --domain.
-DEFAULT_EMAIL_DOMAIN = "demo-healthcare.example"
-DEFAULT_COMPANY = "Demo Healthcare Pvt Ltd"
+#: Seeded when no profile is named, so `manage.py seed_demo_company` with no
+#: arguments still builds the complete-coverage healthcare company it always
+#: did. The constants it used to hold inline are now one profile among three
+#: in `apps/organization/demo/profiles.py` -- a second and a third company are
+#: what make a multi-tenant claim checkable, and they cannot share one set of
+#: module-level constants.
+DEFAULT_PROFILE = "healthcare"
 
 
 def _credentials_path(organization) -> Path:
@@ -88,79 +92,6 @@ def _credentials_path(organization) -> Path:
         / str(organization.pk)
         / "demo-credentials.txt"
     )
-
-
-LEVELS = [
-    ("L1", "Leadership", Layer.LEADERSHIP, 10),
-    ("L2", "Department Head", Layer.DEPARTMENT_HEAD, 20),
-    ("L3", "Manager", Layer.MANAGER, 30),
-    ("L4", "Executive", Layer.EXECUTIVE, 40),
-    ("L5", "Staff", Layer.STAFF, 50),
-]
-
-DEPARTMENTS = [
-    (DepartmentKind.MEDICAL, "Medical", "MED"),
-    (DepartmentKind.OPERATIONS, "Operations", "OPS"),
-    (DepartmentKind.HR, "Human Resources", "HR"),
-    (DepartmentKind.FINANCE, "Finance & Accounts", "FIN"),
-]
-
-DESIGNATIONS = {
-    DepartmentKind.MEDICAL: [
-        "Medical Director", "Senior Consultant", "Clinic Doctor", "Therapist",
-    ],
-    DepartmentKind.OPERATIONS: [
-        "Head of Operations", "Operations Manager", "Customer Relations Executive",
-        "Executive", "Facilities Assistant", "Associate",
-    ],
-    DepartmentKind.HR: ["HR Head", "HR Manager", "Talent Acquisition Specialist"],
-    DepartmentKind.FINANCE: [
-        "Finance Head", "Accounts Manager", "Payroll Executive",
-    ],
-}
-
-#: role_code, first, last, department, level, designation, reports-to role
-#: Ordered so every manager exists before anyone reporting to them.
-PEOPLE = [
-    # --- Layer 2, department heads. No internal manager: they answer to the
-    # CEO, who has no Employee record to point at.
-    ("medical_director",   "Meera",   "Kulkarni", DepartmentKind.MEDICAL,    Layer.DEPARTMENT_HEAD, "Medical Director",              None),
-    ("operational_head",   "Oindrila","Sen",      DepartmentKind.OPERATIONS, Layer.DEPARTMENT_HEAD, "Head of Operations",            None),
-    ("hr_head",            "Hema",    "Rao",      DepartmentKind.HR,         Layer.DEPARTMENT_HEAD, "HR Head",                       None),
-    ("finance_head",       "Farah",   "Khan",     DepartmentKind.FINANCE,    Layer.DEPARTMENT_HEAD, "Finance Head",                  None),
-
-    # --- Layer 3, managers.
-    ("senior_doctor",      "Sanjay",  "Iyer",     DepartmentKind.MEDICAL,    Layer.MANAGER,   "Senior Consultant",             "medical_director"),
-    ("operations_manager", "Omkar",   "Patil",    DepartmentKind.OPERATIONS, Layer.MANAGER,   "Operations Manager",            "operational_head"),
-    ("hr_manager",         "Hari",    "Menon",    DepartmentKind.HR,         Layer.MANAGER,   "HR Manager",                    "hr_head"),
-    ("accounts_manager",   "Anita",   "Kelkar",    DepartmentKind.FINANCE,    Layer.MANAGER,   "Accounts Manager",              "finance_head"),
-
-    # --- Layer 4, executives.
-    ("clinic_doctor",      "Chandni", "Bose",     DepartmentKind.MEDICAL,    Layer.EXECUTIVE, "Clinic Doctor",                 "senior_doctor"),
-    ("cre",                "Chetan",  "Desai",    DepartmentKind.OPERATIONS, Layer.EXECUTIVE, "Customer Relations Executive",  "operations_manager"),
-    ("executive",          "Esha",    "Kapoor",   DepartmentKind.OPERATIONS, Layer.EXECUTIVE, "Executive",                     "operations_manager"),
-    ("recruiter",          "Ravi",    "Shah",     DepartmentKind.HR,         Layer.EXECUTIVE, "Talent Acquisition Specialist", "hr_manager"),
-    ("payroll_executive",  "Pooja",   "Reddy",    DepartmentKind.FINANCE,    Layer.EXECUTIVE, "Payroll Executive",             "accounts_manager"),
-
-    # --- Layer 5, staff.
-    ("therapist",          "Tara",    "Nair",     DepartmentKind.MEDICAL,    Layer.STAFF,     "Therapist",                     "senior_doctor"),
-    ("office_boy",         "Om",      "Jadhav",   DepartmentKind.OPERATIONS, Layer.STAFF,     "Facilities Assistant",          "operations_manager"),
-    ("employee",           "Ekta",    "Sharma",   DepartmentKind.OPERATIONS, Layer.STAFF,     "Associate",                     "operations_manager"),
-]
-
-#: The two principals with no Employee record (`requires_employee=False`).
-#:
-#: `admin` is `is_grantable=False`, which stops it being granted through the
-#: application by HR or anyone else — that restriction is about the in-app
-#: path, and it stays intact. A role assignment written by a management
-#: command run by root on the server is the same sanctioned route
-#: `bootstrap_admin` uses, and it is how an administrator is meant to exist at
-#: all. This account is separate from the real production admin so that
-#: testing never needs its credentials.
-SYSTEM_PEOPLE = [
-    ("ceo", "Vikram", "Malhotra"),
-    ("admin", "Sysadmin", "Demo"),
-]
 
 
 def make_password() -> str:
@@ -194,20 +125,60 @@ class Command(OrganizationCommand):
         super().add_arguments(parser)
         parser.add_argument("--remove", action="store_true",
                             help="Delete this organization's demo accounts and their employee records.")
-        parser.add_argument("--company", default=DEFAULT_COMPANY,
-                            help="Display name for the demo organisation.")
+        parser.add_argument(
+            "--keep-admin", action="store_true",
+            help=(
+                "With --remove, spare the account holding this organization's "
+                "Admin grant. For an organization that outlives its demo people."
+            ),
+        )
+        parser.add_argument("--profile", default=DEFAULT_PROFILE,
+                            choices=sorted(PROFILES),
+                            help="Which fictional company to build.")
+        parser.add_argument("--company", default="",
+                            help="Display name (defaults to the profile's).")
         parser.add_argument("--legal-name", default="",
                             help="Registered entity name (defaults to the display name).")
-        parser.add_argument("--domain", default=DEFAULT_EMAIL_DOMAIN,
-                            help="Email domain for the demo accounts.")
+        parser.add_argument("--domain", default="",
+                            help="Email domain for the demo accounts (defaults to the profile's).")
 
     def handle_for_organization(self, organization, *args, **options):
         self.organization = organization
-        self.company = options.get("company") or DEFAULT_COMPANY
-        self.legal_name = options.get("legal_name") or f"{self.company}."
-        self.domain = options.get("domain") or DEFAULT_EMAIL_DOMAIN
+        self.profile = get_profile(options.get("profile") or DEFAULT_PROFILE)
+        # Each overridable, and each defaulting to the profile rather than to a
+        # module constant: two profiles sharing a domain would make `--remove`
+        # ambiguous, and a caller who overrides one has said which they mean.
+        self.company = options.get("company") or self.profile.company
+        self.legal_name = (
+            options.get("legal_name")
+            or (self.profile.legal_name if not options.get("company") else "")
+            or f"{self.company}."
+        )
+        self.domain = options.get("domain") or self.profile.domain
+        # The slug the organization should answer to afterwards. The PROFILE's
+        # when it is building a profile as written, and derived from the name
+        # only when a caller overrode it -- because a profile is provisioned
+        # under its own slug and re-slugging it from the display name would
+        # move the company out from under the command that just created it,
+        # and out from under every `--remove` and every link to it.
+        self.slug_hint = (
+            slugify(options["company"])[:63]
+            if options.get("company")
+            else self.profile.slug
+        )
         if options["remove"]:
-            return self._remove()
+            return self._remove(keep_admin=options.get("keep_admin", False))
+
+        # Refused before the first write, not discovered eleven employees in.
+        # Everything `validate()` checks is a rule `create_employee` enforces,
+        # and a profile that breaks one would roll back a transaction that had
+        # already done most of the work.
+        problems = self.profile.validate()
+        if problems:
+            raise CommandError(
+                "This demo profile is malformed:\n  "
+                + "\n  ".join(problems)
+            )
         return self._seed()
 
     # ------------------------------------------------------------------ seed
@@ -244,14 +215,12 @@ class Command(OrganizationCommand):
         actor = admin_grant.user
 
         # --- organisation ------------------------------------------------
-        from django.utils.text import slugify
-
         organization.name = self.company
         organization.legal_name = self.legal_name
         # The slug is the public branding key -- it is how the login page finds
         # this company before anyone signs in -- so it has to name the company,
         # not whatever placeholder bootstrap used.
-        candidate = slugify(self.company)[:63] or organization.slug
+        candidate = self.slug_hint or organization.slug
         if not Organization.objects.exclude(pk=organization.pk).filter(slug=candidate).exists():
             organization.slug = candidate
         organization.save(update_fields=["name", "legal_name", "slug", "updated_at"])
@@ -262,13 +231,21 @@ class Command(OrganizationCommand):
             org.employee_code_next = 1001
             org.save(update_fields=["employee_code_prefix", "employee_code_next"])
 
+        profile = self.profile
+
         # `state` is not cosmetic: Professional Tax is a state levy, and a
-        # location without one means PT silently computes to nothing.
-        location, _ = org_scoped(Location, organization).update_or_create(
-            code="HO",
-            defaults={"name": "Head Office", "city": "Pune", "state": "MH",
-                      "is_head_office": True},
-        )
+        # location without one means PT silently computes to nothing. More than
+        # one site per company on purpose, too: a single-location demo cannot
+        # exercise a holiday calendar that differs by state, and two of these
+        # companies genuinely operate across two.
+        locations = {}
+        for site in profile.locations:
+            locations[site.code], _ = org_scoped(Location, organization).update_or_create(
+                code=site.code,
+                defaults={"name": site.name, "city": site.city, "state": site.state,
+                          "is_head_office": site.is_head_office},
+            )
+        head_office = locations[profile.head_office.code]
 
         levels = {}
         for code, name, layer, rank in LEVELS:
@@ -276,22 +253,37 @@ class Command(OrganizationCommand):
                 code=code, defaults={"name": name, "layer": layer, "rank": rank},
             )
 
+        # Keyed by department CODE rather than kind: a profile may hold two
+        # departments of the same kind, and keying by kind silently merged
+        # them into one. Technology has exactly that shape.
         departments = {}
-        for kind, name, code in DEPARTMENTS:
-            departments[kind], _ = org_scoped(Department, organization).update_or_create(
-                code=code, defaults={"name": name, "kind": kind},
+        for entry in profile.departments:
+            departments[entry.code], _ = org_scoped(Department, organization).update_or_create(
+                code=entry.code, defaults={"name": entry.name, "kind": entry.kind},
             )
 
+        # Keyed by (department, title), because two departments may carry the
+        # same job title and a title-only key hands the second one the first
+        # department's row.
         designations = {}
-        for kind, titles in DESIGNATIONS.items():
-            for title in titles:
-                designations[title], _ = org_scoped(Designation, organization).update_or_create(
-                    title=title, department=departments[kind], defaults={},
+        for entry in profile.departments:
+            for title in entry.designations:
+                designations[(entry.code, title)], _ = org_scoped(
+                    Designation, organization
+                ).update_or_create(
+                    title=title, department=departments[entry.code], defaults={},
                 )
+
+        # A rename, not a redefinition: the matrix, the layers and the
+        # segregation-of-duties rules are code and identical in every company.
+        # This is the product's own claim that the seeded roles are defaults
+        # the customer owns, exercised rather than asserted.
+        for code, name in profile.role_names.items():
+            org_scoped(Role, organization).filter(code=code).update(name=name)
 
         self.stdout.write(
             f"organisation: {len(departments)} departments, {len(levels)} levels, "
-            f"{len(designations)} designations, 1 location"
+            f"{len(designations)} designations, {len(locations)} location(s)"
         )
 
         credentials = []
@@ -300,7 +292,7 @@ class Command(OrganizationCommand):
         roles = org_scoped(Role, organization)
 
         # --- system principals -------------------------------------------
-        for role_code, first, last in SYSTEM_PEOPLE:
+        for role_code, first, last in profile.system_people:
             email = f"{role_code}@{self.domain}"
             role = roles.get(code=role_code)
             user = User.objects.filter(email=email).first()
@@ -332,25 +324,28 @@ class Command(OrganizationCommand):
             self.stdout.write(f"  {role_code:<20} {email}  (system principal, no employee record)")
 
         # --- employees ----------------------------------------------------
-        for role_code, first, last, kind, layer, designation, manager_role in PEOPLE:
-            email = f"{role_code}@{self.domain}"
+        for person in profile.people:
+            email = f"{person.username}@{self.domain}"
             if User.objects.filter(email=email).exists():
-                self.stdout.write(self.style.WARNING(f"  {role_code:<20} already exists — skipped"))
+                self.stdout.write(
+                    self.style.WARNING(f"  {person.username:<20} already exists — skipped")
+                )
                 continue
 
             password = make_password()
-            manager = created.get(manager_role)
+            manager = created.get(person.manager)
+            site = locations[person.location] if person.location else head_office
 
             result = create_employee(
                 actor=actor,
-                first_name=first,
-                last_name=last,
+                first_name=person.first_name,
+                last_name=person.last_name,
                 email=email,
-                role_code=role_code,
-                department_id=departments[kind].pk,
-                designation_id=designations[designation].pk,
-                location_id=location.pk,
-                level_id=levels[layer].pk,
+                role_code=person.role_code,
+                department_id=departments[person.department].pk,
+                designation_id=designations[(person.department, person.designation)].pk,
+                location_id=site.pk,
+                level_id=levels[person.level].pk,
                 reporting_manager_id=manager.pk if manager else None,
                 date_of_joining=joined,
                 temporary_password=password,
@@ -361,29 +356,27 @@ class Command(OrganizationCommand):
                 start_onboarding_checklist=False,
             )
             employee = result.employee
-            created[role_code] = employee
+            created[person.username] = employee
 
             credentials.append({
-                "role": role_code, "name": f"{first} {last}", "email": email,
+                "role": person.role_code,
+                "name": f"{person.first_name} {person.last_name}",
+                "email": email,
                 "password": password, "employee": employee,
             })
             self.stdout.write(
-                f"  {role_code:<20} {email:<42} {employee.employee_code}  "
-                f"{departments[kind].code}/{designation}"
+                f"  {person.username:<20} {email:<42} {employee.employee_code}  "
+                f"{person.department}/{person.designation}"
             )
 
         # --- department heads --------------------------------------------
-        # Set after creation: a department's head must already be an employee,
-        # and they are created inside their own department.
-        for role_code, kind in [
-            ("medical_director", DepartmentKind.MEDICAL),
-            ("operational_head", DepartmentKind.OPERATIONS),
-            ("hr_head", DepartmentKind.HR),
-            ("finance_head", DepartmentKind.FINANCE),
-        ]:
-            if role_code in created:
-                department = departments[kind]
-                department.head_employee = created[role_code]
+        # Set after creation: a department's head must already be an employee.
+        # A department may legitimately have none, so the profile names its
+        # head rather than this loop assuming every department has one.
+        for entry in profile.departments:
+            if entry.head and entry.head in created:
+                department = departments[entry.code]
+                department.head_employee = created[entry.head]
                 department.save(update_fields=["head_employee", "updated_at"])
 
         # --- confirm employment ------------------------------------------
@@ -407,7 +400,7 @@ class Command(OrganizationCommand):
 
     # ---------------------------------------------------------------- remove
     @transaction.atomic
-    def _remove(self):
+    def _remove(self, *, keep_admin=False):
         from apps.accounts.models import User
         from apps.employees.models import Employee
 
@@ -421,6 +414,24 @@ class Command(OrganizationCommand):
             email__endswith=f"@{self.domain}",
             memberships__organization=organization,
         ).distinct()
+
+        if keep_admin:
+            # The organization's administrator is not part of the demo roster:
+            # it was created when the organization was provisioned, and an
+            # organization that outlives its demo people still needs somebody
+            # who can administer it -- including somebody for a re-seed to act
+            # as, since every demo employee is created BY an admin.
+            # `org_scoped` is the module-level import. Importing it again here
+            # would make it a LOCAL name for the whole function, and the plain
+            # `--remove` path below would then raise UnboundLocalError.
+            from apps.accounts.models import UserRole
+
+            spared = set(
+                org_scoped(UserRole, organization)
+                .filter(role__code="admin", is_active=True)
+                .values_list("user_id", flat=True)
+            )
+            users = users.exclude(pk__in=spared)
         count = users.count()
         if not count:
             self.stdout.write(f"No demo accounts found in {organization.slug}.")

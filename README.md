@@ -77,6 +77,33 @@ python manage.py seed_all         # every seed + a demo company full of test dat
 python manage.py runserver
 ```
 
+One company is enough to exercise the HR product and proves nothing about the
+SaaS one. For that, seed three:
+
+```bash
+python manage.py seed_plans                 # what this deployment sells
+python manage.py bootstrap_platform_admin   # the operator, so the console has a door
+python manage.py seed_demo_platform         # three customers, three plans
+```
+
+| Company | Size | Plan | What it is for |
+|---|---|---|---|
+| `demo-healthcare` | 20 employees, 5 departments, 3 locations | Enterprise | Every module and one account per role — the company to test permissions, payroll and the hierarchy against. |
+| `demo-technology` | 15 employees, 4 departments, 2 locations | Starter | A plan **without payroll**. Signing in as its Finance Head and finding no payroll is the point: entitlement is not permission. |
+| `demo-retail` | 10 employees, 3 departments, 2 locations | Growth, trialing | A trial **days from expiry** — what a customer sees when somebody has to decide whether to buy. |
+
+Each is created by the same atomic `provision_organization` call the platform
+console makes: same validation, same configuration seeds, same first
+administrator, same audit rows. Passwords are random per account and written to
+a file inside that organization's own media subtree; every address is under
+`.example`, which cannot resolve. `--remove` deletes a demo customer entirely,
+keyed on its slug — never on an email domain, which is what once let two demo
+companies delete each other's people.
+
+Only healthcare promises an account for every role: fifteen people cannot hold
+eighteen roles and ten certainly cannot, so the other two name the roles they
+leave out rather than quietly missing them.
+
 API: <http://localhost:8000> · OpenAPI schema: <http://localhost:8000/api/schema/swagger-ui/>
 
 ### Frontend
@@ -138,7 +165,8 @@ success either way.
 |---|---|
 | `seed_roles` | 18 role templates across 5 authority layers with a reviewed permission matrix. Admins add, rename, deactivate roles and edit per-role permissions at runtime; custom roles need no code. |
 | `seed_leave` | A starter leave policy (types, accrual, notice rules) to edit under Organisation → Leave. |
-| `seed_demo_company` | A fully fictional company — "Demo Healthcare Pvt Ltd" by default; `--company/--legal-name/--domain` to change — one account per template role, strong unique passwords, removable with `--remove`. Acts inside the named organization only: `--remove` takes that organization's members, not everybody who happens to share the email domain. |
+| `seed_demo_company` | One fictional company, built from a demo **profile** (`--profile healthcare|technology|retail`, default healthcare). Strong unique passwords, removable with `--remove`. Acts inside the named organization only: `--remove` takes that organization's members, not everybody who happens to share the email domain. |
+| `seed_demo_platform` | All three demo customers at once, each **provisioned through the platform service** and each on a different plan — the command for testing the SaaS product rather than the HR one. See below. |
 | `seed_demo` | DEBUG-only development fixture with known passwords and a populated recruitment pipeline. Refuses to run in production. |
 
 Statutory payroll (PF, ESI, Professional Tax, income tax) targets **India**;

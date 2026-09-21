@@ -221,21 +221,82 @@ asks the customer to send it.
 
 ---
 
-## 6. What is not built yet
+## 6. The three demo customers
 
-Stated so the table above is not read as a description of shipped software.
+A single demo company proves the HR product runs and proves nothing about the
+SaaS one: every question worth asking — does one customer's HR Head reach
+another's payroll, does a plan without payroll actually hide it, does an
+expiring trial say so — needs a second and a third company that differ from
+the first.
+
+```bash
+python manage.py seed_plans
+python manage.py bootstrap_platform_admin
+python manage.py seed_demo_platform
+```
+
+| Company | Size | Plan | The mechanism it exercises |
+|---|---|---|---|
+| `demo-healthcare` | 20 employees, 5 departments, 3 locations | Enterprise | Every module, one account per role. The RBAC and payroll reference company. |
+| `demo-technology` | 15 employees, 4 departments, 2 locations | Starter | Payroll, assets, biometric devices, IT accounts and reporting **disabled by plan**. Entitlement, visibly separate from permission. |
+| `demo-retail` | 10 employees, 3 departments, 2 locations | Growth, `trialing` | A trial days from expiry. |
+
+Three properties are worth knowing before using them:
+
+- **They go through `provision_organization`.** Not a script that writes rows:
+  the same atomic call the console makes, with the same validation,
+  configuration seeds, first administrator, membership, role grant and audit
+  rows. A demo that bypassed provisioning would prove only that the seeding
+  command can write rows; this one fails here, rather than in front of a
+  customer, when the provisioning path breaks.
+- **They go live through `finish_setup`.** Which refuses while a required
+  wizard step is outstanding and names the ones that are — so a demo company
+  reaching `active` is itself an assertion that it is completely configured.
+- **Removal is keyed on the organization, never on an email domain.** Demo rows
+  were once selected by address suffix, which meant two demo companies could
+  delete each other's people. The profiles also hold distinct domains and
+  slugs, and a test asserts it.
+
+Only healthcare promises an account for every role. Fifteen people cannot hold
+eighteen roles and ten certainly cannot, so the other two name the roles they
+leave out (`DemoProfile.absent_roles`) rather than quietly missing them, and
+the command prints that list.
+
+The profiles rename some roles per industry — `operations_manager` reads as
+"Store Manager" in retail and "Engineering Manager" in technology. That is a
+**display rename on that organization's own rows**, which is the product's
+actual stance that the seeded roles are defaults the customer owns. The
+permission matrix, the five layers and the segregation-of-duties invariants are
+code and identical in all three.
+
+---
+
+## 7. What is not built yet
+
+Stated so the tables above are not read as a description of shipped software.
 
 | Area | Status |
 |---|---|
 | Platform boundary, sign-in, organization list and summary | **Built** |
+| Organization provisioning as one atomic service | **Built** — service, console form, and `manage.py provision_organization` |
+| Plans, subscriptions, feature gating, seat limits | **Built** |
+| The setup wizard a new Organization Admin walks through | **Built** — computed from `satisfied(org)` predicates, not stored wizard state |
+| Platform console UI | **Built** — its own route tree, disjoint from the HR application |
+| Suspend and cancel | **Built**, through subscription status; `Organization.status` follows it |
+| Archive, purge, and their retention windows | Not implemented. `ARCHIVED` exists as a status and nothing transitions into it |
+| Full-organization export before cancellation | Not implemented |
 | `SupportGrant` | Designed (§5), not implemented |
-| Organization provisioning as one atomic service | Not implemented; organizations are created by script and by the isolation-verification harness |
-| Plans, subscriptions, feature gating, seat limits | Not implemented |
-| Lifecycle transitions (suspend, cancel, archive, purge) and their retention rules | Not implemented |
-| The setup wizard a new Organization Admin walks through | Not implemented |
-| Platform console UI | Not implemented |
+| Resending an invitation | Not implemented; a lost temporary password means a reset, never a lookup |
 
-The boundary was built first on purpose. Every item above adds routes to the
+One seam is worth naming rather than leaving to be discovered. `finish_setup`
+writes `Organization.status = ACTIVE` directly, while `subscriptions.set_status`
+is documented as the only writer of that column — so a customer who finishes
+setup during a trial ends up `active` with a `trialing` subscription. Both
+statuses are operational and nothing is refused because of it, but the two
+lifecycles disagree, and the demo seeding currently corrects retail's status by
+hand because of it.
+
+The boundary was built first on purpose. Everything above adds routes to the
 platform tree, and adding them to a tree whose entry rule is already enforced
 at build time is a different proposition from adding them and then trying to
 secure them.

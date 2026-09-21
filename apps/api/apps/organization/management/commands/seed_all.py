@@ -15,6 +15,14 @@ Everything it creates is fictional. It refuses to run on a database that
 already holds real-looking employees unless you pass --force, because the
 one thing worse than an empty test system is a seeded production one.
 
+ONE COMPANY, AND THE HEALTHCARE ONE. The transactional data below names
+roles from that roster -- a therapist to book leave for, a CRE holding an
+asset, an HR Head running the pipeline -- so this command seeds the healthcare
+profile and only it. Three customers on three different plans, which is what
+the SaaS mechanisms need, are `manage.py seed_demo_platform`; this one is for
+testing the HR product inside a single company. Running both is the normal
+thing to do: seed the three, then point this at the healthcare one.
+
 What it deliberately does NOT do:
 
   * Verify the statutory rate sets. They arrive as DRAFTS, exactly as they
