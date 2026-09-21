@@ -18,12 +18,18 @@
  * A suspended organization's data is preserved, not published: the customer
  * gets it back on restore, or through an export, both of which are acts
  * somebody performs rather than a side effect of the account still resolving.
+ *
+ * The export is the one act offered here, and only when the server says this
+ * person may take it -- in practice a cancelled organization's Admin, inside
+ * the export window. Suspended organizations are not offered it: restoring the
+ * account is their remedy, and the route would refuse.
  */
 
 import { useAuth, usePermissions } from '@/app/AuthProvider'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/States'
+import { ExportDataButton } from './ExportDataButton'
 
 const EXPLANATION: Record<string, { title: string; description: string }> = {
   suspended: {
@@ -79,9 +85,12 @@ export function SuspendedPage() {
             </svg>
           }
           action={
-            <Button variant="secondary" onClick={() => void logout()}>
-              Sign out
-            </Button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <ExportDataButton />
+              <Button variant="secondary" onClick={() => void logout()}>
+                Sign out
+              </Button>
+            </div>
           }
         />
       </Card>

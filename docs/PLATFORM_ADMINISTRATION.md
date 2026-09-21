@@ -284,7 +284,7 @@ Stated so the tables above are not read as a description of shipped software.
 | Platform console UI | **Built** — its own route tree, disjoint from the HR application |
 | Suspend and cancel | **Built**, through subscription status; `Organization.status` follows it |
 | Archive, purge, and their retention windows | Not implemented. `ARCHIVED` exists as a status and nothing transitions into it |
-| Full-organization export before cancellation | Not implemented |
+| Full-organization export before cancellation | **Built** — `GET /org/export/`, the customer Admin's own, for 90 days after cancellation; the operator cannot use it |
 | `SupportGrant` | Designed (§5), not implemented |
 | Resending an invitation | **Built** — only while the administrator has never signed in; after that, recovery is the customer's |
 

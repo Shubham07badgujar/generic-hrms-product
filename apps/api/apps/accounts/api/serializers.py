@@ -246,6 +246,13 @@ class MeSerializer(serializers.ModelSerializer):
     employee_status = serializers.SerializerMethodField()
     onboarding_pending = serializers.SerializerMethodField()
     handbook_acknowledgement_pending = serializers.SerializerMethodField()
+    #: Whether this person may download the organization's whole record now.
+    #: Asked of the same function the export route asks, so the button the
+    #: SPA shows and the answer the route gives cannot disagree. It lives on
+    #: `/me/` rather than the permission snapshot because it is not a grant:
+    #: a CANCELLED organization has no grants at all, and this is exactly the
+    #: case it has to answer.
+    organization_export_available = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -261,6 +268,7 @@ class MeSerializer(serializers.ModelSerializer):
             "must_change_password",
             "onboarding_pending",
             "handbook_acknowledgement_pending",
+            "organization_export_available",
             "last_login_at",
         ]
         read_only_fields = fields
@@ -278,6 +286,11 @@ class MeSerializer(serializers.ModelSerializer):
         from apps.onboarding.services import handbook_acknowledgement_pending
 
         return handbook_acknowledgement_pending(user)
+
+    def get_organization_export_available(self, user) -> bool:
+        from apps.organization.export import refusal_for
+
+        return refusal_for(user) is None
 
     def get_roles(self, user) -> list[str]:
         from apps.organization.membership import role_grants

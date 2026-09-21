@@ -19,14 +19,46 @@ import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { MyPlan } from '@/lib/types'
 
-const state = vi.hoisted(() => ({ plan: null as unknown }))
+const state = vi.hoisted(() => ({
+  plan: null as unknown,
+  exportAvailable: false,
+  status: 'active' as string,
+  downloads: [] as string[],
+}))
 
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
-  return { ...actual, apiGet: vi.fn(async () => state.plan) }
+  return {
+    ...actual,
+    apiGet: vi.fn(async () => state.plan),
+    downloadFile: vi.fn(async (url: string) => {
+      state.downloads.push(url)
+    }),
+  }
+})
+
+// The page now asks `/me/` whether to offer the export, so it needs a session.
+// The flag is the whole of what these tests vary: the rule behind it is the
+// server's, and is tested there.
+vi.mock('@/app/AuthProvider', async () => {
+  const { Permissions } = await import('@/lib/permissions')
+  const { makeSnapshot } = await import('./helpers')
+  const permissions = () =>
+    new Permissions(makeSnapshot({ organization_status: state.status as never }))
+  return {
+    useAuth: () => ({
+      user: { email: 'admin@example.test', organization_export_available: state.exportAvailable },
+      logout: vi.fn(async () => undefined),
+      permissions: permissions(),
+    }),
+    usePermissions: permissions,
+  }
 })
 
 import { PlanPage } from '@/features/organisation/PlanPage'
+import { SuspendedPage } from '@/features/organisation/SuspendedPage'
+import { ToastProvider } from '@/components/ui/Toast'
+import userEvent from '@testing-library/user-event'
 
 const STARTER: MyPlan = {
   plan: {
@@ -49,7 +81,9 @@ function renderPlan(plan: MyPlan) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <PlanPage />
+        <ToastProvider>
+          <PlanPage />
+        </ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -57,6 +91,9 @@ function renderPlan(plan: MyPlan) {
 
 beforeEach(() => {
   state.plan = STARTER
+  state.exportAvailable = false
+  state.status = 'active'
+  state.downloads = []
 })
 
 describe('what a customer sees', () => {
@@ -145,5 +182,55 @@ describe('a feature this build has no name for', () => {
     renderPlan({ ...STARTER, features: [...STARTER.features, 'timesheets' as never] })
 
     expect(await screen.findByText('timesheets')).toBeInTheDocument()
+  })
+})
+
+describe("taking the organization's whole record", () => {
+  function renderSuspended() {
+    return render(
+      <MemoryRouter>
+        <ToastProvider>
+          <SuspendedPage />
+        </ToastProvider>
+      </MemoryRouter>,
+    )
+  }
+
+  it('offers the download on the plan page only to whoever the route would serve', async () => {
+    state.exportAvailable = true
+    renderPlan(STARTER)
+
+    const button = await screen.findByRole('button', { name: 'Download your data' })
+    await userEvent.click(button)
+    // Through the authenticated client: the token lives in memory, so a plain
+    // link would arrive without credentials.
+    expect(state.downloads).toEqual(['/org/export/'])
+  })
+
+  it('does not offer it when the server says no', async () => {
+    renderPlan(STARTER)
+
+    expect(await screen.findByText('Starter')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download your data' })).not.toBeInTheDocument()
+  })
+
+  it('offers it on the cancelled screen, beside signing out', () => {
+    state.status = 'cancelled'
+    state.exportAvailable = true
+    renderSuspended()
+
+    expect(screen.getByText('This account has been cancelled')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download your data' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+  })
+
+  it('does not offer it to a suspended organization, whose remedy is restoring', () => {
+    // The server answers false for suspension; the screen shows what it says.
+    state.status = 'suspended'
+    state.exportAvailable = false
+    renderSuspended()
+
+    expect(screen.getByText('This account is suspended')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download your data' })).not.toBeInTheDocument()
   })
 })

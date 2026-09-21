@@ -324,6 +324,11 @@ SUSPENDED_ALLOWED_PREFIXES = (
     "/api/v1/auth/",
     "/api/v1/me/",
     "/api/v1/org/branding/",
+    # The one exception to "preserved, not published", and a narrow one: the
+    # route decides for itself, admitting only an Admin of a CANCELLED
+    # organization inside the export window (and refusing SUSPENDED outright).
+    # Export before deletion is a right; it is not a general read-through.
+    "/api/v1/org/export/",
 )
 
 

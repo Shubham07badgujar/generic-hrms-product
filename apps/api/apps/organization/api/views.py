@@ -29,6 +29,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -502,3 +503,39 @@ class MyPlanView(APIView):
                 "trial_ends_at": subscription.ends_at,
             }
         )
+
+
+class OrganizationExportView(APIView):
+    """
+    GET /org/export/ -- the organization's whole record, as a ZIP of CSVs.
+
+    `access_exempt`, and deliberately so: the rule is not a grant. In a
+    cancelled organization the grant matrix resolves to nothing -- that is the
+    suspension gate working -- so an RBAC check here would refuse exactly the
+    customer this route exists for. `apps.organization.export.refusal_for`
+    holds the rule instead (Admin of their own organization; operational, or
+    cancelled within the export window) and is the same function `/me/` asks,
+    so the SPA's button and this answer agree.
+
+    It is also the ONLY route a cancelled organization reaches beyond sign-in,
+    identity and branding; see `SUSPENDED_ALLOWED_PREFIXES`.
+    """
+
+    permission_classes = [IsAuthenticated]
+    access_exempt = True
+
+    def get(self, request):
+        from django.http import HttpResponse
+
+        from apps.organization.export import ExportRefused, build_export
+
+        try:
+            result = build_export(request.user)
+        except ExportRefused as refusal:
+            raise BusinessRuleError(str(refusal)) from refusal
+
+        response = HttpResponse(result.content, content_type="application/zip")
+        response["Content-Disposition"] = f'attachment; filename="{result.filename}"'
+        # A whole company's records: never cached by anything in between.
+        response["Cache-Control"] = "no-store"
+        return response

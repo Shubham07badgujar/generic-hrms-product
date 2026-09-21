@@ -24,6 +24,8 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { apiGet } from '@/lib/api'
+import { useAuth } from '@/app/AuthProvider'
+import { ExportDataButton } from './ExportDataButton'
 import { Card, DescriptionList, PageHeader, Section } from '@/components/ui/Card'
 import { ErrorState, LoadingBlock } from '@/components/ui/States'
 import type { FeatureCode, MyPlan, SubscriptionStatus } from '@/lib/types'
@@ -220,6 +222,30 @@ export function PlanPage() {
           </ul>
         </Card>
       </Section>
+
+      {/*
+        Here rather than hidden until cancellation: a customer should be able
+        to take their whole record at any time, not only once the relationship
+        is ending -- and an Admin who has done it once knows what they will
+        get. Shown only to whoever the export route would serve.
+      */}
+      <ExportSection />
     </>
+  )
+}
+
+function ExportSection() {
+  const { user } = useAuth()
+  if (!user?.organization_export_available) return null
+  return (
+    <Section
+      title="Your data"
+      description="Every employee, attendance, leave and payroll record, as CSV files in one ZIP. PAN, Aadhaar and bank account numbers are withheld from the bulk file."
+      className="mt-4"
+    >
+      <Card>
+        <ExportDataButton variant="secondary" />
+      </Card>
+    </Section>
   )
 }

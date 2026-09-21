@@ -32,6 +32,11 @@ export interface Me {
    *  the SPA shows the handbook right after the first password reset and
    *  requires the acknowledgement before anything else. */
   handbook_acknowledgement_pending: boolean
+  /** May this person download the organization's whole record right now?
+   *  Computed by the same server function the export route uses: Admin of
+   *  their own organization, which is operational or cancelled within the
+   *  export window. Not a grant -- a cancelled organization has none. */
+  organization_export_available: boolean
   last_login_at: ISODateTime | null
 }
 
