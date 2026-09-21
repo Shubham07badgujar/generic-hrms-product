@@ -178,8 +178,49 @@ _ORG_STATUS_FOR = {
 }
 
 
+def status_after_setup(organization) -> str:
+    """
+    The organization status that finishing setup lands on.
+
+    Asked by `finish_setup`, which used to answer it itself with a hard-coded
+    ACTIVE. That made it a second writer of `Organization.status` with its own
+    opinion, and the two disagreed: a customer who finished setup during their
+    trial read ACTIVE while their subscription said `trialing`. The mapping
+    from commercial state to access state lives here and only here, so setup
+    asks it instead of repeating it.
+
+      trialing            -> TRIAL
+      active              -> ACTIVE
+      past_due            -> ACTIVE   (it maps to "leave alone", and "alone"
+                                       for a company leaving setup is live)
+      no subscription     -> ACTIVE   (a self-hosted deployment sells nothing)
+
+    Cancelled and expired cannot reach this: `_apply_to_organization` moves a
+    pending organization to CANCELLED the moment its subscription goes there,
+    and `finish_setup` refuses anything not in PENDING_SETUP.
+    """
+    from apps.organization.models import OrgStatus
+    from apps.platform.models import Subscription
+
+    subscription = (
+        Subscription.objects.filter(organization=organization, is_active=True)
+        .only("status")
+        .first()
+    )
+    if subscription is None:
+        return OrgStatus.ACTIVE
+    implied = _ORG_STATUS_FOR.get(str(subscription.status))
+    return OrgStatus.TRIAL if implied == OrgStatus.TRIAL else OrgStatus.ACTIVE
+
+
 def _apply_to_organization(subscription, *, actor=None):
-    """The ONLY write to `Organization.status` in this app."""
+    """
+    Write the organization status a subscription implies.
+
+    One of exactly two writers of `Organization.status`. The other is
+    `finish_setup`, which takes its answer from `status_after_setup` above --
+    so the mapping itself exists once, whichever of the two writes it.
+    """
     from apps.organization.models import OrgStatus
 
     implied = _ORG_STATUS_FOR.get(str(subscription.status))

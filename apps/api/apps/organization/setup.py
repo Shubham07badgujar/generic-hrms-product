@@ -21,7 +21,8 @@ PENDING_SETUP IS A WORKING STATE
 Not a locked one. The administrator is DOING the setup, so they must be able to
 read and write in order to finish it; `PENDING_SETUP` is in
 `OPERATIONAL_STATUSES` for exactly that reason. Only `finish_setup` moves the
-organization to ACTIVE.
+organization out of it -- to TRIAL or ACTIVE, whichever its subscription
+implies, a question it asks the subscriptions service rather than answering.
 
 REQUIRED VERSUS ADVISORY
 
@@ -282,8 +283,14 @@ def finish_setup(organization, *, actor=None):
             + "."
         )
 
+    # Not ACTIVE unconditionally. A customer who finishes setup in the middle
+    # of a trial is on a trial, and writing ACTIVE here made the organization
+    # disagree with the subscription the customer's own plan page was reading.
+    # The mapping lives in the subscriptions service; this asks it.
+    from apps.platform.services.subscriptions import status_after_setup
+
     before = organization.status
-    organization.status = OrgStatus.ACTIVE
+    organization.status = status_after_setup(organization)
     organization.save(update_fields=["status", "updated_at"])
 
     # Bound explicitly rather than inherited. `AuditLog` takes its organization

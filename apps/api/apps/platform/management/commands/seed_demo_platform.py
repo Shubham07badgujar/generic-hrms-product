@@ -52,7 +52,6 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand, CommandError
 from django.core.management import call_command
-from django.db import transaction
 from django.utils import timezone
 
 from apps.organization.demo import PROFILES, get_profile
@@ -255,38 +254,36 @@ class Command(BaseCommand):
 
         # The trial window is refreshed on EVERY run, not only the first. A
         # re-seeded demo whose trial expired three weeks ago demonstrates
-        # nothing about a trial.
+        # nothing about a trial. The organization is already on TRIAL: its
+        # subscription is `trialing` from provisioning, and `finish_setup`
+        # lands on the status the subscription implies.
 
-        # Retail is the trial company, and getting it there takes a write this
-        # file would rather not make.
-        #
-        # `set_status` is the sanctioned way to move commercial state and it is
-        # the only writer of `Organization.status` in the app -- but it
-        # early-returns when the status does not change, and this subscription
-        # is ALREADY `trialing` from provisioning. Meanwhile `finish_setup`
-        # writes ACTIVE unconditionally, so a customer who finishes setup
-        # during a trial ends up ACTIVE with a `trialing` subscription. That is
-        # a real seam between the two lifecycles and it is worth fixing in the
-        # service rather than here; until then this command corrects the
-        # organization status so the console and the customer's own plan page
-        # agree with the subscription they are reading.
+        # What this command still writes by hand is the END DATE, and only
+        # that: there is no service for shortening a trial, and a seed that
+        # wants one ending in three days has to say so itself. It no longer
+        # touches `Organization.status` -- that used to be corrected here
+        # because `finish_setup` wrote ACTIVE unconditionally.
         subscription = Subscription.objects.filter(
             organization=organization, is_active=True
         ).first()
         if subscription is None:
             raise CommandError(f"{organization.slug} has no subscription to expire.")
 
-        with transaction.atomic():
-            subscription.ends_at = timezone.now() + timezone.timedelta(
-                days=RETAIL_TRIAL_DAYS
-            )
-            subscription.save(update_fields=["ends_at", "updated_at"])
-            organization.status = OrgStatus.TRIAL
-            organization.save(update_fields=["status", "updated_at"])
+        subscription.ends_at = timezone.now() + timezone.timedelta(
+            days=RETAIL_TRIAL_DAYS
+        )
+        subscription.save(update_fields=["ends_at", "updated_at"])
 
+        organization.refresh_from_db()
+        if organization.status != OrgStatus.TRIAL:
+            # Loud, because this is exactly the disagreement between the two
+            # lifecycles that `status_after_setup` exists to prevent.
+            raise CommandError(
+                f"{organization.slug} is {organization.get_status_display()} "
+                f"with a {subscription.status} subscription; expected a trial."
+            )
         self.stdout.write(
-            f"  setup finished — organization is on TRIAL, expiring in "
-            f"{RETAIL_TRIAL_DAYS} days"
+            f"  organization is on TRIAL, expiring in {RETAIL_TRIAL_DAYS} days"
         )
 
     # --------------------------------------------------------------- remove

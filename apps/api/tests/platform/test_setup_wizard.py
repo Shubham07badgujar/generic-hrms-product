@@ -278,3 +278,110 @@ def test_every_step_declares_whether_it_blocks_finishing():
                 f"{step.key} does not block finishing, and the wizard should "
                 f"say so where the administrator can read it"
             )
+
+
+# ---------------------------------------------------------------------------
+# Where finishing lands: the subscription decides, not the wizard
+# ---------------------------------------------------------------------------
+#
+# `finish_setup` used to write ACTIVE unconditionally, which made it a second
+# writer of `Organization.status` with its own opinion. A customer who finished
+# setup during their trial then read ACTIVE while their subscription said
+# `trialing` -- two lifecycles disagreeing about one customer. It now asks the
+# subscriptions service where to land.
+
+
+@pytest.fixture
+def on_a_plan():
+    """Provisioned WITH plans, so the organization starts on a trial."""
+    from django.core.management import call_command
+
+    call_command("seed_plans", verbosity=0)
+    return provision_organization(
+        name="Southwind Clinics",
+        slug="southwind",
+        admin_email="admin@southwind.example",
+    )
+
+
+def test_finishing_during_a_trial_lands_on_trial(on_a_plan):
+    from apps.organization.models import OrgStatus
+    from apps.platform.models import Subscription
+
+    organization = on_a_plan.organization
+    subscription = Subscription.objects.get(organization=organization, is_active=True)
+    assert subscription.status == "trialing", "precondition: provisioning starts a trial"
+
+    _satisfy_outstanding(organization)
+    finish_setup(organization, actor=on_a_plan.admin)
+    organization.refresh_from_db()
+
+    assert organization.status == OrgStatus.TRIAL, (
+        "finishing setup mid-trial must not claim the customer is ACTIVE "
+        "while their subscription says trialing"
+    )
+
+
+def test_finishing_on_a_paid_subscription_lands_on_active(on_a_plan):
+    """
+    The positive control for the test above: the answer really does come from
+    the subscription, rather than TRIAL having replaced ACTIVE as a new
+    constant.
+    """
+    from apps.organization.models import OrgStatus
+    from apps.platform.services.subscriptions import set_status
+
+    organization = on_a_plan.organization
+    # Paid during setup. The organization stays in PENDING_SETUP -- a
+    # subscription change must not skip the wizard -- and only finishing
+    # moves it.
+    set_status(organization, status="active")
+    organization.refresh_from_db()
+    assert organization.status == OrgStatus.PENDING_SETUP
+
+    _satisfy_outstanding(organization)
+    finish_setup(organization)
+    organization.refresh_from_db()
+    assert organization.status == OrgStatus.ACTIVE
+
+
+def test_finishing_while_past_due_still_goes_live(on_a_plan):
+    """
+    PAST_DUE deliberately maps to "leave the organization alone" -- an unpaid
+    invoice warns and switches nothing off. For a company leaving setup,
+    "alone" means live, not stuck in the wizard.
+    """
+    from apps.organization.models import OPERATIONAL_STATUSES, OrgStatus
+    from apps.platform.services.subscriptions import set_status
+
+    organization = on_a_plan.organization
+    set_status(organization, status="past_due")
+
+    _satisfy_outstanding(organization)
+    finish_setup(organization)
+    organization.refresh_from_db()
+    assert organization.status == OrgStatus.ACTIVE
+    assert organization.status in OPERATIONAL_STATUSES
+
+
+def test_the_audit_row_records_where_finishing_actually_landed(on_a_plan):
+    """
+    "Who put this organization live, and into what" -- the row must name TRIAL
+    when that is what happened, not the ACTIVE the old code would have logged.
+    """
+    from apps.audit.models import AuditLog
+    from apps.organization.models import OrgStatus
+
+    organization = on_a_plan.organization
+    _satisfy_outstanding(organization)
+    finish_setup(organization, actor=on_a_plan.admin)
+
+    entry = (
+        AuditLog.objects.filter(
+            organization=organization, entity_type="organization.Organization"
+        )
+        .order_by("-occurred_at")
+        .first()
+    )
+    assert entry.after.get("event") == "setup_finished"
+    assert entry.after.get("status") == OrgStatus.TRIAL

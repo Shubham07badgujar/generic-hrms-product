@@ -288,13 +288,13 @@ Stated so the tables above are not read as a description of shipped software.
 | `SupportGrant` | Designed (§5), not implemented |
 | Resending an invitation | Not implemented; a lost temporary password means a reset, never a lookup |
 
-One seam is worth naming rather than leaving to be discovered. `finish_setup`
-writes `Organization.status = ACTIVE` directly, while `subscriptions.set_status`
-is documented as the only writer of that column — so a customer who finishes
-setup during a trial ends up `active` with a `trialing` subscription. Both
-statuses are operational and nothing is refused because of it, but the two
-lifecycles disagree, and the demo seeding currently corrects retail's status by
-hand because of it.
+**Two writers, one mapping.** `Organization.status` is written in exactly two
+places: `subscriptions._apply_to_organization`, when commercial state moves, and
+`finish_setup`, when a customer leaves `pending_setup`. The second asks the
+first's module where to land (`subscriptions.status_after_setup`) rather than
+deciding for itself, so a customer who finishes setup during a trial is on
+`trial`, not `active` with a `trialing` subscription — which is what
+`finish_setup` used to produce when it wrote ACTIVE unconditionally.
 
 The boundary was built first on purpose. Everything above adds routes to the
 platform tree, and adding them to a tree whose entry rule is already enforced
