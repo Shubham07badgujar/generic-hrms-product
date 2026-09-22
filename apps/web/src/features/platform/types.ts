@@ -66,6 +66,10 @@ export interface PlatformOrganization {
   admin_invitation_pending: boolean
   /** Null on a deployment that sells nothing — a real state, not an error. */
   subscription: PlatformSubscription | null
+  /** When it entered ARCHIVED; the one-year purge clock runs from here. */
+  archived_at: string | null
+  /** Set once its data is purged. The row survives as a tombstone. */
+  purged_at: string | null
   created_at: string
 }
 

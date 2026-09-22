@@ -283,20 +283,58 @@ Stated so the tables above are not read as a description of shipped software.
 | The setup wizard a new Organization Admin walks through | **Built** — computed from `satisfied(org)` predicates, not stored wizard state |
 | Platform console UI | **Built** — its own route tree, disjoint from the HR application |
 | Suspend and cancel | **Built**, through subscription status; `Organization.status` follows it |
-| Archive, purge, and their retention windows | Not implemented. `ARCHIVED` exists as a status and nothing transitions into it |
+| Archive, purge, and their retention windows | **Built** — archive in the console (cancelled, after the 90-day export window, with a reason); purge only by `manage.py purge_organization <slug> --confirm <slug>`, one year after archive. See §8 |
 | Full-organization export before cancellation | **Built** — `GET /org/export/`, the customer Admin's own, for 90 days after cancellation; the operator cannot use it |
 | `SupportGrant` | Designed (§5), not implemented |
 | Resending an invitation | **Built** — only while the administrator has never signed in; after that, recovery is the customer's |
 
-**Two writers, one mapping.** `Organization.status` is written in exactly two
-places: `subscriptions._apply_to_organization`, when commercial state moves, and
-`finish_setup`, when a customer leaves `pending_setup`. The second asks the
-first's module where to land (`subscriptions.status_after_setup`) rather than
-deciding for itself, so a customer who finishes setup during a trial is on
-`trial`, not `active` with a `trialing` subscription — which is what
-`finish_setup` used to produce when it wrote ACTIVE unconditionally.
+**Three writers, one mapping.** `Organization.status` is written in exactly
+three places: `subscriptions._apply_to_organization`, when commercial state
+moves; `finish_setup`, when a customer leaves `pending_setup`; and
+`lifecycle.archive_organization`, the one transition with no commercial
+counterpart. `finish_setup` asks the subscriptions module where to land
+(`subscriptions.status_after_setup`) rather than deciding for itself, so a
+customer who finishes setup during a trial is on `trial`, not `active` with a
+`trialing` subscription.
+
 
 The boundary was built first on purpose. Everything above adds routes to the
 platform tree, and adding them to a tree whose entry rule is already enforced
 at build time is a different proposition from adding them and then trying to
 secure them.
+
+---
+
+## 8. The end of a customer
+
+```
+CANCELLED --(90 days: export window)--> ARCHIVED --(365 days)--> purged
+```
+
+Neither step is automatic, and nothing removes a customer in one call.
+
+**Archive** is a console action with a required reason, refused until the
+customer's export window has closed. It changes the status and nothing else.
+
+**Purge** is the only hard delete in the product, and it has one door:
+
+```bash
+python manage.py purge_organization <slug> --dry-run
+python manage.py purge_organization <slug> --confirm <slug>
+```
+
+There is no API route and no console button for it; a test asserts no URL
+contains "purge". It is refused unless the organization has been archived for
+a year, and runs as one transaction — everything or nothing.
+
+| | |
+|---|---|
+| **Removed** | Every row of the 94 organization-owned models; the organization's settings, email configuration and memberships; its users' logins; its files under `MEDIA_ROOT/organizations/<uuid>/` (after commit) |
+| **Kept** | The organization row, as a tombstone with `purged_at`; the subscription; the audit trail |
+| **Audit trail** | Every row kept — who, what, which entity, when — with its payloads scrubbed: before/after snapshots, labels, reasons, IP, user agent and customer users' addresses are blanked. One terminal `organization_purged` record holds counts, not people |
+| **Spared** | A login that submitted or verified a deployment-wide statutory rate set is deactivated with an unusable password instead of deleted: that four-eyes record belongs to every customer, and the purge output names such logins |
+
+How: every foreign key in this schema is `DEFERRABLE INITIALLY DEFERRED`, so the
+rows are deleted table by table with plain SQL inside one transaction and
+Postgres checks every reference once, at commit. A reference that would dangle
+fails the commit and rolls the whole purge back.

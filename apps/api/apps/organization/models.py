@@ -125,6 +125,13 @@ class Organization(models.Model):
         default=OrgStatus.PENDING_SETUP,
         db_index=True,
     )
+    #: When it entered ARCHIVED. The purge clock runs from here, so it is a
+    #: column rather than something inferred from the audit trail.
+    archived_at = models.DateTimeField(null=True, blank=True)
+    #: When its data was purged. The row itself survives as a tombstone: the
+    #: audit trail and the subscription reference it, and "what happened to
+    #: this customer" has to stay answerable after the customer is gone.
+    purged_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)

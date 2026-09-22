@@ -469,3 +469,51 @@ describe('resending an administrator invitation', () => {
     expect(screen.queryByText('Sent to admin@northwind.test.')).not.toBeInTheDocument()
   })
 })
+
+describe('the end of a customer', () => {
+  function detailAs(overrides: Record<string, unknown>) {
+    api.responses['/platform/organizations/org-1'] = {
+      ...ORGANIZATIONS.data[0],
+      admin_invitation_pending: false,
+      archived_at: null,
+      purged_at: null,
+      ...overrides,
+    }
+    renderPage(
+      <PlatformOrganizationDetailPage />,
+      '/platform/organizations/org-1',
+      '/platform/organizations/:id',
+    )
+  }
+
+  it('offers archiving only for a cancelled organization, and needs a reason', async () => {
+    api.postResult = { ...ORGANIZATIONS.data[0], status: 'archived' }
+    detailAs({ status: 'cancelled' })
+
+    const button = await screen.findByRole('button', { name: 'Archive organization' })
+    expect(button).toBeDisabled()
+    await userEvent.type(screen.getByLabelText(/Reason for archiving/), 'Contract ended')
+    await userEvent.click(screen.getByRole('button', { name: 'Archive organization' }))
+
+    await waitFor(() => expect(api.posts).toHaveLength(1))
+    expect(api.posts[0]).toEqual({
+      url: '/platform/organizations/org-1/archive/',
+      body: { reason: 'Contract ended' },
+    })
+  })
+
+  it('never offers archiving to a live customer', async () => {
+    detailAs({ status: 'active' })
+
+    expect(await screen.findByText('Lifecycle')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Archive organization' })).not.toBeInTheDocument()
+  })
+
+  it('has no purge button, and says where purging is done', async () => {
+    detailAs({ status: 'archived', archived_at: '2025-01-10T00:00:00Z' })
+
+    expect(await screen.findByText(/Purging is not available here/)).toBeInTheDocument()
+    expect(screen.getByText(/manage.py purge_organization northwind-care/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /purge/i })).not.toBeInTheDocument()
+  })
+})

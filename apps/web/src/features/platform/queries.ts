@@ -94,6 +94,15 @@ export function useSetSubscriptionStatus(id: string) {
   })
 }
 
+export function useArchiveOrganization(id: string) {
+  const refresh = useRefreshPlatform()
+  return useMutation({
+    mutationFn: (body: { reason: string }) =>
+      apiPost<PlatformOrganization>(`/platform/organizations/${id}/archive/`, body),
+    onSuccess: refresh,
+  })
+}
+
 export function useResendInvitation(id: string) {
   const refresh = useRefreshPlatform()
   return useMutation({

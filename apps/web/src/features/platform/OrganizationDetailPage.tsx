@@ -37,6 +37,7 @@ import { formatDate, humanize } from '@/lib/format'
 import {
   usePlatformOrganization,
   usePlatformPlans,
+  useArchiveOrganization,
   useChangePlan,
   useResendInvitation,
   useSeatOverride,
@@ -294,6 +295,83 @@ function InvitationCard({ organization }: { organization: PlatformOrganization }
   )
 }
 
+/**
+ * The end of a customer, as far as the console goes: ARCHIVE.
+ *
+ * Offered only for a cancelled organization, and the service refuses until
+ * the customer's 90-day export window has closed -- archiving earlier would
+ * take away an export they were promised. Archiving deletes nothing; it starts
+ * the year after which the data MAY be purged.
+ *
+ * Purge is deliberately not on this page. It is the one irreversible thing
+ * the product does, and it is a management command on the server with the
+ * organization's slug typed twice. The card says so, so an operator looking
+ * for the button learns why there is not one.
+ */
+function LifecycleCard({ organization }: { organization: PlatformOrganization }) {
+  const archive = useArchiveOrganization(organization.id)
+  const { refusal, run } = useRefusal()
+  const [reason, setReason] = useState('')
+
+  if (organization.purged_at) {
+    return (
+      <Card>
+        <CardHeader title="Lifecycle" />
+        <p className="mt-4 text-sm text-ink-muted">
+          Purged on {formatDate(organization.purged_at)}. This record and a scrubbed audit
+          trail are all that remain.
+        </p>
+      </Card>
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="Lifecycle"
+        description="Cancelled, then archived after the 90-day export window, then purgeable a year later."
+      />
+      <div className="mt-4 space-y-4">
+        {refusal && (
+          <Banner tone="danger" title="Refused">
+            {refusal}
+          </Banner>
+        )}
+        {organization.status === 'cancelled' && (
+          <>
+            <TextInput
+              label="Reason for archiving"
+              required
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+            />
+            <Button
+              variant="danger-soft"
+              disabled={!reason.trim()}
+              loading={archive.isPending}
+              onClick={() =>
+                void run(() => archive.mutateAsync({ reason }), 'Organization archived.')
+              }
+            >
+              Archive organization
+            </Button>
+          </>
+        )}
+        {organization.status === 'archived' && organization.archived_at && (
+          <p className="text-sm text-ink-muted">
+            Archived on {formatDate(organization.archived_at)}. Its data may be purged a year
+            after that date.
+          </p>
+        )}
+        <p className="text-xs text-ink-subtle">
+          Purging is not available here. It is irreversible, so it is a server command:{' '}
+          <code>manage.py purge_organization {organization.slug} --confirm {organization.slug}</code>
+        </p>
+      </div>
+    </Card>
+  )
+}
+
 function SeatOverrideCard({ organization }: { organization: PlatformOrganization }) {
   const override = useSeatOverride(organization.id)
   const { refusal, run } = useRefusal()
@@ -461,6 +539,7 @@ export function PlatformOrganizationDetailPage() {
                 <SubscriptionStatusCard organization={organization} />
                 {subscription && <SeatOverrideCard organization={organization} />}
                 <InvitationCard organization={organization} />
+                <LifecycleCard organization={organization} />
               </div>
             </Section>
           </>

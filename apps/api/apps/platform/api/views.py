@@ -15,9 +15,10 @@ that a customer employs 118 people tells you nothing about any of them.
 
 THE WRITE SURFACE IS THIN ON PURPOSE
 
-Four actions -- change the plan, move the commercial status, override the seat
-limit, resend an unaccepted invitation -- and each one is a thin wrapper over a
-service that already holds the rules, the locking and the audit. The view's whole job is to translate a
+Five actions -- change the plan, move the commercial status, override the seat
+limit, resend an unaccepted invitation, archive a cancelled customer -- and each
+one is a thin wrapper over a service that already holds the rules, the locking
+and the audit. Purge is not among them, on purpose: see `purge_organization`. The view's whole job is to translate a
 service refusal into 422 and to require the reason that some of them need.
 Putting the logic here instead would have meant the platform API and a
 management command could disagree about whether a downgrade below the headcount
@@ -80,7 +81,7 @@ class PlatformOrganizationSerializer(serializers.ModelSerializer):
             "primary_email", "phone", "city", "state", "country",
             "timezone", "currency",
             "employee_count", "member_count", "admin_invitation_pending",
-            "subscription", "created_at",
+            "subscription", "archived_at", "purged_at", "created_at",
         ]
 
     def get_is_operational(self, obj) -> bool:
@@ -247,6 +248,32 @@ class PlatformOrganizationViewSet(PlatformModelViewSet):
         body["admin_email"] = result.admin.email
         body["invitation_sent"] = result.invitation_sent
         return Response(body, status=201)
+
+    @action(detail=True, methods=["post"], url_path="archive")
+    def archive(self, request, pk=None):
+        """
+        CANCELLED -> ARCHIVED, once the customer's export window has closed.
+
+        The furthest this API goes. PURGE is deliberately not here -- not as a
+        route, not behind a flag: it is a management command on the server
+        with a typed confirmation, because it is the one irreversible thing
+        this product does. Archiving starts the year-long clock; it deletes
+        nothing.
+        """
+        from apps.platform.services.lifecycle import LifecycleError, archive_organization
+
+        organization = self.get_object()
+        payload = ArchiveSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        try:
+            archive_organization(
+                organization,
+                actor=request.user,
+                reason=payload.validated_data["reason"],
+            )
+        except LifecycleError as exc:
+            self._refuse(exc)
+        return Response(self.get_serializer(self.get_object()).data)
 
     @action(detail=True, methods=["post"], url_path="resend-invitation")
     def resend_invitation(self, request, pk=None):
@@ -433,6 +460,12 @@ class ChangePlanSerializer(serializers.Serializer):
 class SubscriptionStatusSerializer(serializers.Serializer):
     status = serializers.CharField()
     reason = serializers.CharField(required=False, allow_blank=True, max_length=255)
+
+
+class ArchiveSerializer(serializers.Serializer):
+    #: Required: "why was this customer archived" is asked long after anyone
+    #: remembers, and the service refuses a blank one too.
+    reason = serializers.CharField(max_length=255)
 
 
 class SeatOverrideSerializer(serializers.Serializer):
