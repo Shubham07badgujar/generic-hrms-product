@@ -2,6 +2,7 @@
 
 import type { ReactElement, ReactNode } from 'react'
 import { render, type RenderOptions } from '@testing-library/react'
+import type { UserEvent } from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ToastProvider } from '@/components/ui/Toast'
@@ -264,4 +265,18 @@ export function TestProviders({ children }: { children: ReactNode }) {
 
 export function renderWithProviders(ui: ReactElement, options?: RenderOptions) {
   return render(ui, { wrapper: TestProviders, ...options })
+}
+
+/**
+ * Enter a whole value into a text field as a single input event.
+ *
+ * `user.type` fires keydown/keypress/input/keyup for EVERY character and the
+ * form re-renders on each one. For a sentence-long reason that is ~50 renders
+ * of a full page, which under the suite's parallel load pushed multi-step
+ * tests past the 5 s timeout. Use this where the value is incidental to what
+ * the test asserts; keep `user.type` where keystroke behaviour is the point.
+ */
+export async function fillIn(user: UserEvent, field: HTMLElement, text: string) {
+  await user.click(field)
+  await user.paste(text)
 }

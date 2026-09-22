@@ -72,7 +72,7 @@ vi.mock('@/lib/api', async () => {
 
 import { PayrollSettingsPage } from '@/features/payroll/PayrollSettingsPage'
 import { CompensationSection } from '@/features/payroll/CompensationSection'
-import { renderWithProviders } from './helpers'
+import { fillIn, renderWithProviders } from './helpers'
 
 beforeEach(() => {
   state.role = 'hr_head'
@@ -125,7 +125,7 @@ describe('Payroll settings', () => {
 
     await user.click(await screen.findByRole('button', { name: /^verify$/i }))
     const dialog = within(await screen.findByRole('dialog'))
-    await user.type(dialog.getByLabelText(/what was checked/i), 'Matched circular.')
+    await fillIn(user, dialog.getByLabelText(/what was checked/i), 'Matched circular.')
     await user.click(dialog.getByRole('button', { name: /^verify$/i }))
 
     await waitFor(() => expect(posts).toHaveLength(1))
@@ -146,7 +146,7 @@ describe('Salary structure', () => {
     await user.clear(ctc)
     await user.type(ctc, '720000')
     await user.type(dialog.getByLabelText(/effective from/i), '2026-11-01')
-    await user.type(dialog.getByLabelText(/reason/i), 'Annual raise')
+    await fillIn(user, dialog.getByLabelText(/reason/i), 'Annual raise')
     await user.click(dialog.getByRole('button', { name: /apply revision/i }))
 
     await waitFor(() => expect(posts).toHaveLength(1))

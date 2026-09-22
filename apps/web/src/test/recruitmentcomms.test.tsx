@@ -75,7 +75,7 @@ import { ApplyPage, anonymousClient } from '@/features/recruitment/ApplyPage'
 import { CandidateEmailHistory } from '@/features/recruitment/CandidateEmailHistory'
 import { CandidatesPage } from '@/features/recruitment/CandidatesPage'
 import { ToastProvider } from '@/components/ui/Toast'
-import { renderWithProviders } from './helpers'
+import { fillIn, renderWithProviders } from './helpers'
 
 function renderAt(path: string, element: JSX.Element, routePath: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
@@ -136,8 +136,8 @@ describe('the public application form', () => {
     expect(await screen.findByText(/fill in the required answers/i)).toBeInTheDocument()
     expect(requests.filter((r) => r.method === 'post')).toHaveLength(0)
 
-    await user.type(screen.getByLabelText(/full name/i), 'Nisha Verma')
-    await user.type(screen.getByLabelText(/mobile number/i), '9876543210')
+    await fillIn(user, screen.getByLabelText(/full name/i), 'Nisha Verma')
+    await fillIn(user, screen.getByLabelText(/mobile number/i), '9876543210')
     await user.selectOptions(screen.getByLabelText(/experience level/i), '1-3 years')
     await user.click(submit)
     expect(await screen.findByText(/confirm the declaration/i)).toBeInTheDocument()

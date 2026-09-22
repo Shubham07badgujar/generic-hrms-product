@@ -154,7 +154,7 @@ vi.mock('@/lib/queries', () => ({
 }))
 
 import { ImportCandidatesPage } from '@/features/recruitment/ImportCandidatesPage'
-import { renderWithProviders } from './helpers'
+import { fillIn, renderWithProviders } from './helpers'
 
 function file(name = 'workindia.xlsx') {
   return new File(['col\nvalue'], name, {
@@ -333,7 +333,8 @@ describe('the attestation', () => {
     renderWithProviders(<ImportCandidatesPage />)
     await toAttest(user)
 
-    await user.type(
+    await fillIn(
+      user,
       screen.getByLabelText(/how were these candidates obtained/i),
       'Exported from our own WorkIndia employer account.',
     )
@@ -375,7 +376,8 @@ describe('the attestation', () => {
       }),
     )
 
-    await user.type(
+    await fillIn(
+      user,
       screen.getByLabelText(/how were these candidates obtained/i),
       'Exported from our own WorkIndia employer account on 17 August.',
     )
@@ -409,7 +411,8 @@ describe('the result', () => {
       }),
     )
 
-    await user.type(
+    await fillIn(
+      user,
       screen.getByLabelText(/how were these candidates obtained/i),
       'Exported from our own WorkIndia employer account on 17 August.',
     )

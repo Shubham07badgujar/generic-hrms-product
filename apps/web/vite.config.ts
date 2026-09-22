@@ -27,5 +27,11 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     css: false,
+    // Many tests here drive whole pages through several steps in jsdom. With
+    // four workers sharing the CPU the slowest took ~2-3 s and occasionally
+    // spiked past 4 s, so the 5 s default failed different tests on different
+    // runs. Typing is kept cheap (see fillIn in src/test/helpers.tsx); this
+    // is the margin for scheduling spikes. A genuine hang still fails.
+    testTimeout: 15_000,
   },
 } as never)

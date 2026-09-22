@@ -91,7 +91,7 @@ vi.mock('@/lib/queries', () => ({
 }))
 
 import { JobsPage } from '@/features/recruitment/JobsPage'
-import { renderWithProviders } from './helpers'
+import { fillIn, renderWithProviders } from './helpers'
 
 function optionsOf(select: HTMLElement) {
   return within(select)
@@ -187,12 +187,12 @@ describe('the job opening form, as a Recruiter', () => {
   it('submits the completed form with the values that were picked', async () => {
     const { user, form } = await openTheForm()
 
-    await user.type(form.getByLabelText(/job title/i), 'Senior Physiotherapist')
+    await fillIn(user, form.getByLabelText(/job title/i), 'Senior Physiotherapist')
     await user.selectOptions(form.getByLabelText(/department/i), 'dept-med')
     await user.selectOptions(form.getByLabelText(/hiring workflow/i), 'wf-med')
     await user.selectOptions(form.getByLabelText(/role on hire/i), 'role-therapist')
     await user.selectOptions(form.getByLabelText(/designation/i), 'desig-1')
-    await user.type(form.getByLabelText(/salary/i), '₹4–6 LPA')
+    await fillIn(user, form.getByLabelText(/salary/i), '₹4–6 LPA')
     await user.type(form.getByLabelText(/age limit/i), '35')
     await user.selectOptions(form.getByLabelText(/gender preference/i), 'female')
 
@@ -219,7 +219,7 @@ describe('the job opening form, as a Recruiter', () => {
     const submit = form.getByRole('button', { name: /create draft/i })
     expect(submit).toBeDisabled()
 
-    await user.type(form.getByLabelText(/job title/i), 'Half filled')
+    await fillIn(user, form.getByLabelText(/job title/i), 'Half filled')
     await user.selectOptions(form.getByLabelText(/department/i), 'dept-med')
     expect(submit).toBeDisabled()
 
@@ -233,7 +233,7 @@ describe('the job opening form, as a Recruiter', () => {
     await user.selectOptions(form.getByLabelText(/designation/i), 'desig-1')
     expect(submit).toBeDisabled()
 
-    await user.type(form.getByLabelText(/salary/i), '₹4–6 LPA')
+    await fillIn(user, form.getByLabelText(/salary/i), '₹4–6 LPA')
     await waitFor(() => expect(submit).toBeEnabled())
   })
 })

@@ -12,6 +12,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ApplyPage, anonymousClient } from '@/features/recruitment/ApplyPage'
 import { SlotPage } from '@/features/recruitment/SlotPage'
 import { ToastProvider } from '@/components/ui/Toast'
+import { fillIn } from './helpers'
 
 function renderAt(path: string, element: JSX.Element, routePath: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
@@ -112,9 +113,9 @@ describe('the application form résumé upload', () => {
     renderAt('/apply/tok1', <ApplyPage />, '/apply/:token')
     await screen.findByRole('heading', { name: 'CRE' })
 
-    await user.type(screen.getByLabelText(/full name/i), 'Shubham Badgujar')
-    await user.type(screen.getByLabelText(/^email/i), 'shubham@example.test')
-    await user.type(screen.getByLabelText(/mobile number/i), '9511974562')
+    await fillIn(user, screen.getByLabelText(/full name/i), 'Shubham Badgujar')
+    await fillIn(user, screen.getByLabelText(/^email/i), 'shubham@example.test')
+    await fillIn(user, screen.getByLabelText(/mobile number/i), '9511974562')
     const file = new File(['%PDF-1.4 test'], 'Shubham Resume.pdf', { type: 'application/pdf' })
     await user.upload(screen.getByLabelText(/resume upload/i), file)
     expect(screen.getByText('Shubham Resume.pdf')).toBeInTheDocument()

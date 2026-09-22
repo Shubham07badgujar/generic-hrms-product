@@ -65,7 +65,7 @@ vi.mock('@/lib/api', async () => {
 
 import { PackagesPage } from '@/features/payroll/PackagesPage'
 import { PayslipsPage } from '@/features/payroll/PayslipsPage'
-import { renderWithProviders } from './helpers'
+import { fillIn, renderWithProviders } from './helpers'
 
 beforeEach(() => {
   state.role = 'hr_head'
@@ -88,7 +88,7 @@ describe('Custom packages', () => {
     await user.click(await screen.findByRole('button', { name: /decide/i }))
 
     const dialog = within((await screen.findAllByRole('dialog')).at(-1)!)
-    await user.type(dialog.getByLabelText(/reason/i), 'Service period completed.')
+    await fillIn(user, dialog.getByLabelText(/reason/i), 'Service period completed.')
     await user.click(dialog.getByRole('button', { name: /approve release/i }))
 
     await waitFor(() => expect(posts).toHaveLength(1))

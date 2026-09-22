@@ -11,6 +11,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { fillIn } from './helpers'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -109,9 +110,9 @@ describe('the change-password page', () => {
     const user = userEvent.setup()
     renderAt('/change-password')
 
-    await user.type(await screen.findByLabelText(/temporary password/i), 'Temp-Secret-1234')
-    await user.type(screen.getByLabelText(/^new password/i), 'Correct-Horse-Battery-9')
-    await user.type(screen.getByLabelText(/confirm new password/i), 'Correct-Horse-Battery-8')
+    await fillIn(user, await screen.findByLabelText(/temporary password/i), 'Temp-Secret-1234')
+    await fillIn(user, screen.getByLabelText(/^new password/i), 'Correct-Horse-Battery-9')
+    await fillIn(user, screen.getByLabelText(/confirm new password/i), 'Correct-Horse-Battery-8')
 
     expect(screen.getByText(/do not match/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /set password and continue/i })).toBeDisabled()
@@ -121,9 +122,9 @@ describe('the change-password page', () => {
     const user = userEvent.setup()
     renderAt('/change-password')
 
-    await user.type(await screen.findByLabelText(/temporary password/i), 'Temp-Secret-1234')
-    await user.type(screen.getByLabelText(/^new password/i), 'Correct-Horse-Battery-9')
-    await user.type(screen.getByLabelText(/confirm new password/i), 'Correct-Horse-Battery-9')
+    await fillIn(user, await screen.findByLabelText(/temporary password/i), 'Temp-Secret-1234')
+    await fillIn(user, screen.getByLabelText(/^new password/i), 'Correct-Horse-Battery-9')
+    await fillIn(user, screen.getByLabelText(/confirm new password/i), 'Correct-Horse-Battery-9')
     await user.click(screen.getByRole('button', { name: /set password and continue/i }))
 
     await waitFor(() => expect(calls.posts).toHaveLength(1))
@@ -139,9 +140,9 @@ describe('the change-password page', () => {
     const user = userEvent.setup()
     renderAt('/change-password')
 
-    await user.type(await screen.findByLabelText(/temporary password/i), 'Temp-Secret-1234')
-    await user.type(screen.getByLabelText(/^new password/i), 'Correct-Horse-Battery-9')
-    await user.type(screen.getByLabelText(/confirm new password/i), 'Correct-Horse-Battery-9')
+    await fillIn(user, await screen.findByLabelText(/temporary password/i), 'Temp-Secret-1234')
+    await fillIn(user, screen.getByLabelText(/^new password/i), 'Correct-Horse-Battery-9')
+    await fillIn(user, screen.getByLabelText(/confirm new password/i), 'Correct-Horse-Battery-9')
     await user.click(screen.getByRole('button', { name: /set password and continue/i }))
 
     await waitFor(() => expect(calls.posts).toHaveLength(1))
