@@ -39,12 +39,16 @@ import {
   usePlatformPlans,
   useArchiveOrganization,
   useChangePlan,
+  useEndSupport,
+  useRequestSupport,
   useResendInvitation,
   useSeatOverride,
   useSetSubscriptionStatus,
+  useSupportConfiguration,
+  useSupportGrants,
 } from './queries'
 import { OrganizationStatusBadge, SubscriptionStatusBadge } from './status'
-import type { InvitationResend, PlatformOrganization } from './types'
+import type { InvitationResend, PlatformOrganization, SupportConfiguration } from './types'
 
 /** The commercial transitions. The service decides which are legal from here. */
 const SUBSCRIPTION_STATUSES = [
@@ -372,6 +376,123 @@ function LifecycleCard({ organization }: { organization: PlatformOrganization })
   )
 }
 
+/**
+ * Asking this customer to let support see its configuration.
+ *
+ * ASKS; DOES NOT GRANT. Nothing on this card can make the customer's setup
+ * visible -- their administrator approves in their own application, for 24
+ * hours, and can end it sooner. Until then "View configuration" is not
+ * offered, and the API would refuse it anyway.
+ *
+ * What an approval shows is configuration from a fixed server-side list,
+ * never a person. It is fetched on demand and not cached: each click is one
+ * look, recorded in the customer's audit trail, and a copy lingering in the
+ * browser after the grant ended would be access the customer did not give.
+ */
+function SupportCard({ organization }: { organization: PlatformOrganization }) {
+  const grants = useSupportGrants()
+  const request = useRequestSupport(organization.id)
+  const configuration = useSupportConfiguration()
+  const end = useEndSupport()
+  const { refusal, run } = useRefusal()
+  const [reason, setReason] = useState('')
+  const [shown, setShown] = useState<SupportConfiguration | null>(null)
+
+  const mine = (grants.data?.data ?? []).filter(
+    (grant) => grant.organization_slug === organization.slug,
+  )
+  const live = mine.find((grant) => grant.usable)
+  const pending = mine.find((grant) => grant.status === 'requested')
+
+  async function look(grantId: string) {
+    await run(async () => setShown(await configuration.mutateAsync(grantId)), 'Configuration loaded.')
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="Support access"
+        description="Read-only access to this customer's configuration, with their administrator's approval, for 24 hours."
+      />
+      <div className="mt-4 space-y-4">
+        {refusal && (
+          <Banner tone="danger" title="Refused">
+            {refusal}
+          </Banner>
+        )}
+
+        {live ? (
+          <div className="space-y-3">
+            <p className="text-sm text-ink">
+              Approved until {formatDate(live.expires_at)}.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="primary"
+                loading={configuration.isPending}
+                onClick={() => void look(live.id)}
+              >
+                View configuration
+              </Button>
+              <Button
+                variant="secondary"
+                loading={end.isPending}
+                onClick={() => {
+                  setShown(null)
+                  void run(() => end.mutateAsync(live.id), 'Access ended.')
+                }}
+              >
+                End access
+              </Button>
+            </div>
+          </div>
+        ) : pending ? (
+          <p className="text-sm text-ink-muted">
+            Requested. Waiting for the customer's administrator to decide.
+          </p>
+        ) : (
+          <>
+            <TextInput
+              label="Why you need to see their configuration"
+              hint="At least 20 characters. The customer's administrator decides on the strength of this sentence."
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+            />
+            <Button
+              variant="primary"
+              disabled={reason.trim().length < 20}
+              loading={request.isPending}
+              onClick={() =>
+                void run(async () => {
+                  await request.mutateAsync({ reason })
+                  setReason('')
+                }, 'Request sent to the customer.')
+              }
+            >
+              Request access
+            </Button>
+          </>
+        )}
+
+        {shown && live && (
+          <div className="space-y-2">
+            {Object.entries(shown.tables).map(([label, rows]) => (
+              <details key={label} className="rounded-lg border border-line px-3 py-2">
+                <summary className="cursor-pointer text-sm text-ink">
+                  {label} <span className="text-ink-subtle">({rows.length})</span>
+                </summary>
+                <pre className="mt-2 max-h-64 overflow-auto text-2xs text-ink-muted">
+                  {JSON.stringify(rows, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+        )}
+      </div>
+    </Card>
+  )
+}
+
 function SeatOverrideCard({ organization }: { organization: PlatformOrganization }) {
   const override = useSeatOverride(organization.id)
   const { refusal, run } = useRefusal()
@@ -540,6 +661,7 @@ export function PlatformOrganizationDetailPage() {
                 {subscription && <SeatOverrideCard organization={organization} />}
                 <InvitationCard organization={organization} />
                 <LifecycleCard organization={organization} />
+                <SupportCard organization={organization} />
               </div>
             </Section>
           </>

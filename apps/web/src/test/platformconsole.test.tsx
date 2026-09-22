@@ -517,3 +517,80 @@ describe('the end of a customer', () => {
     expect(screen.queryByRole('button', { name: /purge/i })).not.toBeInTheDocument()
   })
 })
+
+describe('support access, from the console', () => {
+  function withGrants(grants: unknown[], configuration: unknown = null) {
+    // Specific keys first: the mock answers the first prefix that matches.
+    api.responses = {
+      ...(configuration
+        ? { '/platform/support-grants/g-1/configuration': configuration }
+        : {}),
+      '/platform/support-grants': { data: grants, meta: { next: null, previous: null, page_size: 40 } },
+      ...api.responses,
+      '/platform/organizations/org-1': {
+        ...ORGANIZATIONS.data[0],
+        admin_invitation_pending: false,
+        archived_at: null,
+        purged_at: null,
+      },
+    }
+    renderPage(
+      <PlatformOrganizationDetailPage />,
+      '/platform/organizations/org-1',
+      '/platform/organizations/:id',
+    )
+  }
+
+  const GRANT = {
+    id: 'g-1',
+    organization_slug: 'northwind-care',
+    organization_name: 'Northwind Care',
+    requested_by_email: 'ops@platform.test',
+    reason: 'Leave balances look wrong since the policy change.',
+    decided_at: null,
+    revoked_at: null,
+    created_at: '2026-09-22T08:00:00Z',
+  }
+
+  it('asks with a reason, and asks only', async () => {
+    api.postResult = { ...GRANT, status: 'requested', expires_at: null, usable: false }
+    withGrants([])
+
+    const button = await screen.findByRole('button', { name: 'Request access' })
+    expect(button).toBeDisabled()
+    await userEvent.type(
+      screen.getByLabelText(/Why you need to see their configuration/),
+      'Leave balances look wrong since the policy change.',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Request access' }))
+
+    await waitFor(() => expect(api.posts).toHaveLength(1))
+    expect(api.posts[0].url).toBe('/platform/organizations/org-1/support-grants/')
+    // Nothing to view: the customer has not decided.
+    expect(screen.queryByRole('button', { name: 'View configuration' })).not.toBeInTheDocument()
+  })
+
+  it('waits while the customer decides', async () => {
+    withGrants([{ ...GRANT, status: 'requested', expires_at: null, usable: false }])
+
+    expect(await screen.findByText(/Waiting for the customer's administrator/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'View configuration' })).not.toBeInTheDocument()
+  })
+
+  it('shows the configuration once approved', async () => {
+    withGrants(
+      [{ ...GRANT, status: 'approved', expires_at: '2026-09-23T08:00:00Z', usable: true }],
+      {
+        organization: 'northwind-care',
+        grant: 'g-1',
+        expires_at: '2026-09-23T08:00:00Z',
+        tables: { 'accounts.Role': [{ code: 'hr_head' }], 'leave.LeaveType': [] },
+      },
+    )
+
+    await userEvent.click(await screen.findByRole('button', { name: 'View configuration' }))
+
+    expect(await screen.findByText('accounts.Role')).toBeInTheDocument()
+    expect(screen.getByText('leave.LeaveType')).toBeInTheDocument()
+  })
+})

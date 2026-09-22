@@ -35,7 +35,7 @@ from rest_framework.response import Response
 from rest_framework.routers import DefaultRouter
 
 from apps.organization.models import OPERATIONAL_STATUSES, Organization
-from apps.platform.models import Plan, Subscription
+from apps.platform.models import Plan, Subscription, SupportGrant
 from apps.platform.services import subscriptions as subscription_services
 from core.access.drf import (
     PlatformAPIView,
@@ -248,6 +248,28 @@ class PlatformOrganizationViewSet(PlatformModelViewSet):
         body["admin_email"] = result.admin.email
         body["invitation_sent"] = result.invitation_sent
         return Response(body, status=201)
+
+    @action(detail=True, methods=["post"], url_path="support-grants")
+    def request_support(self, request, pk=None):
+        """
+        Ask this customer for read-only access to its configuration.
+
+        Asks; does not grant. The customer's Admin decides, in their own
+        application, and until they approve this is a request and nothing more.
+        """
+        from apps.platform.services.support import SupportError, request_grant
+
+        organization = self.get_object()
+        payload = SupportRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        try:
+            grant = request_grant(
+                organization, operator=request.user,
+                reason=payload.validated_data["reason"],
+            )
+        except SupportError as exc:
+            self._refuse(exc)
+        return Response(SupportGrantSerializer(grant).data, status=201)
 
     @action(detail=True, methods=["post"], url_path="archive")
     def archive(self, request, pk=None):
@@ -462,6 +484,74 @@ class SubscriptionStatusSerializer(serializers.Serializer):
     reason = serializers.CharField(required=False, allow_blank=True, max_length=255)
 
 
+class SupportRequestSerializer(serializers.Serializer):
+    reason = serializers.CharField(max_length=2000)
+
+
+class SupportGrantSerializer(serializers.ModelSerializer):
+    organization_slug = serializers.CharField(source="organization.slug", read_only=True)
+    organization_name = serializers.CharField(source="organization.name", read_only=True)
+    requested_by_email = serializers.CharField(source="requested_by.email", read_only=True)
+    usable = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SupportGrant
+        fields = [
+            "id", "organization_slug", "organization_name", "requested_by_email",
+            "reason", "status", "decided_at", "expires_at", "revoked_at",
+            "created_at", "usable",
+        ]
+        read_only_fields = fields
+
+    def get_usable(self, obj) -> bool:
+        from django.utils import timezone
+
+        return obj.is_usable(timezone.now())
+
+
+class PlatformSupportGrantViewSet(PlatformReadOnlyModelViewSet):
+    """
+    The requesting operator's own grants, and the one thing a grant opens.
+
+    OWN grants only: approval is given to a named person, so another
+    operator's grant answers 404 here exactly as it does to the service.
+    """
+
+    serializer_class = SupportGrantSerializer
+
+    def get_queryset(self):
+        # `all_orgs()`: the operator has no organization, and these rows are
+        # spread across customers by nature. Narrowed to the caller's own.
+        return (
+            SupportGrant.objects.all_orgs()
+            .select_related("organization", "requested_by")
+            .filter(requested_by=self.request.user)
+        )
+
+    @action(detail=True, methods=["get"])
+    def configuration(self, request, pk=None):
+        """The customer's configuration, while the grant is approved and live."""
+        from apps.platform.services.support import SupportError, configuration_snapshot
+
+        try:
+            return Response(configuration_snapshot(pk, operator=request.user))
+        except SupportError as exc:
+            self._refuse(exc)
+
+    @action(detail=True, methods=["post"])
+    def end(self, request, pk=None):
+        from apps.platform.services.support import SupportError, end_grant
+
+        try:
+            grant = end_grant(pk, operator=request.user)
+        except SupportError as exc:
+            self._refuse(exc)
+        return Response(SupportGrantSerializer(grant).data)
+
+    def _refuse(self, exc):
+        raise BusinessRuleError(str(exc)) from exc
+
+
 class ArchiveSerializer(serializers.Serializer):
     #: Required: "why was this customer archived" is asked long after anyone
     #: remembers, and the service refuses a blank one too.
@@ -500,3 +590,6 @@ class PlatformSummaryView(PlatformAPIView):
 router = DefaultRouter()
 router.register("organizations", PlatformOrganizationViewSet, basename="platform-org")
 router.register("plans", PlatformPlanViewSet, basename="platform-plan")
+router.register(
+    "support-grants", PlatformSupportGrantViewSet, basename="platform-support-grant"
+)

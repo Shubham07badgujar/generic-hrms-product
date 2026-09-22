@@ -199,21 +199,38 @@ silently go dark.
 
 ## 5. Support access to customer data
 
-Designed, and deliberately not yet shipped.
+Built, narrow. When an operator needs to see a customer's configuration to
+answer a support question, the mechanism is a **SupportGrant**:
 
-When an operator genuinely needs to see a customer's configuration to answer a
-support question, the mechanism is a **SupportGrant**:
+- the operator requests it from the organization's page in the console, with a
+  written reason of at least 20 characters (a database constraint agrees);
+- it is approved or denied by an **Admin of that organization**, on their own
+  *Support access* page — never by the operator;
+- an approval lasts **24 hours**, the customer can end it sooner, and only
+  **the operator who asked** can use it;
+- what it shows is a **code constant**, `SUPPORT_VISIBLE`: structure, roles and
+  permissions, leave and shift policies, hiring workflows, document types and
+  salary components. No employees, salaries, payslips, candidates, documents
+  or attendance. No settings screen can widen it;
+- it is audited in the **customer's** trail at request, decision, every use
+  and revocation.
 
-- requires a written reason of at least 20 characters;
-- is approved by an **Admin of that organization**, not by the operator;
-- expires after 24 hours;
-- resolves to a **read-only** context whose grants come from a **code
-  constant** listing configuration resources only — no employees, no salaries,
-  no payslips, no candidates;
-- is audited at request, approval, each use, and revocation.
+| Who | Route |
+|---|---|
+| Operator requests | `POST /platform/organizations/{id}/support-grants/` |
+| Operator views | `GET /platform/support-grants/{id}/configuration/` |
+| Operator ends early | `POST /platform/support-grants/{id}/end/` |
+| Customer lists | `GET /org/support-grants/` |
+| Customer decides | `POST /org/support-grants/{id}/approve|deny|revoke/` |
 
-Because the grant list is a code constant, no admin panel can widen it, and the
-read-only principal middleware blocks writes as a second mechanism for free.
+**How it differs from the original design, and why.** The design said an
+approved grant "resolves to a read-only context". Built literally, that means
+`resolve_context` choosing an organization for a platform principal from
+something the request carries — client-supplied tenant identity by another
+name, the shape of the incident this architecture exists to prevent. So the
+operator never gets a tenant context. The grant opens one platform route,
+which binds the organization **from the grant row** on the server and reads
+the fixed manifest; the operator's context stays grant-less everywhere else.
 
 **Full-read support access is deferred** until there is a named need and a
 customer-facing consent screen. An operator who needs to see a payslip today
@@ -285,7 +302,7 @@ Stated so the tables above are not read as a description of shipped software.
 | Suspend and cancel | **Built**, through subscription status; `Organization.status` follows it |
 | Archive, purge, and their retention windows | **Built** — archive in the console (cancelled, after the 90-day export window, with a reason); purge only by `manage.py purge_organization <slug> --confirm <slug>`, one year after archive. See §8 |
 | Full-organization export before cancellation | **Built** — `GET /org/export/`, the customer Admin's own, for 90 days after cancellation; the operator cannot use it |
-| `SupportGrant` | Designed (§5), not implemented |
+| `SupportGrant` | **Built**, configuration-only (§5); full-read access deferred |
 | Resending an invitation | **Built** — only while the administrator has never signed in; after that, recovery is the customer's |
 
 **Three writers, one mapping.** `Organization.status` is written in exactly

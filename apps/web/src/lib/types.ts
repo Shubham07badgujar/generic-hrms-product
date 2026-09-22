@@ -131,6 +131,26 @@ export interface SetupState {
 }
 
 /** Lifecycle of the organization itself, which decides whether it may be used. */
+/**
+ * An operator's request to see this organization's configuration.
+ * Declared separately in `features/platform/types.ts` for the console, on
+ * purpose: the two products share no types.
+ */
+export interface SupportGrant {
+  id: string
+  organization_slug: string
+  organization_name: string
+  requested_by_email: string
+  reason: string
+  status: 'requested' | 'approved' | 'denied' | 'revoked'
+  decided_at: string | null
+  expires_at: string | null
+  revoked_at: string | null
+  created_at: string
+  /** Approved and not yet expired -- decided by the server's clock. */
+  usable: boolean
+}
+
 export type OrganizationStatus =
   | 'pending_setup'
   | 'trial'

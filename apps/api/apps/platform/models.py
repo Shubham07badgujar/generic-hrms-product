@@ -36,7 +36,7 @@ from __future__ import annotations
 from django.db import models
 
 from core.access.features import ALWAYS_ON, FeatureCode
-from core.models import BaseModel
+from core.models import BaseModel, OrgOwnedModel
 
 
 class SupportLevel(models.TextChoices):
@@ -219,3 +219,77 @@ class Subscription(BaseModel):
     @property
     def enabled_features(self) -> list[str]:
         return self.plan.enabled_features
+
+
+class SupportGrantStatus(models.TextChoices):
+    REQUESTED = "requested", "Requested"
+    APPROVED = "approved", "Approved"
+    DENIED = "denied", "Denied"
+    REVOKED = "revoked", "Revoked"
+
+
+#: The shortest reason a customer is asked to approve. Twenty characters is
+#: not a quality bar -- it is the difference between "support" and a sentence
+#: somebody can say yes or no to.
+SUPPORT_REASON_MIN_LENGTH = 20
+
+
+class SupportGrant(OrgOwnedModel):
+    """
+    A customer's time-limited, read-only consent to an operator seeing its
+    CONFIGURATION -- never its people.
+
+    Organization-owned, so the customer side is isolated by the tenant manager
+    like every other customer record; the platform side reads it with
+    `all_orgs()`, which is what a platform principal with no organization of
+    its own has to do.
+
+    The customer approves, not the operator: the platform has no implicit
+    reach into customer data, and a grant the operator could approve for
+    themselves would be exactly that reach with a form in front of it. What an
+    approved grant shows is a code constant (`apps.platform.services.support.
+    SUPPORT_VISIBLE`), so no settings screen can widen it.
+    """
+
+    requested_by = models.ForeignKey(
+        "accounts.User", on_delete=models.PROTECT, related_name="+"
+    )
+    reason = models.TextField()
+    status = models.CharField(
+        max_length=20,
+        choices=SupportGrantStatus.choices,
+        default=SupportGrantStatus.REQUESTED,
+        db_index=True,
+    )
+    #: The customer's Admin who approved or denied it. SET_NULL because a
+    #: purge removes the customer's logins and the grant's history outlives
+    #: the person.
+    decided_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(reason__regex=r"^.{%d,}" % SUPPORT_REASON_MIN_LENGTH),
+                name="ck_support_grant_reason_length",
+            ),
+            # An approved grant always knows when it ends. A grant without an
+            # expiry would be standing access, which is the thing this model
+            # exists not to be.
+            models.CheckConstraint(
+                condition=~models.Q(status="approved") | models.Q(expires_at__isnull=False),
+                name="ck_support_grant_approved_expires",
+            ),
+        ]
+
+    def is_usable(self, now) -> bool:
+        return (
+            self.status == SupportGrantStatus.APPROVED
+            and self.expires_at is not None
+            and now < self.expires_at
+        )

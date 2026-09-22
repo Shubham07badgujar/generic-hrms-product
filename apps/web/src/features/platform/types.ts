@@ -108,6 +108,33 @@ export interface PlatformSummary {
   by_status: Partial<Record<PlatformOrganizationStatus, number>>
 }
 
+/** A support-access grant, as the operator who asked for it sees it. */
+export interface PlatformSupportGrant {
+  id: string
+  organization_slug: string
+  organization_name: string
+  requested_by_email: string
+  reason: string
+  status: 'requested' | 'approved' | 'denied' | 'revoked'
+  decided_at: string | null
+  expires_at: string | null
+  revoked_at: string | null
+  created_at: string
+  usable: boolean
+}
+
+/**
+ * What an approved grant shows: the customer's configuration, table by table,
+ * from a fixed server-side list. Rows are plain records; nothing here
+ * describes a person.
+ */
+export interface SupportConfiguration {
+  organization: string
+  grant: string
+  expires_at: string
+  tables: Record<string, Array<Record<string, unknown>>>
+}
+
 /** Who a resend reached, and whether each mail actually went. No password. */
 export interface InvitationResend {
   invitations: Array<{ email: string; sent: boolean }>

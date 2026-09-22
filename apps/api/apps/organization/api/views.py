@@ -539,3 +539,62 @@ class OrganizationExportView(APIView):
         # A whole company's records: never cached by anything in between.
         response["Cache-Control"] = "no-store"
         return response
+
+
+class SupportGrantListView(APIView):
+    """
+    GET /org/support-grants/ -- operators' requests to see this organization's
+    configuration, newest first, and what became of each.
+
+    ORG_SETTINGS: the same authority as the rest of the organization's
+    configuration, which is what a grant would expose. Deciding needs EDIT;
+    under the seeded matrix that is the Admin, which is who the design names.
+    """
+
+    access_resource = Resource.ORG_SETTINGS
+    access_actions = {"GET": Action.VIEW}
+
+    def get(self, request):
+        require(request.user, Resource.ORG_SETTINGS, Action.VIEW)
+        from apps.platform.api.views import SupportGrantSerializer
+        from apps.platform.models import SupportGrant
+
+        # The tenant manager: this organization's grants and no other's.
+        grants = SupportGrant.objects.select_related("organization", "requested_by")
+        return Response(SupportGrantSerializer(grants, many=True).data)
+
+
+class SupportGrantDecisionView(APIView):
+    """
+    POST /org/support-grants/<id>/<approve|deny|revoke>/
+
+    An id from another organization answers 404, not 403: the tenant manager
+    does not return it, so to this organization it does not exist.
+    """
+
+    access_resource = Resource.ORG_SETTINGS
+    access_actions = {"POST": Action.EDIT}
+
+    def post(self, request, pk, decision):
+        require(request.user, Resource.ORG_SETTINGS, Action.EDIT)
+        from django.http import Http404
+
+        from apps.platform.api.views import SupportGrantSerializer
+        from apps.platform.models import SupportGrant
+        from apps.platform.services.support import SupportError, decide, revoke
+
+        grant = SupportGrant.objects.filter(pk=pk).select_related("organization").first()
+        if grant is None:
+            raise Http404
+        try:
+            if decision == "approve":
+                grant = decide(grant, admin=request.user, approve=True)
+            elif decision == "deny":
+                grant = decide(grant, admin=request.user, approve=False)
+            elif decision == "revoke":
+                grant = revoke(grant, admin=request.user)
+            else:
+                raise Http404
+        except SupportError as exc:
+            raise BusinessRuleError(str(exc)) from exc
+        return Response(SupportGrantSerializer(grant).data)

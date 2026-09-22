@@ -318,6 +318,15 @@ export const NAV_SPEC: NavGroup[] = [
         resource: RESOURCE.ORG_SETTINGS,
       },
       {
+        // Where an administrator answers support's requests to see this
+        // organization's configuration. Beside the plan: both are the
+        // customer's side of their relationship with the platform.
+        label: 'Support access',
+        to: '/support-access',
+        icon: ICONS.shield,
+        resource: RESOURCE.ORG_SETTINGS,
+      },
+      {
         // Only while there is setup left to do, and only for whoever can do
         // it. The wizard sends an administrator out to these very screens, so
         // without a way back the only route to the checklist is the browser's

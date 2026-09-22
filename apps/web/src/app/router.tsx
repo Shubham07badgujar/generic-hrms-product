@@ -46,6 +46,7 @@ import { OrganisationPage } from '@/features/organisation/OrganisationPage'
 import { PlanPage } from '@/features/organisation/PlanPage'
 import { SetupPage } from '@/features/organisation/SetupPage'
 import { SuspendedPage } from '@/features/organisation/SuspendedPage'
+import { SupportAccessPage } from '@/features/organisation/SupportAccessPage'
 import { PayrollPage } from '@/features/payroll/PayrollPage'
 import { PayrollRunDetailPage } from '@/features/payroll/PayrollRunDetailPage'
 import { PayrollSettingsPage } from '@/features/payroll/PayrollSettingsPage'
@@ -361,6 +362,18 @@ function OrganizationRoutes() {
           element={
             <RequirePermission resource={RESOURCE.ORG_SETTINGS}>
               <PlanPage />
+            </RequirePermission>
+          }
+        />
+        {/*
+          VIEW to read the requests, as the endpoint does; deciding needs EDIT,
+          which the page checks per button and the API enforces per request.
+        */}
+        <Route
+          path="support-access"
+          element={
+            <RequirePermission resource={RESOURCE.ORG_SETTINGS}>
+              <SupportAccessPage />
             </RequirePermission>
           }
         />

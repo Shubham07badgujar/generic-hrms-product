@@ -16,6 +16,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiGet, apiPost, type Paginated } from '@/lib/api'
 import type {
   InvitationResend,
+  PlatformSupportGrant,
+  SupportConfiguration,
   PlatformOrganization,
   PlatformPlan,
   PlatformSummary,
@@ -90,6 +92,42 @@ export function useSetSubscriptionStatus(id: string) {
         `/platform/organizations/${id}/subscription-status/`,
         body,
       ),
+    onSuccess: refresh,
+  })
+}
+
+export function useSupportGrants() {
+  return useQuery({
+    queryKey: [KEY, 'support-grants'],
+    queryFn: () => apiGet<Paginated<PlatformSupportGrant>>('/platform/support-grants/'),
+  })
+}
+
+export function useRequestSupport(organizationId: string) {
+  const refresh = useRefreshPlatform()
+  return useMutation({
+    mutationFn: (body: { reason: string }) =>
+      apiPost<PlatformSupportGrant>(
+        `/platform/organizations/${organizationId}/support-grants/`,
+        body,
+      ),
+    onSuccess: refresh,
+  })
+}
+
+/** Fetched on demand, never cached: each call is one audited look. */
+export function useSupportConfiguration() {
+  return useMutation({
+    mutationFn: (grantId: string) =>
+      apiGet<SupportConfiguration>(`/platform/support-grants/${grantId}/configuration/`),
+  })
+}
+
+export function useEndSupport() {
+  const refresh = useRefreshPlatform()
+  return useMutation({
+    mutationFn: (grantId: string) =>
+      apiPost<PlatformSupportGrant>(`/platform/support-grants/${grantId}/end/`),
     onSuccess: refresh,
   })
 }

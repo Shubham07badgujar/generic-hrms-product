@@ -11,6 +11,8 @@ from .views import (
     LocationViewSet,
     OrgBrandingView,
     OrganizationExportView,
+    SupportGrantDecisionView,
+    SupportGrantListView,
     MyPlanView,
     OrgSettingsView,
     RoleViewSet,
@@ -36,4 +38,10 @@ organization_patterns = [
     path("org/setup/", SetupStateView.as_view(), name="org-setup"),
     path("org/plan/", MyPlanView.as_view(), name="org-plan"),
     path("org/export/", OrganizationExportView.as_view(), name="org-export"),
+    path("org/support-grants/", SupportGrantListView.as_view(), name="org-support-grants"),
+    path(
+        "org/support-grants/<uuid:pk>/<str:decision>/",
+        SupportGrantDecisionView.as_view(),
+        name="org-support-grant-decision",
+    ),
 ] + router.urls

@@ -59,7 +59,7 @@ reads — which turned out to be exactly right (§6).
 | Deliberately global tables | **5** (§4) |
 | Nullable-organization tables | 1 (`audit.AuditLog`: platform events belong to no customer) |
 | Models awaiting conversion | 0 — `PENDING_TENANCY` is empty |
-| Deliberate escapes from tenancy in product code | 14 `all_orgs()` call sites, each named and greppable |
+| Deliberate escapes from tenancy in product code | 16 `all_orgs()` call sites, each named and greppable |
 | Build-time structural checks | 16 error classes, `access.E001`–`access.E017` (`E009` unused) |
 | Organization-scoped management commands | 14 |
 | Backend tests | 2,223 passing, 10 skipped, 1 failing by design (§11) |
@@ -250,11 +250,18 @@ administrator who cannot be told their password cannot sign in at all.
 `manage.py changepassword`, since the password is stored nowhere and there is
 no self-service reset.
 
-**Not built: `SupportGrant`.** The design exists in the plan — a time-limited,
-organization-approved, read-only grant whose scope comes from a code constant
-listing config resources only. No code implements it. Today a platform admin
-has no route into customer data at all, which is the safe end of that
-trade-off, and any support access must be designed before it is shipped.
+**`SupportGrant`: built narrow.** An operator asks, with a reason of at least
+20 characters; the customer's Admin approves or denies in their own
+application; an approval lasts 24 hours and can be revoked; only the operator
+who asked may use it; what it shows is configuration from a code constant
+(`SUPPORT_VISIBLE`) and never a person; every step lands in the customer's
+audit trail. One deliberate narrowing of the design: an approved grant does
+NOT resolve the operator to a tenant context. That would mean choosing the
+operator's organization from something the request carries — client-supplied
+tenant identity by another name. Instead the grant opens one platform route
+that binds the organization from the grant row on the server and reads the
+fixed manifest; the operator's context stays grant-less everywhere else, and
+`resolve_context` is untouched. Full-read support access remains deferred.
 
 ---
 
@@ -380,7 +387,7 @@ Stated plainly, because the gaps are the useful half of an audit.
 | **Resending an invitation** | Done. `POST /platform/organizations/{id}/resend-invitation/` and a console card, over one shared reissue path with the employee route (fresh password, forced change, refresh tokens revoked, mail, audit). **Only while the invitation is unaccepted:** once an administrator has set their own password the route answers 422, because an operator able to reset a working customer administrator would hold a lever over the customer's accounts. The resend is audited in the customer's own trail with the operator as actor. The 14th `all_orgs()` site is the console's `admin_invitation_pending` flag, a subquery beside the existing headcount one. |
 | **Organization export** | Done. `GET /org/export/` returns the whole record as a ZIP of CSVs from an explicit manifest (structure, employees, attendance, leave, payroll), plus `members.csv` and a README. It is the lifecycle's promise kept: until now a CANCELLED organization resolved to a grant-less context, so its customer was locked out of statutory records the moment the subscription ended. **One route, not a read-only API:** it is the single addition to the paths a stopped organization may reach, and it decides for itself -- an Admin of their own organization, operational or cancelled within 90 days; suspended and archived are refused, as is the platform operator. **Withheld by default:** PAN, Aadhaar and bank account numbers (encrypted at rest; a bulk Aadhaar file carries legal risk), named in the README; integration credentials are never exported. Built synchronously in memory -- right at today's sizes; a very large customer would want a background job and a link. Recruitment and the audit trail are not included, and the README says so. |
 | **Layer E: database composite foreign keys** | Not implemented. Raw SQL and bulk paths are covered by the manager and the stamping mixin, not by the database. |
-| **`SupportGrant`** | Not implemented (§8). |
+| **`SupportGrant`** | Done, narrow: configuration-only, customer-approved, 24 hours, requester-only, audited in the customer's trail. Two `all_orgs()` sites, both on the operator's side where no organization exists to bind. Full-read access deferred. |
 | **Database-level append-only audit** | `ARCHITECTURE.md` specifies `REVOKE UPDATE, DELETE ON audit_auditlog` from the application role. Nothing in this repository issues it — not a migration, not the deploy entrypoint. The Python guards hold, but a raw `UPDATE` would succeed. **If it is ever issued**, note that purge scrubs an organization's audit payloads with a queryset `UPDATE` (`apps/audit/purge.py`, the one sanctioned rewrite): the grant would then need to be `REVOKE DELETE` only, or purge would need its own privileged role. |
 | **Archive and purge** | Done. Archive is a console action (cancelled, after the 90-day export window, reason required). Purge is a server command only, `purge_organization <slug> --confirm <slug>`, a year after archive: one transaction removing every organization-owned row, the memberships and settings, the users' logins and the file subtree; keeping a tombstone organization row, the subscription, and the audit trail with payloads scrubbed. A login that certified a deployment-wide statutory rate set is deactivated rather than deleted, because that record belongs to every customer. |
 | **Postgres RLS** | Deliberately deferred, with the reason recorded above. |
@@ -392,7 +399,7 @@ Stated plainly, because the gaps are the useful half of an audit.
 
 ## 13. Risks worth keeping in view
 
-1. **The escape hatch is the audit surface.** 14 `all_orgs()` call sites in
+1. **The escape hatch is the audit surface.** 16 `all_orgs()` call sites in
    product code, each deliberate and each greppable. That number going up
    without review is the thing to watch — `grep -rn all_orgs` is the audit.
 2. **The manager protects the ORM, not raw SQL.** Nothing in this design stops
