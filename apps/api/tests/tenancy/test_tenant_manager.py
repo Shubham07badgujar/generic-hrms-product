@@ -156,7 +156,10 @@ def test_a_strict_app_returns_only_the_bound_organizations_rows(org_a, org_b):
 
     # Positive control: both rows really exist, so the absence above is the
     # predicate and not a failed write.
-    everything = set(Notification.objects.all_orgs().values_list("pk", flat=True))
+    from .conftest import across_organizations
+
+    with across_organizations():
+        everything = set(Notification.objects.all_orgs().values_list("pk", flat=True))
     assert {mine.pk, theirs.pk} <= everything
 
 
@@ -189,9 +192,12 @@ def test_a_reverse_accessor_is_still_confined_to_its_parents_organization(
     """
     The narrowing half: it uses the PARENT's organization, not whatever is bound.
 
-    Reading A's children while B is bound must return A's rows, not an empty
-    set and not B's -- the parent fixes the tenant, so the bound one is
-    irrelevant here.
+    Reading A's children while B is bound never returns B's rows. What it
+    does return changed in release 2, and got STRICTER: the manager would hand
+    back A's rows, because the parent fixes the tenant; the database now shows
+    a connection bound to B nothing of A's at all. Both refuse to leak; the
+    database refuses harder, and a legitimate caller reading A's children is
+    bound to A while doing it.
     """
     from apps.onboarding.models import EmployeeOnboarding
 
@@ -204,15 +210,15 @@ def test_a_reverse_accessor_is_still_confined_to_its_parents_organization(
     with acting_as(org_b.admin, organization=org_b.organization):
         seen = {item.pk for item in onboarding.items.all()}
 
-    assert seen == expected
-    # Note `all_orgs()` is NOT the check here. On a reverse accessor it steps
-    # around the parent filter as well as the tenant one, so it answers "every
-    # item in the database", not "this onboarding's items in any organization".
-    with acting_as(org_b.admin, organization=org_b.organization):
-        assert all(
-            item.organization_id == org_a.organization.pk
-            for item in onboarding.items.all()
-        )
+    assert expected, "A's onboarding must have items, or this proves nothing"
+    assert not (seen & expected) and not seen, (
+        "bound to B, none of A's items are visible -- and certainly none of B's"
+    )
+
+    # Bound to A, the same accessor returns exactly A's items.
+    with acting_as(org_a.admin, organization=org_a.organization):
+        assert {item.pk for item in onboarding.items.all()} == expected
+
 
 
 def test_a_strict_app_cannot_fetch_another_organizations_row_by_id(org_a, org_b):
@@ -235,7 +241,7 @@ def test_a_strict_app_cannot_fetch_another_organizations_row_by_id(org_a, org_b)
 
 
 @pytest.mark.unbound_organization
-def test_an_update_made_with_nothing_bound_is_still_audited(org_a):
+def test_the_audit_re_read_imposes_no_tenant_question_of_its_own(org_a):
     """
     The audit trail re-reads a row before an update so it can record the diff.
 
@@ -243,17 +249,29 @@ def test_an_update_made_with_nothing_bound_is_still_audited(org_a):
     failing a save of a row that carries its own organization; with another
     organization bound it found nothing, and the update was silently never
     audited. The re-read is of the same row, so it asks no tenant question.
+
+    Renamed in release 2: the case is no longer "nothing bound", because the
+    database now refuses an update that has no organization in force -- the
+    fail-closed behaviour the whole design wants. The property under test is
+    the same one, and the row's own organization is what satisfies it.
     """
     from apps.audit.models import AuditAction, AuditLog
 
+    # Bound, because from release 2 the DATABASE is the second answer to the
+    # same question: an update with nothing bound matches no rows at all, which
+    # is the fail-closed behaviour this design wants. What the test is about is
+    # unchanged -- the audit re-read must not impose a tenant question of its
+    # own on a row that already carries its organization.
     employee = org_a.worker_employee
-    employee.first_name = "Renamed"
-    employee.save(update_fields=["first_name"])
+    with acting_as(None, organization=org_a.organization):
+        employee.first_name = "Renamed"
+        employee.save(update_fields=["first_name"])
 
-    entry = AuditLog.objects.filter(
-        entity_type="employees.Employee",
-        entity_id=str(employee.pk),
-        action=AuditAction.UPDATE,
-    ).first()
+    with acting_as(None, organization=org_a.organization):
+        entry = AuditLog.objects.filter(
+            entity_type="employees.Employee",
+            entity_id=str(employee.pk),
+            action=AuditAction.UPDATE,
+        ).first()
     assert entry is not None, "the update wrote no audit row"
     assert entry.after.get("first_name") == "Renamed"

@@ -27,15 +27,19 @@ def test_each_has_its_own_role_catalogue(org_a, org_b):
     """
     from apps.accounts.models import Role
 
-    a = set(Role.objects.all_orgs().filter(organization=org_a.organization).values_list("code", flat=True))
-    b = set(Role.objects.all_orgs().filter(organization=org_b.organization).values_list("code", flat=True))
+    from .conftest import across_organizations
+
+    # Comparing two organizations IS the test, so it reads as the platform
+    # would -- see `across_organizations`.
+    with across_organizations():
+        a = set(Role.objects.all_orgs().filter(organization=org_a.organization).values_list("code", flat=True))
+        b = set(Role.objects.all_orgs().filter(organization=org_b.organization).values_list("code", flat=True))
+        a_pks = set(Role.objects.all_orgs().filter(organization=org_a.organization).values_list("pk", flat=True))
+        b_pks = set(Role.objects.all_orgs().filter(organization=org_b.organization).values_list("pk", flat=True))
 
     assert a == b, "both organizations get the same role vocabulary"
     assert len(a) >= 18
-    assert not (
-        set(Role.objects.all_orgs().filter(organization=org_a.organization).values_list("pk", flat=True))
-        & set(Role.objects.all_orgs().filter(organization=org_b.organization).values_list("pk", flat=True))
-    ), "and they are different rows"
+    assert not (a_pks & b_pks), "and they are different rows"
 
 
 def test_every_fixture_row_belongs_to_its_own_organization(org_a, org_b):

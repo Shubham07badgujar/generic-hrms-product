@@ -135,5 +135,11 @@ def test_writes_against_the_other_organization_are_refused(org_a, org_b, api_for
         f"{method.upper()} on another organization's employee returned "
         f"{response.status_code}"
     )
-    org_b.rows["employee"].refresh_from_db()
+    from .conftest import across_organizations
+
+    # Re-read from outside: B's row is invisible to A's connection, which is
+    # the point -- so the check that it is unchanged is made the way the
+    # platform would make it.
+    with across_organizations():
+        org_b.rows["employee"].refresh_from_db()
     assert org_b.rows["employee"].first_name != "Renamed"

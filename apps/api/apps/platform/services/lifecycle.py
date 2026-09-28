@@ -61,6 +61,35 @@ ARCHIVE_AFTER_CANCEL_DAYS = 90
 PURGE_AFTER_ARCHIVE_DAYS = 365
 
 
+def _platform_work(reason):
+    """
+    Mark a function as DEPLOYMENT-level: it administers an organization from
+    outside, so it runs through the one named door rather than depending on
+    whichever caller got there (the console, a management command, a test).
+
+    Release 2: the runtime role is confined to the bound organization, and
+    these functions are handed the organization as an argument precisely
+    because they act on it from the platform side. Without this they would
+    read empty plans and write refused rows -- silently, in the plan_purge
+    case, which is the worst way for a purge to be wrong.
+    """
+    from functools import wraps
+
+    def decorate(fn):
+        @wraps(fn)
+        def run(*args, **kwargs):
+            from django.db import transaction
+
+            from core.access.platform_bypass import platform_bypass
+
+            with transaction.atomic(), platform_bypass(reason=reason, system=True):
+                return fn(*args, **kwargs)
+
+        return run
+
+    return decorate
+
+
 class LifecycleError(Exception):
     """A lifecycle step refused before anything was written."""
 
@@ -70,6 +99,7 @@ class LifecycleError(Exception):
 # ---------------------------------------------------------------------------
 
 
+@_platform_work("lifecycle: archive an organization")
 def archive_organization(organization, *, actor, reason: str):
     """
     CANCELLED -> ARCHIVED, once the export window has closed.
@@ -226,6 +256,7 @@ def _customer_users(organization):
     return deleted, spared
 
 
+@_platform_work("lifecycle: count what a purge would remove")
 def plan_purge(organization) -> PurgePlan:
     """Everything a purge would remove, counted, with nothing written."""
     from apps.audit.models import AuditLog
@@ -265,6 +296,7 @@ def purge_refusal(organization) -> str | None:
     return None
 
 
+@_platform_work("lifecycle: purge an archived organization")
 def purge_organization(organization, *, confirm: str, actor=None) -> PurgePlan:
     """
     Remove an archived organization's data. Irreversible; everything or nothing.

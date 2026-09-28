@@ -14,6 +14,7 @@ fixture; each block below binds its own explicitly.
 from __future__ import annotations
 
 import datetime as dt
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -244,3 +245,8 @@ def api_for():
         return client
 
     return _for
+
+
+#: Re-exported: the tenancy suites import it from here; it lives in
+#: `tests/conftest.py` so every test package can reach it.
+from ..conftest import across_organizations  # noqa: E402,F401

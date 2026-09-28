@@ -161,7 +161,10 @@ def test_the_same_payload_succeeds_with_its_own_organizations_rows(org_a, api_fo
     )
     from apps.employees.models import Employee
 
-    created = Employee.objects.all_orgs().get(first_name="Injected")
+    from .conftest import across_organizations
+
+    with across_organizations():
+        created = Employee.objects.all_orgs().get(first_name="Injected")
     assert created.organization_id == org_a.organization.pk
     assert dt.date(2025, 1, 6) == created.date_of_joining
 
@@ -193,9 +196,12 @@ def test_a_payroll_run_cannot_be_scoped_to_another_organizations_location(
         f"expected refusal, got {foreign.status_code}: {foreign.content[:300]}"
     )
     assert "location" in foreign.content.decode().lower()
-    assert not PayrollRun.objects.all_orgs().filter(
-        organization=org_a.organization, period_year=2025, period_month=8
-    ).exists(), "a run was created despite the refusal"
+    from .conftest import across_organizations
+
+    with across_organizations():
+        assert not PayrollRun.objects.all_orgs().filter(
+            organization=org_a.organization, period_year=2025, period_month=8
+        ).exists(), "a run was created despite the refusal"
 
     # Positive control: the same request with A's own location.
     own = client.post(
@@ -206,5 +212,6 @@ def test_a_payroll_run_cannot_be_scoped_to_another_organizations_location(
     assert own.status_code == 201, (
         f"A cannot create a run for its own location: {own.status_code} {own.content[:300]}"
     )
-    run = PayrollRun.objects.all_orgs().get(pk=own.json()["id"])
+    with across_organizations():
+        run = PayrollRun.objects.all_orgs().get(pk=own.json()["id"])
     assert run.location_id == org_a.location.pk

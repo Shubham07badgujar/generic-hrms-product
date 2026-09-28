@@ -221,7 +221,24 @@ def render(kind: str, context: dict, *, organization=None) -> tuple[str, str, st
 
 
 def _deliver(notification: CandidateNotification) -> None:
-    """One SMTP attempt, outcome written to the row. Never raises."""
+    """
+    One SMTP attempt, outcome written to the row. Never raises.
+
+    Bound to the NOTIFICATION's own organization for the whole attempt. This
+    runs from `on_commit`, from HR's retry button and one day from a queue --
+    places that have no organization in force, or somebody else's. The sender
+    identity was already taken from the row for that reason; from release 2
+    the same has to be true of the WRITE, because a confined connection with
+    nothing bound matches no rows, and the outcome would be lost silently
+    while the mail itself went out.
+    """
+    from core.middleware import acting_as
+
+    with acting_as(None, organization=notification.organization_id):
+        _attempt_delivery(notification)
+
+
+def _attempt_delivery(notification: CandidateNotification) -> None:
     notification.attempts += 1
     notification.last_attempt_at = timezone.now()
 

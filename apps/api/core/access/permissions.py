@@ -186,20 +186,35 @@ def onboarding_gate_applies(user) -> bool:
     — HR Head, HR Manager, Admin) are never gated: gating the only person
     able to approve the documents would deadlock the whole mechanism.
     """
-    employee = getattr(user, "employee", None)
-    if employee is None:
+    # BOUND to the user's own organization for the whole question. Every row
+    # this reads -- the Employee, their checklist, its outstanding items --
+    # belongs to that organization, and `/api/v1/me/` is `access_exempt`, so
+    # nothing else binds one. From release 2 an unbound read returns nothing,
+    # and "nothing" here means NOT GATED: a new joiner would be waved past the
+    # onboarding they have not done. A gate that fails open is worse than no
+    # gate, because the screen above it says the check ran.
+    from apps.organization.membership import active_membership
+    from core.middleware import organization_scope
+
+    membership = active_membership(user)
+    if membership is None:
         return False
 
-    from core.access import Action, Resource, Scope
-    from core.access.engine import can
+    with organization_scope(membership.organization_id):
+        employee = getattr(user, "employee", None)
+        if employee is None:
+            return False
 
-    if can(user, Resource.ONBOARDING, Action.EDIT) >= Scope.ALL:
-        return False
+        from core.access import Action, Resource, Scope
+        from core.access.engine import can
 
-    onboarding = getattr(employee, "onboarding", None)
-    if onboarding is None or onboarding.status != "in_progress":
-        return False
-    return onboarding.outstanding_mandatory.exists()
+        if can(user, Resource.ONBOARDING, Action.EDIT) >= Scope.ALL:
+            return False
+
+        onboarding = getattr(employee, "onboarding", None)
+        if onboarding is None or onboarding.status != "in_progress":
+            return False
+        return onboarding.outstanding_mandatory.exists()
 
 
 class OnboardingGate(BasePermission):

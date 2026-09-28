@@ -101,14 +101,19 @@ def _structure_of(organization):
     """Every department, location and level one organization owns, by content."""
     from apps.organization.models import Department, EmployeeLevel, Location
 
-    return {
-        model.__name__: sorted(
-            model.objects.all_orgs()
-            .filter(organization=organization)
-            .values_list("pk", "name", "code")
-        )
-        for model in (Department, Location, EmployeeLevel)
-    }
+    from .conftest import across_organizations
+
+    # Ground truth about ANOTHER organization, so it reads the way the
+    # platform does -- see `across_organizations`.
+    with across_organizations():
+        return {
+            model.__name__: sorted(
+                model.objects.all_orgs()
+                .filter(organization=organization)
+                .values_list("pk", "name", "code")
+            )
+            for model in (Department, Location, EmployeeLevel)
+        }
 
 
 def test_seed_demo_seeds_its_own_organization_and_leaves_another_untouched(
@@ -139,11 +144,14 @@ def test_seed_demo_seeds_its_own_organization_and_leaves_another_untouched(
     )
 
     # Positive control: the demo really was built, in the right place.
-    seeded_codes = set(
-        Department.objects.all_orgs()
-        .filter(organization=org_a.organization)
-        .values_list("code", flat=True)
-    )
+    from .conftest import across_organizations
+
+    with across_organizations():
+        seeded_codes = set(
+            Department.objects.all_orgs()
+            .filter(organization=org_a.organization)
+            .values_list("code", flat=True)
+        )
     assert {"MED", "OPS", "HR", "FIN"} <= seeded_codes
 
     # And every demo login belongs to that organization. Without a membership
@@ -153,10 +161,11 @@ def test_seed_demo_seeds_its_own_organization_and_leaves_another_untouched(
 
     demo_users = User.objects.filter(email__endswith="@demo.test")
     assert demo_users.exists()
-    for user in demo_users:
-        assert OrganizationMembership.objects.filter(
-            user=user, organization=org_a.organization
-        ).exists(), f"{user.email} has no membership in {org_a.slug}"
+    with across_organizations():
+        for user in demo_users:
+            assert OrganizationMembership.objects.filter(
+                user=user, organization=org_a.organization
+            ).exists(), f"{user.email} has no membership in {org_a.slug}"
 
 
 DEMO_DOMAIN = "demo-company.example"
@@ -201,18 +210,21 @@ def test_seed_demo_company_builds_its_own_company_and_touches_no_other(
     expected = len(HEALTHCARE.people) + len(HEALTHCARE.system_people)
     demo_users = User.objects.filter(email__endswith=f"@{DEMO_DOMAIN}")
     assert demo_users.count() == expected, "the profile's whole roster, and only it"
-    for user in demo_users:
-        assert OrganizationMembership.objects.filter(
-            user=user, organization=org_a.organization
-        ).exists(), f"{user.email} is not a member of {org_a.slug}"
+    from .conftest import across_organizations
 
-    demo_employees = Employee.objects.all_orgs().filter(
-        user__email__endswith=f"@{DEMO_DOMAIN}"
-    )
-    assert demo_employees.exists()
-    assert set(demo_employees.values_list("organization_id", flat=True)) == {
-        org_a.organization.pk
-    }, "a demo employee was hired into another organization"
+    with across_organizations():
+        for user in demo_users:
+            assert OrganizationMembership.objects.filter(
+                user=user, organization=org_a.organization
+            ).exists(), f"{user.email} is not a member of {org_a.slug}"
+
+        demo_employees = Employee.objects.all_orgs().filter(
+            user__email__endswith=f"@{DEMO_DOMAIN}"
+        )
+        assert demo_employees.exists()
+        assert set(demo_employees.values_list("organization_id", flat=True)) == {
+            org_a.organization.pk
+        }, "a demo employee was hired into another organization"
 
     # The credentials file sits inside the seeded organization's own subtree,
     # so a second organization's demo cannot overwrite it.
@@ -242,12 +254,18 @@ def test_seed_demo_company_remove_takes_only_its_own_members(
     org_a.organization.refresh_from_db()
     seeded_slug = org_a.organization.slug
 
+    from .conftest import across_organizations
+
     outsider = User.objects.create_user(
         email=f"outsider@{DEMO_DOMAIN}", password="not-a-demo-password-123"
     )
-    OrganizationMembership.objects.create(
-        organization=org_b.organization, user=outsider
-    )
+    # Planted in the OTHER organization, which a connection bound to A cannot
+    # write -- so the fixture says which organization it is building, the way
+    # provisioning does.
+    with across_organizations():
+        OrganizationMembership.objects.create(
+            organization=org_b.organization, user=outsider
+        )
 
     call_command(
         "seed_demo_company", organization=seeded_slug, domain=DEMO_DOMAIN, remove=True
@@ -306,18 +324,22 @@ def test_purge_candidates_anonymises_only_the_named_organizations_candidates(
                 legal_basis=LegalBasis.VOLUNTARILY_PROVIDED,
                 notice_due_at=timezone.now(),
             )
-        Candidate.objects.all_orgs().filter(pk=candidate.pk).update(
-            created_at=timezone.now() - dt.timedelta(days=120)
-        )
+        with _acting_for(world):
+            Candidate.objects.all_orgs().filter(pk=candidate.pk).update(
+                created_at=timezone.now() - dt.timedelta(days=120)
+            )
         due[world.slug] = candidate.pk
 
     call_command("purge_candidates", organization=org_a.slug, apply=True)
 
-    names = dict(
-        Candidate.objects.all_orgs()
-        .filter(pk__in=due.values())
-        .values_list("pk", "first_name")
-    )
+    from .conftest import across_organizations
+
+    with across_organizations():
+        names = dict(
+            Candidate.objects.all_orgs()
+            .filter(pk__in=due.values())
+            .values_list("pk", "first_name")
+        )
     assert names[due[org_a.slug]] == "Redacted", "the named organization's overdue candidate was not purged"
     assert names[due[org_b.slug]] == "Overdue", (
         "purging one organization anonymised another organization's candidate"
@@ -341,28 +363,33 @@ def test_repair_application_stages_moves_only_the_named_organizations_applicatio
                 is_won=False,
             )
         # Closed status at a live stage: the incoherent shape the command repairs.
-        Application.objects.all_orgs().filter(pk=world.rows["application"].pk).update(
-            status=ApplicationStatus.REJECTED
-        )
+        with _acting_for(world):
+            Application.objects.all_orgs().filter(pk=world.rows["application"].pk).update(
+                status=ApplicationStatus.REJECTED
+            )
 
     call_command("repair_application_stages", organization=org_a.slug, apply=True)
 
+    from .conftest import across_organizations
+
     def stage_of(world):
-        return (
-            Application.objects.all_orgs()
-            .select_related("current_stage")
-            .get(pk=world.rows["application"].pk)
-            .current_stage
-        )
+        with across_organizations():
+            return (
+                Application.objects.all_orgs()
+                .select_related("current_stage")
+                .get(pk=world.rows["application"].pk)
+                .current_stage
+            )
 
     assert stage_of(org_a).is_terminal, "the named organization's application was not repaired"
     assert stage_of(org_b).pk == org_b.rows["workflow_stage"].pk, (
         "repairing one organization moved another organization's candidate"
     )
-    assert not ApplicationEvent.objects.all_orgs().filter(
-        application_id=org_b.rows["application"].pk,
-        actor_label="system · stage repair",
-    ).exists(), "a repair event was written into another organization's history"
+    with across_organizations():
+        assert not ApplicationEvent.objects.all_orgs().filter(
+            application_id=org_b.rows["application"].pk,
+            actor_label="system · stage repair",
+        ).exists(), "a repair event was written into another organization's history"
 
 
 #: Everything `google_forms_check` prints, reporting a working integration, so
@@ -460,14 +487,19 @@ def test_seed_all_keeps_its_organization_bound_through_every_step(
 
     call_command("seed_all", force=True, domain=DEMO_DOMAIN)
 
-    job = JobOpening.objects.all_orgs().get(title="Front Desk Executive")
-    assert job.organization_id == organization.pk
-    assert Application.objects.all_orgs().filter(
-        job_opening=job, organization=organization
-    ).exists(), "the recruitment step wrote no applications"
-    assert AttendanceRecord.objects.all_orgs().filter(
-        organization=organization, employee__user__email__endswith=f"@{DEMO_DOMAIN}"
-    ).exists(), "the attendance step wrote no records"
+    from core.middleware import acting_as
+
+    # Verified bound to the organization the command seeded: this test is
+    # about one organization, not about crossing between them.
+    with acting_as(None, organization=organization):
+        job = JobOpening.objects.all_orgs().get(title="Front Desk Executive")
+        assert job.organization_id == organization.pk
+        assert Application.objects.all_orgs().filter(
+            job_opening=job, organization=organization
+        ).exists(), "the recruitment step wrote no applications"
+        assert AttendanceRecord.objects.all_orgs().filter(
+            organization=organization, employee__user__email__endswith=f"@{DEMO_DOMAIN}"
+        ).exists(), "the attendance step wrote no records"
 
 
 def test_seed_roles_exports_only_the_named_organizations_matrix(org_a, org_b, tmp_path):
@@ -488,12 +520,15 @@ def test_seed_roles_exports_only_the_named_organizations_matrix(org_a, org_b, tm
     with out.open(encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
 
-    expected = RolePermission.objects.all_orgs().filter(
-        organization=org_a.organization, is_active=True
-    ).count()
-    other = RolePermission.objects.all_orgs().filter(
-        organization=org_b.organization, is_active=True
-    ).count()
+    from .conftest import across_organizations
+
+    with across_organizations():
+        expected = RolePermission.objects.all_orgs().filter(
+            organization=org_a.organization, is_active=True
+        ).count()
+        other = RolePermission.objects.all_orgs().filter(
+            organization=org_b.organization, is_active=True
+        ).count()
     assert other, "the other organization must have a matrix, or this proves nothing"
     assert len(rows) == expected, (
         f"exported {len(rows)} rows; the organization has {expected} and the "

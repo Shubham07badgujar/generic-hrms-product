@@ -25,10 +25,15 @@ the fallback, announced as one, rather than the default.
 
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import CommandError
+
+from core.access.platform_command import PlatformCommand
 
 
-class Command(BaseCommand):
+class Command(PlatformCommand):
+    #: Deployment-level work: see core/access/platform_command.py.
+    platform_reason = "provision a new customer organization"
+
     help = "Create a customer organization, its configuration and its first administrator."
 
     def add_arguments(self, parser):

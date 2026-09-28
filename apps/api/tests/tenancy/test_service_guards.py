@@ -73,8 +73,11 @@ def test_start_exit_refuses_another_organizations_employee(org_a, org_b):
     from apps.offboarding.models import ExitWorkflow
     from apps.offboarding.services import start_exit
 
+    from .conftest import across_organizations
+
     victim = org_b.worker_employee
-    before = Employee.objects.all_orgs().get(pk=victim.pk).status
+    with across_organizations():
+        before = Employee.objects.all_orgs().get(pk=victim.pk).status
     exit_type = ExitWorkflow._meta.get_field("exit_type").choices[0][0]
 
     with acting_as(org_a.admin, organization=org_a.organization):
@@ -86,8 +89,9 @@ def test_start_exit_refuses_another_organizations_employee(org_a, org_b):
                 last_working_date=_in_thirty_days(),
             )
 
-    assert not ExitWorkflow.objects.all_orgs().filter(employee=victim).exists()
-    assert Employee.objects.all_orgs().get(pk=victim.pk).status == before
+    with across_organizations():
+        assert not ExitWorkflow.objects.all_orgs().filter(employee=victim).exists()
+        assert Employee.objects.all_orgs().get(pk=victim.pk).status == before
 
 
 def test_submit_resignation_refuses_another_organizations_employee(org_a, org_b):

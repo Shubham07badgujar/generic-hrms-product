@@ -73,11 +73,16 @@ def test_an_organization_overrides_field_by_field(two_companies, settings):
     """
     from apps.organization.models import OrgEmailConfig
 
+    from core.middleware import acting_as
+
     settings.EMAIL_HOST = "smtp.deployment.example"
     organization, _ = two_companies
-    OrgEmailConfig.objects.create(
-        organization=organization, from_email="people@northwind.example"
-    )
+    # Written bound to the organization it configures: the row is
+    # organization-owned, and a confined connection writes only its own.
+    with acting_as(None, organization=organization):
+        OrgEmailConfig.objects.create(
+            organization=organization, from_email="people@northwind.example"
+        )
 
     config = email_config(organization)
     assert config.from_email == "people@northwind.example"
@@ -91,14 +96,17 @@ def test_one_organizations_mail_settings_never_reach_another(two_companies):
     """
     from apps.organization.models import OrgEmailConfig
 
+    from core.middleware import acting_as
+
     first, second = two_companies
-    OrgEmailConfig.objects.create(
-        organization=first,
-        host="smtp.northwind.example",
-        username="northwind",
-        password="northwind-secret",
-        from_email="people@northwind.example",
-    )
+    with acting_as(None, organization=first):
+        OrgEmailConfig.objects.create(
+            organization=first,
+            host="smtp.northwind.example",
+            username="northwind",
+            password="northwind-secret",
+            from_email="people@northwind.example",
+        )
 
     theirs = email_config(first)
     assert theirs.host == "smtp.northwind.example"
@@ -157,14 +165,17 @@ def test_secrets_are_encrypted_at_rest(two_companies):
 
     from apps.organization.models import OrgEmailConfig
 
-    organization, _ = two_companies
-    OrgEmailConfig.objects.create(
-        organization=organization, host="smtp.example", password="plaintext-secret"
-    )
+    from core.middleware import acting_as
 
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT password FROM organization_orgemailconfig")
-        stored = cursor.fetchone()[0]
+    organization, _ = two_companies
+    with acting_as(None, organization=organization):
+        OrgEmailConfig.objects.create(
+            organization=organization, host="smtp.example", password="plaintext-secret"
+        )
+
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT password FROM organization_orgemailconfig")
+            stored = cursor.fetchone()[0]
 
     assert stored, "nothing was stored at all"
     assert "plaintext-secret" not in str(stored)

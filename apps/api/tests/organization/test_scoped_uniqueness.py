@@ -153,8 +153,12 @@ def test_each_organization_gets_its_own_default_shift_rule(two_orgs):
 
     # Counted ACROSS organizations on purpose -- the whole claim is that two
     # rows now coexist where the old constraint allowed one. Attendance filters
-    # at the manager, so a deliberate cross-organization count has to say so.
-    assert ShiftRule.objects.all_orgs().filter(location__isnull=True).count() == 2
+    # at the manager AND the database confines the connection, so a deliberate
+    # cross-organization count has to say so twice over.
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        assert ShiftRule.objects.all_orgs().filter(location__isnull=True).count() == 2
 
     with acting_as(None, organization=a):
         with pytest.raises(IntegrityError), transaction.atomic():

@@ -50,7 +50,11 @@ def worlds(media, org_a, org_b):
 def _counts(organization) -> dict[str, int]:
     from apps.platform.services.lifecycle import _count
 
-    return {m._meta.label: _count(m, organization) for m in _organization_tables()}
+    from .conftest import across_organizations
+
+    # Ground truth for the assertions below, so it reads as the platform does.
+    with across_organizations():
+        return {m._meta.label: _count(m, organization) for m in _organization_tables()}
 
 
 def _archived_long_ago(organization):
@@ -123,30 +127,39 @@ def test_the_audit_trail_survives_scrubbed(worlds):
     """
     from apps.audit.models import AuditLog
 
+    from .conftest import across_organizations
+
     a, b = worlds
-    b_trail = list(
-        AuditLog.objects.filter(organization=b.organization).values_list("pk", "after")
-    )
-    before = AuditLog.objects.filter(organization=a.organization).count()
+    # Comparing two organizations' trails, before and after a purge, is the
+    # whole test -- so it reads as the platform does throughout.
+    with across_organizations():
+        b_trail = list(
+            AuditLog.objects.filter(organization=b.organization).values_list("pk", "after")
+        )
+        before = AuditLog.objects.filter(organization=a.organization).count()
     assert before > 0, "the builder should have produced an audit trail"
 
     _archived_long_ago(a.organization)
     _purge(a.organization)
 
-    trail = AuditLog.objects.filter(organization=a.organization)
-    assert trail.count() == before + 1, "rows were lost, or more than one was added"
-    terminal = trail.get(after__event="organization_purged")
+    with across_organizations():
+        trail = list(AuditLog.objects.filter(organization=a.organization))
+        b_after = list(
+            AuditLog.objects.filter(organization=b.organization).values_list("pk", "after")
+        )
+    assert len(trail) == before + 1, "rows were lost, or more than one was added"
+    terminal = next(row for row in trail if (row.after or {}).get("event") == "organization_purged")
     assert terminal.after["rows_deleted"], "the terminal record should count what went"
 
-    for row in trail.exclude(pk=terminal.pk):
+    for row in trail:
+        if row.pk == terminal.pk:
+            continue
         assert row.before is None and row.after is None, f"payload survived on {row.pk}"
         assert row.entity_label == "" and row.reason == "" and row.metadata == {}
         assert row.subject_employee_id is None
         assert row.entity_type and row.entity_id, "the WHAT must survive"
 
-    assert list(
-        AuditLog.objects.filter(organization=b.organization).values_list("pk", "after")
-    ) == b_trail, "purging A touched B's trail"
+    assert b_after == b_trail, "purging A touched B's trail"
 
 
 def test_the_files_go_after_commit_and_only_this_organizations(
@@ -275,11 +288,16 @@ def _cancelled(organization, *, days_ago: int):
     from apps.organization.models import OrgStatus
     from apps.platform.models import Plan, Subscription
 
-    plan = Plan.objects.create(code=f"p-{organization.slug}", name="Test")
-    Subscription.objects.create(
-        organization=organization, plan=plan, status="cancelled",
-        cancelled_at=timezone.now() - dt.timedelta(days=days_ago),
-    )
+    from .conftest import across_organizations
+
+    # A subscription is the PLATFORM's row about a customer -- read-only to the
+    # customer's own role -- so the fixture writes it the way billing does.
+    with across_organizations():
+        plan = Plan.objects.create(code=f"p-{organization.slug}", name="Test")
+        Subscription.objects.create(
+            organization=organization, plan=plan, status="cancelled",
+            cancelled_at=timezone.now() - dt.timedelta(days=days_ago),
+        )
     organization.status = OrgStatus.CANCELLED
     organization.save(update_fields=["status", "updated_at"])
 
@@ -306,7 +324,10 @@ def test_archive_after_the_window_is_a_status_change_and_nothing_else(worlds):
     assert a.organization.status == OrgStatus.ARCHIVED
     assert a.organization.archived_at is not None
     assert _counts(a.organization) == before, "archiving deleted something"
-    entry = AuditLog.objects.get(organization=a.organization, after__event="archived")
+    from .conftest import across_organizations
+
+    with across_organizations():
+        entry = AuditLog.objects.get(organization=a.organization, after__event="archived")
     assert entry.reason == "Contract ended"
 
 

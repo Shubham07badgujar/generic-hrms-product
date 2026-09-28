@@ -660,7 +660,7 @@ class MetricSnapshot(OrgOwnedModel):
 ```
 `AuditAction`: `CREATE · UPDATE · DELETE · APPROVE · REJECT · OVERRIDE · REVERSE · ALLOCATE · RETURN · LOGIN · LOGIN_FAILED · ACCESS_PII · EXPORT · PERMISSION_CHANGE · ROLE_CHANGE · CREDENTIAL_ISSUE · CREDENTIAL_VIEW`.
 
-Append-only enforced in `save()`/`delete()` **and** by `REVOKE UPDATE, DELETE ON audit_auditlog` from the application DB role.
+Append-only enforced in `save()`/`delete()` **and** at the database (`apps/dbguard` 0005-0006, development). Note what is revoked and what is not: **DELETE and TRUNCATE** are revoked from the runtime role, while **UPDATE is kept** -- purge scrubs an organization's audit payloads with a queryset `UPDATE` (`apps/audit/purge.py`), which is the one sanctioned rewrite. A `BEFORE UPDATE` trigger makes that UPDATE scrub-only: the identity of an event (organization, action, resource, entity, timestamp, request id) is immutable, and payload may be erased but never replaced. Revoking UPDATE as well, as an earlier draft of this document said, would have broken purge.
 
 ---
 

@@ -23,6 +23,8 @@ stamps.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import logging
 
 from django.db import transaction
@@ -31,6 +33,57 @@ from django.utils import timezone
 from core.api.exceptions import BusinessRuleError
 
 logger = logging.getLogger("hrms.platform")
+
+
+@contextmanager
+def _bound(organization):
+    """
+    Bind the organization a seat question is ASKED about, for its own reads.
+
+    RELEASE 2, and this one is load-bearing. `Subscription` carries row-level
+    security, and both seat functions treat "no subscription" as UNLIMITED --
+    correctly, for a self-hosted deployment that never bought seats. Read with
+    the wrong organization bound, or none, the row is simply invisible, so the
+    seat limit would stop being enforced and nothing would say so. A fail-OPEN
+    in the billing control, reached from a hire that is otherwise perfectly
+    bound. The organization is an argument here, so this states it.
+    """
+    from core.middleware import _current_org, set_current_org_id
+
+    token = set_current_org_id(_organization_id(organization))
+    try:
+        yield
+    finally:
+        _current_org.reset(token)
+
+
+def _platform_work(reason):
+    """
+    Mark a function as DEPLOYMENT-level: it administers an organization from
+    outside, so it runs through the one named door rather than depending on
+    whichever caller got there (the console, a management command, a test).
+
+    Release 2: the runtime role is confined to the bound organization, and
+    these functions are handed the organization as an argument precisely
+    because they act on it from the platform side. Without this they would
+    read empty plans and write refused rows -- silently, in the plan_purge
+    case, which is the worst way for a purge to be wrong.
+    """
+    from functools import wraps
+
+    def decorate(fn):
+        @wraps(fn)
+        def run(*args, **kwargs):
+            from django.db import transaction
+
+            from core.access.platform_bypass import platform_bypass
+
+            with transaction.atomic(), platform_bypass(reason=reason, system=True):
+                return fn(*args, **kwargs)
+
+        return run
+
+    return decorate
 
 
 class SubscriptionError(Exception):
@@ -103,16 +156,17 @@ def seats_remaining(organization) -> int | None:
     """
     from apps.platform.models import Subscription
 
-    subscription = (
-        Subscription.objects.filter(
-            organization_id=_organization_id(organization), is_active=True
+    with _bound(organization):
+        subscription = (
+            Subscription.objects.filter(
+                organization_id=_organization_id(organization), is_active=True
+            )
+            .select_related("plan")
+            .first()
         )
-        .select_related("plan")
-        .first()
-    )
-    if subscription is None or subscription.employee_limit is None:
-        return None
-    used = active_employee_count(_organization_id(organization))
+        if subscription is None or subscription.employee_limit is None:
+            return None
+        used = active_employee_count(_organization_id(organization))
     return max(subscription.employee_limit - used, 0)
 
 
@@ -139,20 +193,21 @@ def reserve_seats(organization, *, count: int = 1):
     # granted the organization every feature. A row that is gone for one
     # question and present for another is the kind of disagreement nobody
     # finds until a customer is stuck.
-    subscription = (
-        Subscription.objects.select_for_update()
-        .filter(organization_id=_organization_id(organization), is_active=True)
-        .select_related("plan")
-        .first()
-    )
-    if subscription is None:
-        return None
+    with _bound(organization):
+        subscription = (
+            Subscription.objects.select_for_update()
+            .filter(organization_id=_organization_id(organization), is_active=True)
+            .select_related("plan")
+            .first()
+        )
+        if subscription is None:
+            return None
 
-    limit = subscription.employee_limit
-    if limit is None:
-        return subscription
+        limit = subscription.employee_limit
+        if limit is None:
+            return subscription
 
-    current = active_employee_count(_organization_id(organization))
+        current = active_employee_count(_organization_id(organization))
     if current + count > limit:
         raise SeatLimitReached(limit=limit, current=current, requested=count)
     return subscription
@@ -202,11 +257,18 @@ def status_after_setup(organization) -> str:
     from apps.organization.models import OrgStatus
     from apps.platform.models import Subscription
 
-    subscription = (
-        Subscription.objects.filter(organization=organization, is_active=True)
-        .only("status")
-        .first()
-    )
+    # Bound to the organization being asked about, for the same reason as the
+    # seat check: "no subscription" is a meaningful answer here (ACTIVE, for a
+    # self-hosted deployment), so an invisible row would be read as a sold
+    # answer. A customer finishing setup mid-trial would be marked ACTIVE
+    # while their subscription still said `trialing` -- the exact disagreement
+    # this function was written to end.
+    with _bound(organization):
+        subscription = (
+            Subscription.objects.filter(organization=organization, is_active=True)
+            .only("status")
+            .first()
+        )
     if subscription is None:
         return OrgStatus.ACTIVE
     implied = _ORG_STATUS_FOR.get(str(subscription.status))
@@ -250,6 +312,7 @@ def _apply_to_organization(subscription, *, actor=None):
 
 
 @transaction.atomic
+@_platform_work("billing: start a subscription")
 def start_subscription(organization, *, plan, actor=None, trial_days: int | None = 14):
     """The trial a newly provisioned organization starts on."""
     from apps.audit.events import record_event
@@ -287,6 +350,7 @@ def start_subscription(organization, *, plan, actor=None, trial_days: int | None
 
 
 @transaction.atomic
+@_platform_work("billing: change a customer plan")
 def change_plan(organization, *, plan, actor=None, reason: str = "", force: bool = False):
     """
     Move a customer to a different plan.
@@ -357,6 +421,7 @@ def change_plan(organization, *, plan, actor=None, reason: str = "", force: bool
 
 
 @transaction.atomic
+@_platform_work("billing: move the commercial state")
 def set_status(organization, *, status, actor=None, reason: str = ""):
     """
     Move the commercial state, and let it write the access state.

@@ -198,11 +198,16 @@ def test_reads_stop_once_the_grace_window_expires(company, plans):
     _payroll_run(company.organization, company.admin)
     change_plan(company.organization, plan=plans["starter"])
 
-    subscription = Subscription.objects.get(organization=company.organization)
-    subscription.features_narrowed_at = timezone.now() - dt.timedelta(
-        days=subscription.read_only_grace_days + 1
-    )
-    subscription.save(update_fields=["features_narrowed_at"])
+    from tests.conftest import across_organizations
+
+    # Ageing the grace window out is a billing-side change to the platform's
+    # own row, so it is made the way billing makes one.
+    with across_organizations():
+        subscription = Subscription.objects.get(organization=company.organization)
+        subscription.features_narrowed_at = timezone.now() - dt.timedelta(
+            days=subscription.read_only_grace_days + 1
+        )
+        subscription.save(update_fields=["features_narrowed_at"])
 
     client = _client(company.admin)
     response = client.get("/api/v1/payroll/runs/")
@@ -234,7 +239,10 @@ def test_a_module_never_included_has_no_grace_window(plans):
 
     from apps.platform.models import Subscription
 
-    subscription = Subscription.objects.get(organization=result.organization)
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        subscription = Subscription.objects.get(organization=result.organization)
     assert subscription.features_narrowed_at is None, (
         "nothing narrowed, so no window should have opened"
     )

@@ -268,35 +268,39 @@ def test_every_shipped_subtask_runs_for_one_organization_without_touching_the_ot
     from apps.employees.models import Employee
     from apps.recruitment.models import Candidate
 
+    from tests.conftest import across_organizations
+
     task = _load(module_name, attribute)
 
-    before_b = {
-        "employees": sorted(
-            Employee.objects.all_orgs()
-            .filter(organization=org_b.organization)
-            .values_list("pk", "updated_at")
-        ),
-        "candidates": sorted(
-            Candidate.objects.all_orgs()
-            .filter(organization=org_b.organization)
-            .values_list("pk", "first_name")
-        ),
-    }
+    with across_organizations():
+        before_b = {
+            "employees": sorted(
+                Employee.objects.all_orgs()
+                .filter(organization=org_b.organization)
+                .values_list("pk", "updated_at")
+            ),
+            "candidates": sorted(
+                Candidate.objects.all_orgs()
+                .filter(organization=org_b.organization)
+                .values_list("pk", "first_name")
+            ),
+        }
 
     task(org_a.organization.pk, **kwargs)
 
-    after_b = {
-        "employees": sorted(
-            Employee.objects.all_orgs()
-            .filter(organization=org_b.organization)
-            .values_list("pk", "updated_at")
-        ),
-        "candidates": sorted(
-            Candidate.objects.all_orgs()
-            .filter(organization=org_b.organization)
-            .values_list("pk", "first_name")
-        ),
-    }
+    with across_organizations():
+        after_b = {
+            "employees": sorted(
+                Employee.objects.all_orgs()
+                .filter(organization=org_b.organization)
+                .values_list("pk", "updated_at")
+            ),
+            "candidates": sorted(
+                Candidate.objects.all_orgs()
+                .filter(organization=org_b.organization)
+                .values_list("pk", "first_name")
+            ),
+        }
 
     assert after_b == before_b, (
         f"{attribute} ran for {org_a.slug} and changed rows in {org_b.slug}"

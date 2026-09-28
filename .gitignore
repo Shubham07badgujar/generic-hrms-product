@@ -64,3 +64,6 @@ client_secret_*.json
 *service_account*.json
 google-forms-token.json
 .hrms-secrets/
+
+# Generic HRMS dedicated dev Postgres credentials (also covered by .env above).
+dev/postgres/.env

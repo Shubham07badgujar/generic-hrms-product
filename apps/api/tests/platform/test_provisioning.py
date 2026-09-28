@@ -97,12 +97,15 @@ def test_every_configuration_seed_ran_for_the_new_organization():
     result = _provision()
     org = result.organization
 
-    for model in (
-        Role, LeaveType, DocumentType, LetterTemplate,
-        HiringWorkflow, ClearanceTemplate, ShiftRule,
-    ):
-        rows = model.objects.all_orgs().filter(organization=org).count()
-        assert rows, f"{model._meta.label} got no rows for the new organization"
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        for model in (
+            Role, LeaveType, DocumentType, LetterTemplate,
+            HiringWorkflow, ClearanceTemplate, ShiftRule,
+        ):
+            rows = model.objects.all_orgs().filter(organization=org).count()
+            assert rows, f"{model._meta.label} got no rows for the new organization"
 
     assert set(result.seeded) == {key for key, _what, _fn in CONFIG_SEEDS}
 
@@ -123,7 +126,10 @@ def test_the_administrator_holds_their_own_organizations_admin_role():
 
     # Across every organization on purpose: `.get()` then also proves the
     # administrator holds exactly ONE grant anywhere, not one per company.
-    grant = UserRole.objects.all_orgs().get(user=second.admin)
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        grant = UserRole.objects.all_orgs().select_related("role").get(user=second.admin)
     assert grant.role.organization_id == second.organization.pk
     assert grant.role.organization_id != first.organization.pk
 
@@ -138,14 +144,17 @@ def test_two_organizations_can_hold_the_same_business_keys():
         admin_email="admin@aperture.example",
     )
 
-    codes = {
-        org.pk: set(
-            LeaveType.objects.all_orgs()
-            .filter(organization=org)
-            .values_list("code", flat=True)
-        )
-        for org in (first.organization, second.organization)
-    }
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        codes = {
+            org.pk: set(
+                LeaveType.objects.all_orgs()
+                .filter(organization=org)
+                .values_list("code", flat=True)
+            )
+            for org in (first.organization, second.organization)
+        }
     assert codes[first.organization.pk] == codes[second.organization.pk]
     assert codes[first.organization.pk], "no leave types were seeded at all"
 
@@ -244,7 +253,10 @@ def test_the_seed_commands_run_against_a_named_organization():
     result = _provision()
     slug = result.organization.slug
 
-    LeaveType.objects.all_orgs().filter(organization=result.organization).delete()
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        LeaveType.objects.all_orgs().filter(organization=result.organization).delete()
 
     for command in (
         "seed_leave", "seed_onboarding", "seed_workflows",
@@ -252,9 +264,10 @@ def test_the_seed_commands_run_against_a_named_organization():
     ):
         call_command(command, "--organization", slug, verbosity=0)
 
-    assert LeaveType.objects.all_orgs().filter(
-        organization=result.organization
-    ).exists()
+    with across_organizations():
+        assert LeaveType.objects.all_orgs().filter(
+            organization=result.organization
+        ).exists()
 
 
 def test_a_seed_command_refuses_to_guess_between_organizations():
@@ -322,12 +335,19 @@ def test_the_command_provisions_a_customer(db, settings):
         verbosity=0,
     )
 
+    from tests.conftest import across_organizations
+
     organization = Organization.objects.get(slug="aperture-systems")
     assert organization.status == OrgStatus.PENDING_SETUP
-    membership = OrganizationMembership.objects.get(organization=organization)
+    with across_organizations():
+        membership = OrganizationMembership.objects.select_related("user").get(
+            organization=organization
+        )
     assert membership.user.email == "admin@aperture.example"
     assert membership.user.must_change_password
-    assert Role.objects.all_orgs().filter(organization=organization).exists()
+
+    with across_organizations():
+        assert Role.objects.all_orgs().filter(organization=organization).exists()
 
 
 def test_the_command_refuses_rather_than_traces_back(db):

@@ -310,14 +310,25 @@ def invite_for_token(token: str) -> InterviewSlotInvite:
     the token is a globally unique capability, and it is the only thing that
     knows which organization the invite belongs to.
     """
-    invite = (
-        InterviewSlotInvite.objects.all_orgs()
-        .select_related(
-            "application__job_opening", "stage", "candidate"
+    from django.db import transaction
+
+    from core.access.platform_bypass import platform_bypass
+
+    # Release 2: same named door as `public_intake.job_for_token`, and for the
+    # same reason -- the anonymous caller has no organization bound, and the
+    # token is the only thing that knows which one applies.
+    with transaction.atomic(), platform_bypass(
+        reason="public interview link: resolve the token to its invitation",
+        system=True,
+    ):
+        invite = (
+            InterviewSlotInvite.objects.all_orgs()
+            .select_related(
+                "application__job_opening", "stage", "candidate"
+            )
+            .filter(token=token, is_active=True)
+            .first()
         )
-        .filter(token=token, is_active=True)
-        .first()
-    )
     if invite is None:
         from django.http import Http404
 

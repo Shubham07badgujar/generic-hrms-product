@@ -28,19 +28,36 @@ def active_membership(user):
 
     One query, and the `uniq_one_active_membership` constraint is what makes
     `.first()` unambiguous rather than arbitrary.
+
+    RELEASE 2. This is the query that has to work when NOTHING is bound --
+    it is what establishes the organization, so it cannot require one. The
+    membership table's policy therefore has a second arm: a row is visible to
+    the user it belongs to (`app.user_id`), independently of any organization.
+    Sign-in reaches here while the request is still anonymous, so the user
+    being asked about is bound for the duration of this one query. Binding the
+    subject of the question is not a privilege escalation: it reveals this
+    user's own membership row and nothing else, which is exactly what the
+    policy allows.
     """
     from .models import MembershipStatus, OrganizationMembership
 
     user_id = getattr(user, "pk", None)
     if user_id is None:
         return None
-    return (
-        OrganizationMembership.objects.filter(
-            user_id=user_id, status=MembershipStatus.ACTIVE, is_active=True
+
+    from core.middleware import _current_user
+
+    token = _current_user.set(user)
+    try:
+        return (
+            OrganizationMembership.objects.filter(
+                user_id=user_id, status=MembershipStatus.ACTIVE, is_active=True
+            )
+            .select_related("organization")
+            .first()
         )
-        .select_related("organization")
-        .first()
-    )
+    finally:
+        _current_user.reset(token)
 
 
 def organization_of(user):
@@ -61,16 +78,37 @@ def role_grants(user):
     which that is -- so the answer does not depend on whatever happens to be
     bound, including another organization's.
 
-    No membership, no grants: an empty queryset, never every grant this user
+    No membership, no grants: an empty list, never every grant this user
     holds anywhere.
+
+    Returns a LIST, not a queryset, and that is deliberate: from release 2 the
+    runtime connects as a role that row-level security applies to, so these
+    rows are only visible while their organization is bound. The membership
+    below is what says which one, and the binding lasts exactly as long as the
+    query -- a lazy queryset handed back to a caller would be evaluated after
+    the binding had gone, and would quietly come back empty.
     """
     from apps.accounts.models import UserRole
 
-    grants = UserRole.objects.all_orgs().filter(is_active=True, role__is_active=True)
+    from core.middleware import _current_org, set_current_org_id
+
     membership = active_membership(user)
     if membership is None:
-        return grants.none()
-    return grants.filter(user_id=user.pk, organization_id=membership.organization_id)
+        return []
+    token = set_current_org_id(membership.organization_id)
+    try:
+        return list(
+            UserRole.objects.all_orgs()
+            .filter(
+                is_active=True,
+                role__is_active=True,
+                user_id=user.pk,
+                organization_id=membership.organization_id,
+            )
+            .select_related("role")
+        )
+    finally:
+        _current_org.reset(token)
 
 
 def is_member(user, organization) -> bool:
@@ -89,12 +127,22 @@ def is_member(user, organization) -> bool:
 
     from .models import MembershipStatus, OrganizationMembership
 
-    return OrganizationMembership.objects.filter(
-        user_id=user_id,
-        organization_id=organization_id,
-        status=MembershipStatus.ACTIVE,
-        is_active=True,
-    ).exists()
+    from core.middleware import _current_org, set_current_org_id
+
+    # Bound to the organization being ASKED about, for this one read: the
+    # guard is called from addressing paths that may have another organization
+    # bound, or none, and "no row visible" and "not a member" are different
+    # facts that must not be confused with each other.
+    token = set_current_org_id(organization_id)
+    try:
+        return OrganizationMembership.objects.filter(
+            user_id=user_id,
+            organization_id=organization_id,
+            status=MembershipStatus.ACTIVE,
+            is_active=True,
+        ).exists()
+    finally:
+        _current_org.reset(token)
 
 
 def member_users(organization):
@@ -113,10 +161,28 @@ def member_users(organization):
 
     from .models import MembershipStatus, OrganizationMembership
 
-    member_ids = OrganizationMembership.objects.filter(
-        organization_id=organization_id,
-        status=MembershipStatus.ACTIVE,
-        is_active=True,
-    ).values_list("user_id", flat=True)
+    from core.middleware import _current_org, set_current_org_id
+
+    # RELEASE 2. Two things matter here. The membership rows belong to the
+    # organization named in the ARGUMENT, and the database shows a confined
+    # connection only the bound one -- so this binds what it was asked about,
+    # for its own read. And the ids are MATERIALISED inside that binding: left
+    # as a lazy subquery they would be evaluated by whoever consumes the
+    # result, after the binding had gone, and notification addressing would
+    # quietly find nobody.
+    #
+    # `User` is global (no policy), so the queryset returned is safe to
+    # evaluate anywhere, which is what its callers do.
+    token = set_current_org_id(organization_id)
+    try:
+        member_ids = list(
+            OrganizationMembership.objects.filter(
+                organization_id=organization_id,
+                status=MembershipStatus.ACTIVE,
+                is_active=True,
+            ).values_list("user_id", flat=True)
+        )
+    finally:
+        _current_org.reset(token)
 
     return User.objects.filter(pk__in=member_ids, is_active=True)

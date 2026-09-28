@@ -37,6 +37,7 @@ from apps.organization.demo import HEALTHCARE, PROFILES, RETAIL, TECHNOLOGY, get
 
 
 @pytest.mark.parametrize("key", sorted(PROFILES))
+
 def test_every_profile_satisfies_the_rules_its_people_will_be_created_under(key):
     """
     The validator is the point of this test, and the validator is not the
@@ -189,22 +190,30 @@ def test_retail_is_provisioned_live_and_on_an_expiring_trial(plans, settings, tm
     # assertion that the seeded company is actually complete.
     assert organization.status == OrgStatus.TRIAL
 
-    subscription = Subscription.objects.get(organization=organization, is_active=True)
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        subscription = Subscription.objects.select_related("plan").get(
+            organization=organization, is_active=True
+        )
     assert subscription.plan.code == RETAIL.plan_code
     assert subscription.status == "trialing"
     assert subscription.ends_at is not None
     days_left = (subscription.ends_at - timezone.now()).days
     assert 0 <= days_left <= 3, f"the trial should be days from expiry, not {days_left}"
 
-    assert Employee.objects.all_orgs().filter(organization=organization).count() == len(
-        RETAIL.people
-    )
-    assert Department.objects.all_orgs().filter(organization=organization).count() == len(
-        RETAIL.departments
-    )
-    assert Location.objects.all_orgs().filter(organization=organization).count() == len(
-        RETAIL.locations
-    )
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        assert Employee.objects.all_orgs().filter(
+            organization=organization
+        ).count() == len(RETAIL.people)
+        assert Department.objects.all_orgs().filter(
+            organization=organization
+        ).count() == len(RETAIL.departments)
+        assert Location.objects.all_orgs().filter(
+            organization=organization
+        ).count() == len(RETAIL.locations)
 
 
 @pytest.mark.django_db
@@ -246,13 +255,19 @@ def test_two_demo_companies_are_two_customers(plans, settings, tmp_path):
     assert retail_people.isdisjoint(technology_people)
 
     # And the plans really did come out different, which is what makes the two
-    # worth having side by side.
+    # worth having side by side. Read in ONE platform-side block: a
+    # subscription is the platform's row about a customer, not the customer's.
     from apps.platform.models import Subscription
 
-    assert (
-        Subscription.objects.get(organization=retail, is_active=True).plan.code
-        != Subscription.objects.get(organization=technology, is_active=True).plan.code
-    )
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        plans_by_slug = dict(
+            Subscription.objects.filter(
+                organization__in=[retail, technology], is_active=True
+            ).values_list("organization__slug", "plan__code")
+        )
+    assert plans_by_slug[RETAIL.slug] != plans_by_slug[TECHNOLOGY.slug]
 
 
 @pytest.mark.django_db
@@ -286,9 +301,12 @@ def test_removing_one_demo_company_leaves_the_other_intact(plans, settings, tmp_
     # everywhere in this product outside a purge, so the rows remain as
     # inactive records -- and inactive is what seat limits and headcount
     # measure against, so it is the claim worth asserting.
-    assert not Employee.objects.all_orgs().filter(
-        organization=retail, is_active=True
-    ).exists()
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        assert not Employee.objects.all_orgs().filter(
+            organization=retail, is_active=True
+        ).exists()
     survivors = list(
         User.objects.filter(email__endswith=f"@{RETAIL.domain}").values_list(
             "email", flat=True
@@ -319,9 +337,12 @@ def test_a_removed_company_can_be_seeded_again(plans, settings, tmp_path):
     retail = Organization.objects.get(slug=RETAIL.slug)
     # Active only: the first roster is still there as soft-deleted records,
     # which is the product's deletion rule, not a leftover.
-    assert Employee.objects.all_orgs().filter(
-        organization=retail, is_active=True
-    ).count() == len(RETAIL.people)
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        assert Employee.objects.all_orgs().filter(
+            organization=retail, is_active=True
+        ).count() == len(RETAIL.people)
 
 
 @pytest.mark.django_db

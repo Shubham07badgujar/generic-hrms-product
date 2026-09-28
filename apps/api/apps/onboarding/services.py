@@ -74,6 +74,23 @@ def handbook_acknowledgement_pending(user) -> bool:
     the acknowledgement itself is the ordinary item completion, which the
     employee performs on their own item (ONBOARDING EDIT at SELF).
     """
+    # BOUND to the user's own organization. The note below explains why this
+    # reads through the employee's own checklist; release 2 adds the other
+    # half, because `/api/v1/me/` binds no organization and the database now
+    # shows a confined connection nothing at all -- which would report the
+    # acknowledgement as already done.
+    from apps.organization.membership import active_membership
+    from core.middleware import organization_scope
+
+    membership = active_membership(user)
+    if membership is None:
+        return False
+
+    with organization_scope(membership.organization_id):
+        return _handbook_pending(user)
+
+
+def _handbook_pending(user) -> bool:
     employee = getattr(user, "employee", None)
     if employee is None:
         return False

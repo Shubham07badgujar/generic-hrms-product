@@ -205,7 +205,10 @@ def test_an_event_in_one_organization_addresses_nobody_in_the_other(
     assert a_members and b_members, "both organizations need people for this to prove anything"
     assert not (a_members & b_members), "the fixtures must not share users"
 
-    produced = list(Notification.objects.all_orgs().filter(recipient_id__in=b_members))
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        produced = list(Notification.objects.all_orgs().filter(recipient_id__in=b_members))
     assert produced == [], (
         f"{event_name} in {org_a.slug} addressed {len(produced)} "
         f"notification(s) to members of {org_b.slug}"
@@ -236,8 +239,14 @@ def test_every_row_an_event_writes_belongs_to_the_acting_organization(
     with acting_as(org_a.admin, organization=org_a.organization):
         FAN_OUT_EVENTS[event_name](org_a, org_b)
 
+    from tests.conftest import across_organizations
+
     a_members = _members_of(org_a)
-    written = list(Notification.objects.all_orgs().all())
+    with across_organizations():
+        written = list(Notification.objects.all_orgs().all())
+        deliveries = list(
+            NotificationDelivery.objects.all_orgs().select_related("notification")
+        )
 
     # The positive control, and the reason this assertion is here rather than
     # in a separate test: without it every case below would also pass against
@@ -252,7 +261,7 @@ def test_every_row_an_event_writes_belongs_to_the_acting_organization(
         assert notification.organization_id == org_a.organization.pk
         assert notification.recipient_id in a_members
 
-    for delivery in NotificationDelivery.objects.all_orgs().all():
+    for delivery in deliveries:
         assert delivery.organization_id == delivery.notification.organization_id
 
 

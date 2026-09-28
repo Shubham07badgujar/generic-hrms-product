@@ -37,6 +37,7 @@ pretending it checked. Both are worse than saying "advisory" out loud.
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 
@@ -62,6 +63,28 @@ def _scoped(model, organization):
     from core.models import org_scoped
 
     return org_scoped(model, organization)
+
+
+@contextmanager
+def _bound(organization):
+    """
+    Bind the organization these functions are HANDED, for their own reads.
+
+    Every step below counts rows in one organization, and from release 2 the
+    database shows a confined connection only the bound one. The wizard is
+    read from three places -- the customer's own screen (bound), the platform
+    console (a platform request), and provisioning right after it creates the
+    organization (bound to nothing yet) -- so the service states which
+    organization it means rather than inheriting an answer.
+    """
+    from core.middleware import _current_org, set_current_org_id
+
+    organization_id = getattr(organization, "pk", organization)
+    token = set_current_org_id(organization_id)
+    try:
+        yield
+    finally:
+        _current_org.reset(token)
 
 
 def _has_profile(organization) -> bool:
@@ -231,17 +254,18 @@ def setup_state(organization) -> dict:
     """Every step, whether it is done, and what still blocks finishing."""
     from apps.organization.models import OrgStatus
 
-    steps = [
-        {
-            "key": step.key,
-            "title": step.title,
-            "required": step.required,
-            "route": step.route,
-            "detail": step.detail,
-            "complete": bool(step.satisfied(organization)),
-        }
-        for step in SETUP_STEPS
-    ]
+    with _bound(organization):
+        steps = [
+            {
+                "key": step.key,
+                "title": step.title,
+                "required": step.required,
+                "route": step.route,
+                "detail": step.detail,
+                "complete": bool(step.satisfied(organization)),
+            }
+            for step in SETUP_STEPS
+        ]
     blocking = [s["key"] for s in steps if s["required"] and not s["complete"]]
     return {
         "status": organization.status,
@@ -273,9 +297,12 @@ def finish_setup(organization, *, actor=None):
             f"pending setup. There is nothing to finish."
         )
 
-    outstanding = [
-        step for step in SETUP_STEPS if step.required and not step.satisfied(organization)
-    ]
+    with _bound(organization):
+        outstanding = [
+            step
+            for step in SETUP_STEPS
+            if step.required and not step.satisfied(organization)
+        ]
     if outstanding:
         raise SetupError(
             "Setup is not finished: "

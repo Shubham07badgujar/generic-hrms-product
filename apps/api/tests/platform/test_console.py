@@ -233,7 +233,10 @@ def test_clearing_an_override_clears_its_reason(console, company):
     )
     assert cleared.status_code == 200, cleared.content[:250]
 
-    subscription = Subscription.objects.get(organization=company.organization)
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        subscription = Subscription.objects.get(organization=company.organization)
     assert subscription.employee_limit_override is None
     assert subscription.override_reason == ""
     assert subscription.employee_limit == 25, "back to the plan's own limit"
@@ -253,14 +256,19 @@ def test_every_platform_write_is_audited_against_the_customer(console, company):
         format="json",
     )
 
-    entry = (
-        AuditLog.objects.filter(
-            organization=company.organization, entity_type="platform.Subscription"
+    from tests.conftest import across_organizations
+
+    # The row belongs to the CUSTOMER's trail, and this test holds no
+    # organization, so it reads the way the console itself does.
+    with across_organizations():
+        entry = (
+            AuditLog.objects.filter(
+                organization=company.organization, entity_type="platform.Subscription"
+            )
+            .order_by("-occurred_at")
+            .first()
         )
-        .order_by("-occurred_at")
-        .first()
-    )
-    assert entry is not None
+    assert entry is not None, "the platform write was not audited against the customer"
     assert entry.after["plan"] == "growth"
     assert entry.actor_email == "ops@platform.example"
     assert "Upgraded" in entry.reason
@@ -388,17 +396,23 @@ def test_the_console_provisions_a_customer(console, plans):
     assert body["subscription"]["plan_code"] == "starter"
     assert body["admin_email"] == "admin@aperture.example"
 
+    from tests.conftest import across_organizations
+
     organization = Organization.objects.get(slug="aperture")
-    admin = OrganizationMembership.objects.get(organization=organization).user
+    with across_organizations():
+        admin = OrganizationMembership.objects.get(organization=organization).user
     assert admin.email == "admin@aperture.example"
     assert admin.must_change_password
 
     # The configuration came with it: an administrator lands in a working
     # company, not an empty row.
-    assert Role.objects.all_orgs().filter(organization=organization).count() >= 18
-    assert UserRole.objects.all_orgs().filter(
-        user=admin, role__organization=organization, role__code="admin"
-    ).exists()
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        assert Role.objects.all_orgs().filter(organization=organization).count() >= 18
+        assert UserRole.objects.all_orgs().filter(
+            user=admin, role__organization=organization, role__code="admin"
+        ).exists()
 
 
 def test_provisioning_never_returns_the_temporary_password(console, plans):
@@ -581,7 +595,12 @@ def test_the_new_password_is_in_the_mail_and_nowhere_else(console, invited, mail
     assert password not in response.content.decode()
     from apps.audit.models import AuditLog
 
-    for entry in AuditLog.objects.filter(organization=invited.organization):
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        trail = list(AuditLog.objects.filter(organization=invited.organization))
+    assert trail, "no audit rows at all, so this proves nothing"
+    for entry in trail:
         assert password not in str(entry.after or "")
 
 
@@ -612,13 +631,18 @@ def test_the_resend_is_in_the_customers_audit_trail(console, operator, invited):
     # Looked up by the event, not taken as "the latest row": provisioning wrote
     # an `accounts.User` row for the original invitation moments earlier, and
     # timestamps that close can tie.
-    entries = AuditLog.objects.filter(
-        organization=invited.organization,
-        entity_type="accounts.User",
-        after__event="invitation_reissued",
-    )
-    assert entries.count() == 1
-    assert entries.get().actor_id == operator.pk
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        entries = list(
+            AuditLog.objects.filter(
+                organization=invited.organization,
+                entity_type="accounts.User",
+                after__event="invitation_reissued",
+            )
+        )
+    assert len(entries) == 1
+    assert entries[0].actor_id == operator.pk
 
 
 def test_a_failed_send_is_reported_not_claimed(console, invited, monkeypatch):

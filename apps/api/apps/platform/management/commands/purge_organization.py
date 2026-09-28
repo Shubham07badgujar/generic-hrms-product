@@ -21,7 +21,9 @@ set is deactivated rather than deleted.
 
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import CommandError
+
+from core.access.platform_command import PlatformCommand
 
 from apps.platform.services.lifecycle import (
     LifecycleError,
@@ -31,7 +33,10 @@ from apps.platform.services.lifecycle import (
 )
 
 
-class Command(BaseCommand):
+class Command(PlatformCommand):
+    #: Deployment-level work: see core/access/platform_command.py.
+    platform_reason = "purge an archived organization"
+
     help = "Permanently delete an archived organization's data (irreversible)."
 
     def add_arguments(self, parser):

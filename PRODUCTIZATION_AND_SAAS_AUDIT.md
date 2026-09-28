@@ -60,10 +60,11 @@ reads — which turned out to be exactly right (§6).
 | Nullable-organization tables | 1 (`audit.AuditLog`: platform events belong to no customer) |
 | Models awaiting conversion | 0 — `PENDING_TENANCY` is empty |
 | Deliberate escapes from tenancy in product code | 16 `all_orgs()` call sites, each named and greppable |
-| Build-time structural checks | 16 error classes, `access.E001`–`access.E017` (`E009` unused) |
+| Build-time structural checks | 18 error classes, `access.E001`–`access.E019` (`E009` unused); `E018` holds the composite FKs to the manifest, `E019` is the positive control that stops a check passing on an empty read |
 | Organization-scoped management commands | 14 |
-| Backend tests | 2,223 passing, 10 skipped, 1 failing by design (§11) |
-| Cross-organization attempts in the isolation report | 310 checks, 378 route walks, 0 served |
+| Backend tests | 2,300+ passing, 10 skipped, 1 failing by design (§11); the whole suite now runs as the confined runtime role |
+| Cross-organization attempts in the isolation report | 311 checks, 378 route walks, 0 served |
+| Database-level hardening | 151 composite FKs, RLS on 100 tables, 102 policies, audit DELETE/TRUNCATE revoked — development only (§12) |
 
 ---
 
@@ -108,7 +109,9 @@ not to write.
 
 ## 5. How it is enforced
 
-Five layers, each catching what the others cannot.
+Six layers, each catching what the others cannot. A and F are the bookends:
+the application narrows the query before it is sent, and the database refuses
+what the application should never have asked for.
 
 | Layer | What it covers | How it fails |
 |---|---|---|
@@ -116,7 +119,8 @@ Five layers, each catching what the others cannot.
 | **B. Fail-closed manager** on every organization-owned model | the 257 service sites, Celery, management commands, and DRF's auto-generated relation querysets | **raises** `OrgContextMissing` |
 | **C. Serializer relation scoping** (`ScopedRelationsMixin`) | writable relational fields, deliberately rather than by accident | 400 |
 | **D. Build-time checks** (`access.E001`–`E017`) | code that does not exist yet | fails `manage.py check`, therefore CI and boot |
-| **E. Database composite foreign keys** | raw SQL and bulk paths | **not implemented** — see §12 |
+| **E. Database composite foreign keys** | raw SQL and bulk paths | `IntegrityError` — 151 edges, validated (development; §12) |
+| **F. Row-level security** | anything the confined runtime role can reach, including a query that forgets its filter | returns nothing, or refuses the write (development; §12) |
 
 Two earn their keep above the rest. **B**, because two thirds of the queryset
 surface is in services, and **D**, because it is the only layer protecting code
@@ -143,10 +147,8 @@ looks protected).
 architecture); schema-per-tenant (same "must be set first" property, and the
 failure was in the application layer); per-tenant field encryption keys (the
 key is process-wide, so per-org keys buy the appearance of isolation and none
-of the substance); Postgres RLS **for now** (genuinely the strongest layer, but
-`CONN_MAX_AGE=60` reuses connections and `ATOMIC_REQUESTS=False` leaves no
-natural boundary for `SET LOCAL`, so a half-implementation *causes* the leak it
-prevents — the uniform column layout keeps it addable later).
+of the substance); Postgres RLS **at the time of writing** (see below — it was
+added afterwards, in 2026-09, once the connection-reuse problem had an answer).
 
 ---
 
@@ -386,13 +388,13 @@ Stated plainly, because the gaps are the useful half of an audit.
 | **`finish_setup` vs subscription status** | Fixed (`3f016c5`). Finishing setup lands on the status the subscription implies -- TRIAL during a trial -- instead of ACTIVE unconditionally. |
 | **Resending an invitation** | Done. `POST /platform/organizations/{id}/resend-invitation/` and a console card, over one shared reissue path with the employee route (fresh password, forced change, refresh tokens revoked, mail, audit). **Only while the invitation is unaccepted:** once an administrator has set their own password the route answers 422, because an operator able to reset a working customer administrator would hold a lever over the customer's accounts. The resend is audited in the customer's own trail with the operator as actor. The 14th `all_orgs()` site is the console's `admin_invitation_pending` flag, a subquery beside the existing headcount one. |
 | **Organization export** | Done. `GET /org/export/` returns the whole record as a ZIP of CSVs from an explicit manifest (structure, employees, attendance, leave, payroll), plus `members.csv` and a README. It is the lifecycle's promise kept: until now a CANCELLED organization resolved to a grant-less context, so its customer was locked out of statutory records the moment the subscription ended. **One route, not a read-only API:** it is the single addition to the paths a stopped organization may reach, and it decides for itself -- an Admin of their own organization, operational or cancelled within 90 days; suspended and archived are refused, as is the platform operator. **Withheld by default:** PAN, Aadhaar and bank account numbers (encrypted at rest; a bulk Aadhaar file carries legal risk), named in the README; integration credentials are never exported. Built synchronously in memory -- right at today's sizes; a very large customer would want a background job and a link. Recruitment and the audit trail are not included, and the README says so. |
-| **Layer E: database composite foreign keys** | Not implemented. Raw SQL and bulk paths are covered by the manager and the stamping mixin, not by the database. |
+| **Layer E: database composite foreign keys** | Done in development (`apps/dbguard` 0001-0003, 2026-09-22). 151 organization-aware foreign keys rewritten as `(fk, organization_id)` composites against 41 `UNIQUE (id, organization_id)` targets, added `NOT VALID` then validated, all deferrable like every other FK here. `access.E018` fails the build when a new org-to-org FK arrives without one. **Not deployed:** Generic HRMS has no production environment yet. |
 | **`SupportGrant`** | Done, narrow: configuration-only, customer-approved, 24 hours, requester-only, audited in the customer's trail. Two `all_orgs()` sites, both on the operator's side where no organization exists to bind. Full-read access deferred. |
-| **Database-level append-only audit** | `ARCHITECTURE.md` specifies `REVOKE UPDATE, DELETE ON audit_auditlog` from the application role. Nothing in this repository issues it — not a migration, not the deploy entrypoint. The Python guards hold, but a raw `UPDATE` would succeed. **If it is ever issued**, note that purge scrubs an organization's audit payloads with a queryset `UPDATE` (`apps/audit/purge.py`, the one sanctioned rewrite): the grant would then need to be `REVOKE DELETE` only, or purge would need its own privileged role. |
+| **Database-level append-only audit** | Done in development (`apps/dbguard` 0005-0006, 2026-09-22). It resolved exactly the tension this row anticipated: DELETE and TRUNCATE are revoked from the runtime role, UPDATE is KEPT because purge scrubs payloads, and a `BEFORE UPDATE` trigger makes that UPDATE scrub-only -- identity columns immutable, payload erasable but never rewritten. Deletion is refused by privilege rather than by a trigger, because the test harness truncates as owner. The platform role cannot delete either: BYPASSRLS widens visibility, not privilege. |
 | **Archive and purge** | Done. Archive is a console action (cancelled, after the 90-day export window, reason required). Purge is a server command only, `purge_organization <slug> --confirm <slug>`, a year after archive: one transaction removing every organization-owned row, the memberships and settings, the users' logins and the file subtree; keeping a tombstone organization row, the subscription, and the audit trail with payloads scrubbed. A login that certified a deployment-wide statutory rate set is deactivated rather than deleted, because that record belongs to every customer. |
-| **Postgres RLS** | Deliberately deferred, with the reason recorded above. |
+| **Postgres RLS** | Done in development, in two releases (2026-09-22 and 2026-09-24). Release 1: policies on 100 tables keyed on `app.org_id`/`app.user_id`, set by one execute wrapper (`core/db_context.py`) that reads the ContextVars the application already binds -- so there is no second place to forget. Release 2: the runtime CONNECTS as `generic_hrms_app`, which owns nothing and is therefore subject to those policies; the owner is reserved for migrations, and `manage.py migrate` refuses under any other role. The connection-reuse objection recorded in §5 is answered by binding per statement rather than per request, and by `platform_bypass` using `SET LOCAL ROLE` inside a transaction. **Not deployed.** Five real fail-open bugs surfaced in the process -- see `docs/DB_HARDENING_RESULTS.md`. |
 | **Multi-organization membership** | Schema permits, V1 clamp forbids (§7). |
-| **Statutory disputes** | Four open questions; the gate stays red (§11). |
+| **Statutory disputes** | Four open questions; the gate stays red (§11). Verified from official sources 2026-09-22: Q1 (EPS cap basis) is Rs 1,250 by statutory rounding, and the current rule rounds to paise -- a drafted `pf.v2` fixes it; Q2 (admin-charge minimum) is Rs 500 per establishment per month, per S.O. 2011(E) of 21-5-2018. **Neither is applied:** both await Finance approval. Q3 is unresolved -- the gazetted Finance Act 2025 text and the old-regime slabs could not be obtained from an authoritative source -- and the FY 2026-27 rate set does not exist. |
 | **The isolation script's own creation path** | Done. It provisions its organizations through the service, and that surfaced something hand-built organizations hid: provisioning puts a new customer on the cheapest public plan, which on this deployment switches payroll and reporting off, so the report now selects a plan that disables nothing and refuses to run if none exists. The walk's fixture DATA is still written directly -- it is the target of the proof, not its subject. |
 
 ---
@@ -402,9 +404,12 @@ Stated plainly, because the gaps are the useful half of an audit.
 1. **The escape hatch is the audit surface.** 16 `all_orgs()` call sites in
    product code, each deliberate and each greppable. That number going up
    without review is the thing to watch — `grep -rn all_orgs` is the audit.
-2. **The manager protects the ORM, not raw SQL.** Nothing in this design stops
-   a future `cursor.execute()` from crossing organizations. Layer E and RLS are
-   the answers, and neither is built.
+2. **The manager protects the ORM, not raw SQL.** Layers E and F are the
+   answer and both are now built in development: a raw `cursor.execute()` that
+   crosses organizations is refused by the composite foreign keys, and one that
+   merely forgets its filter sees a single organization. Neither is deployed,
+   so on any environment still running as the table owner this risk stands
+   exactly as written.
 3. **Tests bind an organization by default.** An autouse fixture binds one for
    every test, because hundreds construct models directly. That is what hid the
    broken scheduled jobs for three commits. Tests about unbound behaviour must

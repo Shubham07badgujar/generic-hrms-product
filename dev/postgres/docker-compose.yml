@@ -1,0 +1,44 @@
+# Generic HRMS — dedicated DEVELOPMENT PostgreSQL.
+#
+#   cd dev/postgres
+#   docker compose --project-name generic-hrms-dev up -d
+#
+# Its own server, its own port, its own volume, its own roles. It shares
+# nothing with any other Postgres on this machine: not the cluster on 5432,
+# not any other project's container. Generic HRMS is a separate product from
+# the live hrms.drjoshis.in, and this file must never be used for, or
+# pointed at, that system.
+#
+# Bound to 127.0.0.1 only: a development database has no business listening
+# on the network.
+#
+# Not under deploy/: that directory's compose and Caddy files are copies of a
+# different, live deployment's configuration and are deliberately untouched.
+
+name: generic-hrms-dev
+
+services:
+  generic-hrms-postgres:
+    image: postgres:16-alpine
+    container_name: generic-hrms-dev-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # The container's bootstrap superuser IS the owner/migration role.
+      POSTGRES_USER: generic_hrms_owner
+      POSTGRES_DB: generic_hrms
+    ports:
+      - "127.0.0.1:5440:5432"
+    volumes:
+      - generic_hrms_pgdata:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U generic_hrms_owner -d generic_hrms"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  generic_hrms_pgdata:
+    name: generic_hrms_pgdata

@@ -82,7 +82,12 @@ def _model_of(field):
 
 
 def _a_row(model, organization):
-    return rows_for(model, organization.pk).filter(is_active=True).first()
+    from .conftest import across_organizations
+
+    # Fetching a row belonging to the OTHER organization, to offer it to a
+    # serializer bound to this one: the fixture's own reach, not the product's.
+    with across_organizations():
+        return rows_for(model, organization.pk).filter(is_active=True).first()
 
 
 def _payload(field, row):
@@ -158,7 +163,11 @@ def _resignation_payload(employee):
 def _employee_state(employee):
     from apps.employees.models import Employee
 
-    row = Employee.objects.all_orgs().get(pk=employee.pk)
+    from .conftest import across_organizations
+
+    # Reads the OTHER organization's row, to prove the request left it alone.
+    with across_organizations():
+        row = Employee.objects.all_orgs().get(pk=employee.pk)
     return (row.status, row.is_active, row.updated_at)
 
 
@@ -176,7 +185,10 @@ def test_one_organization_cannot_offboard_anothers_employee(org_a, org_b, api_fo
         f"expected refusal, got {response.status_code}: {response.content[:300]}"
     )
     assert "employee" in response.content.decode().lower()
-    assert not ExitWorkflow.objects.all_orgs().filter(employee=victim).exists()
+    from .conftest import across_organizations
+
+    with across_organizations():
+        assert not ExitWorkflow.objects.all_orgs().filter(employee=victim).exists()
     assert _employee_state(victim) == before, "the other organization's employee changed"
 
 
@@ -221,7 +233,10 @@ def test_the_same_admin_can_still_offboard_their_own_employee(org_a, api_for):
         f"A's admin cannot offboard A's employee: {response.status_code} "
         f"{response.content[:300]}"
     )
-    workflow = ExitWorkflow.objects.all_orgs().get(employee=own)
+    from .conftest import across_organizations
+
+    with across_organizations():
+        workflow = ExitWorkflow.objects.all_orgs().get(employee=own)
     assert workflow.organization_id == org_a.organization.pk
 
 

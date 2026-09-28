@@ -11,6 +11,9 @@ from __future__ import annotations
 import pytest
 from django.db import IntegrityError, transaction
 
+from core.middleware import acting_as
+from tests.conftest import across_organizations
+
 from apps.organization.models import (
     OPERATIONAL_STATUSES,
     MembershipStatus,
@@ -32,6 +35,22 @@ def _user(email: str):
     from apps.accounts.models import User
 
     return User.objects.create_user(email=email, password="test-password-12345")
+
+
+def _join(org, user, **kw):
+    """
+    Put a user in an organization, BOUND to that organization.
+
+    These tests build their own organizations while the suite's autouse
+    fixture still binds the session one, and a membership belongs to the
+    organization it names -- so from release 2 the database refuses to write
+    it into whichever tenant happens to be in force. Saying which organization
+    is being built is what the product does everywhere else, too.
+    """
+    from core.middleware import acting_as
+
+    with acting_as(None, organization=org):
+        return OrganizationMembership.objects.create(organization=org, user=user, **kw)
 
 
 # ------------------------------------------------------------------ lifecycle
@@ -83,19 +102,20 @@ def test_a_user_resolves_to_one_organization():
     org = _org("acme")
     user = _user("alice@example.test")
 
-    OrganizationMembership.objects.create(organization=org, user=user)
+    _join(org, user)
 
-    assert user.memberships.get().organization == org
+    with acting_as(None, organization=org):
+        assert user.memberships.get().organization == org
 
 
 def test_a_user_cannot_hold_two_active_memberships():
     """The V1 clamp. Without it a login would be ambiguous."""
     a, b = _org("acme"), _org("globex")
     user = _user("alice@example.test")
-    OrganizationMembership.objects.create(organization=a, user=user)
+    _join(a, user)
 
     with pytest.raises(IntegrityError), transaction.atomic():
-        OrganizationMembership.objects.create(organization=b, user=user)
+        _join(b, user)
 
 
 def test_the_schema_permits_a_second_non_active_membership():
@@ -107,32 +127,31 @@ def test_the_schema_permits_a_second_non_active_membership():
     """
     a, b = _org("acme"), _org("globex")
     user = _user("alice@example.test")
-    OrganizationMembership.objects.create(organization=a, user=user)
+    _join(a, user)
 
-    OrganizationMembership.objects.create(
-        organization=b, user=user, status=MembershipStatus.REMOVED
-    )
+    _join(b, user, status=MembershipStatus.REMOVED)
 
-    assert user.memberships.count() == 2
-    assert user.memberships.filter(status=MembershipStatus.ACTIVE).count() == 1
+    # Both organizations at once, so it reads the way the platform does.
+    with across_organizations():
+        assert user.memberships.count() == 2
+        assert user.memberships.filter(status=MembershipStatus.ACTIVE).count() == 1
 
 
 def test_the_same_user_and_organization_cannot_be_paired_twice():
     org = _org("acme")
     user = _user("alice@example.test")
-    OrganizationMembership.objects.create(organization=org, user=user)
+    _join(org, user)
 
     with pytest.raises(IntegrityError), transaction.atomic():
-        OrganizationMembership.objects.create(
-            organization=org, user=user, status=MembershipStatus.REMOVED
-        )
+        _join(org, user, status=MembershipStatus.REMOVED)
 
 
 def test_two_organizations_hold_separate_people():
     a, b = _org("acme"), _org("globex")
-    OrganizationMembership.objects.create(organization=a, user=_user("a@example.test"))
-    OrganizationMembership.objects.create(organization=b, user=_user("b@example.test"))
+    _join(a, _user("a@example.test"))
+    _join(b, _user("b@example.test"))
 
-    assert a.memberships.count() == 1
-    assert b.memberships.count() == 1
-    assert set(a.memberships.all()).isdisjoint(b.memberships.all())
+    with across_organizations():
+        assert a.memberships.count() == 1
+        assert b.memberships.count() == 1
+        assert set(a.memberships.all()).isdisjoint(b.memberships.all())

@@ -30,6 +30,7 @@ from apps.imports.services.employee_import import (
     commit_employee_batch,
     create_employee_batch,
 )
+from tests.conftest import across_organizations
 from tests.imports.conftest import EMPLOYEE_HEADERS
 
 # The two-organization world, for the one test that asks whether a name can
@@ -422,7 +423,10 @@ def test_a_batch_larger_than_the_plan_allows_hires_nobody(
     plan = Plan.objects.create(
         code="tiny", name="Tiny", employee_limit=Employee.objects.count() + 1
     )
-    Subscription.objects.create(organization=organization, plan=plan)
+    # A subscription is the PLATFORM's row about a customer, so the fixture
+    # writes it the way billing does.
+    with across_organizations():
+        Subscription.objects.create(organization=organization, plan=plan)
 
     before = Employee.objects.count()
     batch = create_employee_batch(actor=hr, file=employee_xlsx(rows=two_staff))
@@ -448,7 +452,10 @@ def test_a_batch_within_the_limit_still_commits(
     plan = Plan.objects.create(
         code="roomy", name="Roomy", employee_limit=Employee.objects.count() + 50
     )
-    Subscription.objects.create(organization=organization, plan=plan)
+    # A subscription is the PLATFORM's row about a customer, so the fixture
+    # writes it the way billing does.
+    with across_organizations():
+        Subscription.objects.create(organization=organization, plan=plan)
 
     batch = create_employee_batch(actor=hr, file=employee_xlsx(rows=two_staff))
     with django_capture_on_commit_callbacks(execute=False):

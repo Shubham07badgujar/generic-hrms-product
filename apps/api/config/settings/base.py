@@ -22,6 +22,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import environ
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -88,6 +89,10 @@ LOCAL_APPS = [
     # every model registered by the apps above, so all registrations must
     # already have run.
     "apps.audit",
+    # Database-level tenant guards (composite FKs, RLS, audit-row guards,
+    # runtime grants). Migrations only; last, because they depend on every
+    # other app's tables.
+    "apps.dbguard",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -137,9 +142,35 @@ TEMPLATES = [
 # Database
 # --------------------------------------------------------------------------
 
+#: `DATABASE_URL` is the RUNTIME connection, and from release 2 it is the
+#: unprivileged application role (`generic_hrms_app`): not the owner of any
+#: table, so row-level security applies to it, and without DELETE or TRUNCATE
+#: on the audit trail. Everything that serves a request or runs a task uses
+#: this and nothing else.
 DATABASES = {"default": env.db("DATABASE_URL")}
 DATABASES["default"]["ATOMIC_REQUESTS"] = False
 DATABASES["default"]["CONN_MAX_AGE"] = env.int("DB_CONN_MAX_AGE", default=60)
+
+#: `DATABASE_OWNER_URL` is the OWNER connection, and is used by exactly two
+#: things: `manage.py migrate` (schema work must own the tables) and the test
+#: harness when it creates the test database. It never serves traffic. Kept as
+#: a separate variable rather than a flag so that a deployment can withhold it
+#: from the application process altogether.
+#:
+#: Optional: a deployment that has not split the roles yet leaves it unset and
+#: keeps working exactly as before.
+DATABASE_OWNER = env.db_url("DATABASE_OWNER_URL", default="") or None
+if DATABASE_OWNER:
+    # It must be the SAME database. A typo here would point migrations at
+    # another system, which is the one mistake this split must not enable.
+    _runtime, _owner = DATABASES["default"], DATABASE_OWNER
+    if (str(_runtime.get("HOST")), str(_runtime.get("PORT")), _runtime.get("NAME")) != (
+        str(_owner.get("HOST")), str(_owner.get("PORT")), _owner.get("NAME")
+    ):
+        raise ImproperlyConfigured(
+            "DATABASE_OWNER_URL must name the same host, port and database as "
+            "DATABASE_URL; only the role may differ."
+        )
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "accounts.User"

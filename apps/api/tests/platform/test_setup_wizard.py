@@ -148,15 +148,18 @@ def test_finishing_is_audited(provisioned):
     _satisfy_outstanding(provisioned.organization)
     finish_setup(provisioned.organization, actor=provisioned.admin)
 
-    entry = (
-        AuditLog.objects.filter(
-            organization=provisioned.organization,
-            entity_type="organization.Organization",
+    from core.middleware import acting_as
+
+    with acting_as(None, organization=provisioned.organization):
+        entry = (
+            AuditLog.objects.filter(
+                organization=provisioned.organization,
+                entity_type="organization.Organization",
+            )
+            .order_by("-occurred_at")
+            .first()
         )
-        .order_by("-occurred_at")
-        .first()
-    )
-    assert entry is not None
+    assert entry is not None, "finishing setup wrote no audit row"
     assert entry.after.get("event") == "setup_finished"
     assert entry.before.get("status") == "pending_setup"
 
@@ -181,7 +184,11 @@ def test_removing_the_data_reopens_the_step(provisioned):
     _satisfy_outstanding(provisioned.organization)
     assert _step(_state(provisioned.organization), "departments")["complete"]
 
-    org_scoped(Department, provisioned.organization).update(is_active=False)
+    from core.middleware import acting_as
+
+    with acting_as(None, organization=provisioned.organization):
+        updated = org_scoped(Department, provisioned.organization).update(is_active=False)
+    assert updated, "no department was deactivated, so the step could not reopen"
 
     reopened = _state(provisioned.organization)
     assert not _step(reopened, "departments")["complete"]
@@ -308,8 +315,13 @@ def test_finishing_during_a_trial_lands_on_trial(on_a_plan):
     from apps.organization.models import OrgStatus
     from apps.platform.models import Subscription
 
+    from tests.conftest import across_organizations
+
     organization = on_a_plan.organization
-    subscription = Subscription.objects.get(organization=organization, is_active=True)
+    with across_organizations():
+        subscription = Subscription.objects.get(
+            organization=organization, is_active=True
+        )
     assert subscription.status == "trialing", "precondition: provisioning starts a trial"
 
     _satisfy_outstanding(organization)
@@ -376,12 +388,16 @@ def test_the_audit_row_records_where_finishing_actually_landed(on_a_plan):
     _satisfy_outstanding(organization)
     finish_setup(organization, actor=on_a_plan.admin)
 
-    entry = (
-        AuditLog.objects.filter(
-            organization=organization, entity_type="organization.Organization"
+    from core.middleware import acting_as
+
+    with acting_as(None, organization=organization):
+        entry = (
+            AuditLog.objects.filter(
+                organization=organization, entity_type="organization.Organization"
+            )
+            .order_by("-occurred_at")
+            .first()
         )
-        .order_by("-occurred_at")
-        .first()
-    )
+    assert entry is not None, "finishing setup wrote no audit row"
     assert entry.after.get("event") == "setup_finished"
     assert entry.after.get("status") == OrgStatus.TRIAL

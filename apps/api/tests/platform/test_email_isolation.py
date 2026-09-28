@@ -224,9 +224,16 @@ def test_a_candidate_send_with_nothing_bound_still_leaves_as_the_right_company(
             dedupe_key=f"retry-test:{application.pk}",
         )
 
+    from tests.conftest import across_organizations
+
     mail.outbox.clear()
+    # Fetched the way a deployment-wide sweep does, then delivered with
+    # NOTHING bound -- which is the case under test: the message must leave as
+    # the notification's own company, not as whatever happens to be in force.
+    with across_organizations():
+        pending = CandidateNotification.objects.all_orgs().get(pk=row.pk)
     with acting_as(None, organization=None):
-        _deliver(CandidateNotification.objects.all_orgs().get(pk=row.pk))
+        _deliver(pending)
 
     assert len(mail.outbox) == 1
     sent = mail.outbox[0]
@@ -246,10 +253,13 @@ def test_a_delivery_row_belongs_to_the_notification_it_delivers(org_a):
             recipient=org_a.admin, kind="payroll_processed", title="Ready for review"
         )
 
-    deliveries = NotificationDelivery.objects.all_orgs().filter(
-        notification=notification
-    )
-    assert deliveries.exists()
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        deliveries = list(
+            NotificationDelivery.objects.all_orgs().filter(notification=notification)
+        )
+    assert deliveries
     for delivery in deliveries:
         assert delivery.organization_id == org_a.organization.pk
 
@@ -269,10 +279,13 @@ def test_a_delivery_cannot_be_stamped_with_a_different_organization(org_a, org_b
             recipient=org_a.admin, kind="payroll_processed", title="Ready for review"
         )
 
-    with acting_as(org_b.admin, organization=org_b.organization):
+    from tests.conftest import across_organizations
+
+    with across_organizations():
         delivery = NotificationDelivery.objects.all_orgs().filter(
             notification=notification
         ).first()
+    with acting_as(org_b.admin, organization=org_b.organization):
         rebuilt = NotificationDelivery(
             notification=notification,
             channel="email",
@@ -313,8 +326,12 @@ def test_a_notification_email_is_sent_as_its_own_organization(org_a, org_b):
 
     mail.outbox.clear()
     # Deliberately sent while the OTHER organization is bound.
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        to_send = Notification.objects.all_orgs().get(pk=notification.pk)
     with acting_as(org_b.admin, organization=org_b.organization):
-        EmailTransport().send(Notification.objects.all_orgs().get(pk=notification.pk))
+        EmailTransport().send(to_send)
 
     assert len(mail.outbox) == 1
     assert mail.outbox[0].from_email == "people@acme-health.example"

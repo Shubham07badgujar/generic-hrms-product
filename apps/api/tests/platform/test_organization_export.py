@@ -124,11 +124,14 @@ def _cancel(organization, *, days_ago: int = 0):
     from apps.platform.models import Subscription
     from apps.platform.services.subscriptions import set_status
 
+    from tests.conftest import across_organizations
+
     set_status(organization, status="cancelled")
     if days_ago:
-        Subscription.objects.filter(organization=organization, is_active=True).update(
-            cancelled_at=timezone.now() - dt.timedelta(days=days_ago)
-        )
+        with across_organizations():
+            Subscription.objects.filter(
+                organization=organization, is_active=True
+            ).update(cancelled_at=timezone.now() - dt.timedelta(days=days_ago))
     organization.refresh_from_db()
 
 
@@ -188,11 +191,14 @@ def test_the_export_is_in_the_customers_audit_trail(ours):
 
     _signed_in(ours.admin).get("/api/v1/org/export/")
 
-    entry = AuditLog.objects.get(
-        organization=ours.organization,
-        entity_type="organization.Organization",
-        after__event="organization_export",
-    )
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        entry = AuditLog.objects.get(
+            organization=ours.organization,
+            entity_type="organization.Organization",
+            after__event="organization_export",
+        )
     assert entry.actor_id == ours.admin.pk
     assert entry.after["rows"]["employees/employees.csv"] == 1
 

@@ -51,6 +51,31 @@ def get_current_org_id():
     return _current_org.get()
 
 
+@contextmanager
+def organization_scope(organization):
+    """
+    Bind ONE organization for a block, then put back whatever was there.
+
+    For a function that is HANDED an organization and reads its rows: the
+    setup wizard, the mail and attendance resolvers, the seat check, the
+    onboarding gate. From release 2 the database shows a confined connection
+    only the bound organization, so a function that knows which organization
+    it means has to say so -- and unlike `acting_as` this changes nothing
+    else, which is what makes it safe to use inside a request that already has
+    a principal.
+
+    Scoped, never published: the caller's own binding is restored on the way
+    out, so asking a question about one organization cannot move another
+    caller's tenant.
+    """
+    org_id = getattr(organization, "pk", organization)
+    token = _current_org.set(org_id)
+    try:
+        yield
+    finally:
+        _current_org.reset(token)
+
+
 def set_current_org_id(org_id):
     """
     Bind the acting organization, returning the token needed to restore it.

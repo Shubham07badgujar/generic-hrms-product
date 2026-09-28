@@ -127,7 +127,10 @@ def test_bootstrap_grants_the_admin_role_of_the_organization_it_founds(db):
 
     user = create_admin(email="founder@founded-co.example", organization=founded)
 
-    grants = UserRole.objects.all_orgs().filter(user=user).select_related("role")
+    with acting_as(None, organization=founded):
+        grants = list(
+            UserRole.objects.all_orgs().filter(user=user).select_related("role")
+        )
     assert [(g.role.code, g.role.organization_id) for g in grants] == [
         ("admin", founded.pk)
     ], "the founding Admin holds a role from another organization"

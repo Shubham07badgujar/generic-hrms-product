@@ -63,8 +63,18 @@ def _probe_pairs(org_a, org_b):
     Both are filled from the SAME template, so the two requests differ in
     exactly one thing: whose row the id names.
     """
+    from .conftest import across_organizations
+
+    # Picking one row from EACH organization to aim the walker at: the
+    # harness's own reach, not the product's. The requests it then makes are
+    # ordinary confined ones.
     pairs = []
-    for template, view in detail_routes():
+    with across_organizations():
+        return _pairs_for(detail_routes(), org_a, org_b, pairs)
+
+
+def _pairs_for(routes, org_a, org_b, pairs):
+    for template, view in routes:
         if "pk" not in template:
             continue
         model = model_of(view)

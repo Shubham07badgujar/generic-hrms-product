@@ -181,9 +181,14 @@ def test_it_expires(console, ours):
 
     grant = _request(console, ours.organization).json()
     _decide(ours.admin, grant["id"], "approve")
-    SupportGrant.objects.all_orgs().filter(pk=grant["id"]).update(
-        expires_at=timezone.now() - dt.timedelta(minutes=1)
-    )
+    from tests.conftest import across_organizations
+
+    # Ageing the customer's grant row out: the test holds no organization, and
+    # the row belongs to one.
+    with across_organizations():
+        SupportGrant.objects.all_orgs().filter(pk=grant["id"]).update(
+            expires_at=timezone.now() - dt.timedelta(minutes=1)
+        )
 
     assert _configuration(console, grant["id"]).status_code == 422
 
@@ -258,13 +263,16 @@ def test_every_step_is_in_the_customers_trail(console, ops, ours):
     _configuration(console, grant["id"])
     _decide(ours.admin, grant["id"], "revoke")
 
-    events = list(
-        AuditLog.objects.filter(
-            organization=ours.organization, entity_type="platform.SupportGrant"
+    from tests.conftest import across_organizations
+
+    with across_organizations():
+        events = list(
+            AuditLog.objects.filter(
+                organization=ours.organization, entity_type="platform.SupportGrant"
+            )
+            .order_by("id")
+            .values_list("after__event", "actor_id")
         )
-        .order_by("id")
-        .values_list("after__event", "actor_id")
-    )
     assert events == [
         ("support_requested", ops.pk),
         ("support_approved", ours.admin.pk),
@@ -272,7 +280,8 @@ def test_every_step_is_in_the_customers_trail(console, ops, ours):
         ("support_access", ops.pk),
         ("support_revoked", ours.admin.pk),
     ]
-    request = AuditLog.objects.get(
-        organization=ours.organization, after__event="support_requested"
-    )
+    with across_organizations():
+        request = AuditLog.objects.get(
+            organization=ours.organization, after__event="support_requested"
+        )
     assert request.reason == REASON

@@ -144,6 +144,25 @@ class AuditLog(models.Model):
             raise ValueError("AuditLog is append-only; existing rows cannot be modified.")
         if self.organization_id is None:
             self.organization_id = self._current_organization_id()
+        if self.organization_id is None:
+            # A PLATFORM event: a failed sign-in for an address nobody owns,
+            # the bootstrap, the creation of an organization before its row
+            # exists. Release 2 makes writing one a two-part problem. The
+            # INSERT is allowed (`audit_append` permits a NULL organization),
+            # but Django reads the new id back with RETURNING, and reading is
+            # governed by `audit_read`, which shows a tenant-confined role only
+            # its own organization's rows -- and NULL is nobody's. So the row
+            # goes in as platform work, which is what it is.
+            from django.db import transaction
+
+            from core.access.platform_bypass import platform_bypass
+
+            with transaction.atomic(), platform_bypass(
+                reason="audit: append a platform event that belongs to no organization",
+                system=True,
+            ):
+                super().save(*args, **kwargs)
+            return
         super().save(*args, **kwargs)
 
     @staticmethod

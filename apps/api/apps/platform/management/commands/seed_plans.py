@@ -15,7 +15,8 @@ console and stops running this command.
 
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand
+
+from core.access.platform_command import PlatformCommand
 from django.db import transaction
 
 from apps.platform.models import Plan, SupportLevel
@@ -69,7 +70,10 @@ PLANS = [
 ]
 
 
-class Command(BaseCommand):
+class Command(PlatformCommand):
+    #: Deployment-level work: see core/access/platform_command.py.
+    platform_reason = "seed the deployment-wide plan catalogue"
+
     help = "Create or update the plans this deployment offers (idempotent)."
 
     @transaction.atomic

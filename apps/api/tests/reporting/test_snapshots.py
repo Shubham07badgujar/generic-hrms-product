@@ -42,19 +42,31 @@ pytestmark = pytest.mark.django_db
 
 
 def _snapshots(world) -> dict[str, float]:
-    rows = MetricSnapshot.objects.all_orgs().filter(organization=world.organization)
+    from tests.conftest import across_organizations
+
+    # Reads one organization's snapshots regardless of what is bound, which is
+    # what makes "and none of B's" checkable at all.
+    with across_organizations():
+        rows = list(
+            MetricSnapshot.objects.all_orgs().filter(organization=world.organization)
+        )
     return {row.dimension["point"]: float(row.value) for row in rows}
 
 
 def _active_headcount(world) -> int:
     from apps.employees.models import Employee
 
-    return (
-        Employee.objects.all_orgs()
-        .filter(organization=world.organization, is_active=True)
-        .exclude(date_of_exit__lt=dt.date.today())
-        .count()
-    )
+    from tests.conftest import across_organizations
+
+    # Counts one organization while another may be bound, so it reads the way
+    # the platform does -- see `across_organizations`.
+    with across_organizations():
+        return (
+            Employee.objects.all_orgs()
+            .filter(organization=world.organization, is_active=True)
+            .exclude(date_of_exit__lt=dt.date.today())
+            .count()
+        )
 
 
 @pytest.fixture
@@ -128,11 +140,12 @@ def test_a_refresh_replaces_the_previous_window_rather_than_accumulating(org_a):
         refresh_snapshots(org_a.organization, as_of=today - dt.timedelta(days=1))
         refresh_snapshots(org_a.organization, as_of=today)
 
-    starts = set(
-        MetricSnapshot.objects.all_orgs()
-        .filter(organization=org_a.organization)
-        .values_list("period_start", flat=True)
-    )
+    with acting_as(None, organization=org_a.organization):
+        starts = set(
+            MetricSnapshot.objects.all_orgs()
+            .filter(organization=org_a.organization)
+            .values_list("period_start", flat=True)
+        )
     assert len(starts) == 1
 
 
@@ -307,20 +320,21 @@ def test_a_second_run_on_the_same_day_drops_a_point_that_has_gone_away(org_a):  
     own = MetricSnapshot.objects.all_orgs().filter(
         organization=org_a.organization, metric_key=TREND
     )
-    stale = own.order_by("sequence").first()
-    assert stale is not None, "nothing was stored, so this proves nothing"
-    # A point the next run cannot produce: the metric's keys are month ends.
-    own.filter(pk=stale.pk).update(dimension={"point": "not-a-month-end"})
-
     with acting_as(None, organization=org_a.organization):
+        stale = own.order_by("sequence").first()
+        assert stale is not None, "nothing was stored, so this proves nothing"
+        # A point the next run cannot produce: the metric's keys are month ends.
+        own.filter(pk=stale.pk).update(dimension={"point": "not-a-month-end"})
+
         refresh_snapshots(org_a.organization, as_of=today)
 
-    assert not own.filter(pk=stale.pk).exists(), (
-        "a point that disappeared between runs survived the re-run and is "
-        "still being served"
-    )
-    # Positive control: the run that dropped it wrote a full, ordered series.
-    keys = list(own.order_by("sequence").values_list("dimension", flat=True))
+    with acting_as(None, organization=org_a.organization):
+        assert not own.filter(pk=stale.pk).exists(), (
+            "a point that disappeared between runs survived the re-run and is "
+            "still being served"
+        )
+        # Positive control: the run that dropped it wrote a full, ordered series.
+        keys = list(own.order_by("sequence").values_list("dimension", flat=True))
     assert keys and all(k["point"] != "not-a-month-end" for k in keys)
 
 

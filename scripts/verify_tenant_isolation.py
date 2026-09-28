@@ -48,6 +48,7 @@ import datetime as dt
 import secrets
 import sys
 from collections import Counter
+from contextlib import contextmanager as _contextmanager
 from decimal import Decimal
 from pathlib import Path
 
@@ -57,6 +58,35 @@ from rest_framework.test import APIClient
 
 from core.access.routewalk import concretize, detail_routes, model_of, rows_for
 from core.middleware import acting_as
+
+
+@_contextmanager
+def across_organizations():
+    """
+    The god's-eye view, for this report's OWN verification.
+
+    RELEASE 2. The application now connects as `generic_hrms_app`, which the
+    database confines to the bound organization. That is the property this
+    report exists to demonstrate -- and it is also why the report can no
+    longer read the world freely to check its own work. "Both rows still
+    exist", "the creation was audited", "the other organization's employee did
+    not change": each of those is a statement ABOUT the database, not a thing
+    the product does, and each now goes through the same named door the
+    platform uses.
+
+    Never wrap a PROBE in this. The probes -- the API calls, the manager
+    reads, the route walk -- must stay confined, or the report would be
+    proving nothing at all.
+    """
+    from django.db import transaction
+
+    from core.access.platform_bypass import platform_bypass
+
+    with transaction.atomic(), platform_bypass(
+        reason="isolation report: verify what is really in the database", system=True
+    ):
+        yield
+
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -135,6 +165,18 @@ def full_plan():
 
 
 FULL_PLAN = full_plan()
+
+
+def _creation_was_audited(org) -> bool:
+    """Did provisioning write the creation into the organization's own trail?"""
+    from apps.audit.models import AuditLog
+
+    with across_organizations():
+        return AuditLog.objects.filter(
+            organization=org,
+            entity_type="organization.Organization",
+            action="create",
+        ).exists()
 
 
 def provision(slug_base, name, n_employees, n_departments, n_locations):
@@ -219,11 +261,7 @@ def provision(slug_base, name, n_employees, n_departments, n_locations):
              "seeded": sorted(provisioned.seeded),
              "plan": FULL_PLAN.code if FULL_PLAN else "none (every module on)",
              "invitations": len(invitations),
-             "audited": AuditLog.objects.filter(
-                 organization=org,
-                 entity_type="organization.Organization",
-                 action="create",
-             ).exists()}
+             "audited": _creation_was_audited(org)}
 
     # The provisioned administrator arrives with a temporary password and
     # `must_change_password`, which the API enforces on every request. That
@@ -669,7 +707,10 @@ for w in WORLDS:
         exit_type = _ExitWorkflow._meta.get_field("exit_type").choices[0][0]
 
         def _victim_state(victim_pk):
-            row = _Employee.objects.all_orgs().get(pk=victim_pk)
+            # The OTHER organization's row, read as the platform: the point is
+            # to show the probe below left it untouched.
+            with across_organizations():
+                row = _Employee.objects.all_orgs().get(pk=victim_pk)
             return (row.status, row.is_active)
 
         before = _victim_state(victim.pk)
@@ -733,8 +774,12 @@ def walk(caller, victim):
         model = model_of(view)
         if model is None or not hasattr(model, "organization_id"):
             continue
-        mine = rows_for(model, caller["organization"].pk).first()
-        theirs = rows_for(model, victim["organization"].pk).first()
+        # Choosing WHICH rows to aim at is the harness's own reach, not the
+        # product's -- the requests below are ordinary confined ones, and they
+        # are what the check is about.
+        with across_organizations():
+            mine = rows_for(model, caller["organization"].pk).first()
+            theirs = rows_for(model, victim["organization"].pk).first()
         if mine is None or theirs is None:
             continue
         my_path = concretize(template, mine.pk)
@@ -920,20 +965,23 @@ def _watched_state(worlds):
     from apps.recruitment.models import Candidate
 
     state = {}
-    for world in worlds:
-        org = world["organization"]
-        state[world["slug"]] = {
-            "employees": sorted(
-                Employee.objects.all_orgs()
-                .filter(organization=org)
-                .values_list("pk", "first_name", "is_active", "updated_at")
-            ),
-            "candidates": sorted(
-                Candidate.objects.all_orgs()
-                .filter(organization=org)
-                .values_list("pk", "first_name", "email")
-            ),
-        }
+    # A snapshot of OTHER organizations, taken to prove a task did not touch
+    # them: the report's own bookkeeping, read as the platform.
+    with across_organizations():
+        for world in worlds:
+            org = world["organization"]
+            state[world["slug"]] = {
+                "employees": sorted(
+                    Employee.objects.all_orgs()
+                    .filter(organization=org)
+                    .values_list("pk", "first_name", "is_active", "updated_at")
+                ),
+                "candidates": sorted(
+                    Candidate.objects.all_orgs()
+                    .filter(organization=org)
+                    .values_list("pk", "first_name", "email")
+                ),
+            }
     return state
 
 
@@ -1016,10 +1064,11 @@ for w in WORLDS:
     org = w["organization"]
     refresh_snapshots_for_organization(org.pk)
 
-    rows = list(MetricSnapshot.objects.all_orgs().filter(organization=org))
-    own_headcount = (
-        _Emp.objects.all_orgs().filter(organization=org, is_active=True).count()
-    )
+    with across_organizations():
+        rows = list(MetricSnapshot.objects.all_orgs().filter(organization=org))
+        own_headcount = (
+            _Emp.objects.all_orgs().filter(organization=org, is_active=True).count()
+        )
     latest = max(
         (r for r in rows if r.metric_key == TREND), key=lambda r: r.dimension["point"],
         default=None,
@@ -1038,21 +1087,22 @@ for w in WORLDS:
 for w in WORLDS:
     client = CLIENTS[(w["slug"], "admin")]
     response = client.get(f"/api/v1/bi/{TREND}/")
-    own_headcount = (
-        _Emp.objects.all_orgs()
-        .filter(organization=w["organization"], is_active=True)
-        .count()
-    )
+    with across_organizations():
+        own_headcount = (
+            _Emp.objects.all_orgs()
+            .filter(organization=w["organization"], is_active=True)
+            .count()
+        )
+        others = [
+            _Emp.objects.all_orgs()
+            .filter(organization=o["organization"], is_active=True)
+            .count()
+            for o in WORLDS
+            if o is not w
+        ]
     served = []
     if response.status_code == 200:
         served = [p.get("value") for p in response.json().get("points", [])]
-    others = [
-        _Emp.objects.all_orgs()
-        .filter(organization=o["organization"], is_active=True)
-        .count()
-        for o in WORLDS
-        if o is not w
-    ]
     check(
         f"11. {w['name']}'s dashboard reports its own headcount, not a sum",
         response.status_code == 200
@@ -1105,9 +1155,10 @@ for w in WORLDS:
              "location": str(other["rows"]["location"].pk)},
             format="json",
         )
-        made = _PayrollRun.objects.all_orgs().filter(
-            organization=w["organization"], period_year=2025, period_month=month
-        ).exists()
+        with across_organizations():
+            made = _PayrollRun.objects.all_orgs().filter(
+                organization=w["organization"], period_year=2025, period_month=month
+            ).exists()
         control = client.post(
             "/api/v1/payroll/runs/",
             {"period_year": 2025, "period_month": month,
@@ -1135,18 +1186,22 @@ for w in WORLDS:
             consent_given=False, legal_basis=_LegalBasis.VOLUNTARILY_PROVIDED,
             notice_due_at=_tz.now(),
         )
-    _Candidate.objects.all_orgs().filter(pk=overdue.pk).update(
-        created_at=_tz.now() - dt.timedelta(days=400)
-    )
+        # Aged INSIDE the binding: an unbound update matches no rows, so the
+        # candidate would never become overdue and the purge below would have
+        # nothing to do -- passing for the wrong reason, or failing for one.
+        _Candidate.objects.all_orgs().filter(pk=overdue.pk).update(
+            created_at=_tz.now() - dt.timedelta(days=400)
+        )
     OVERDUE[w["slug"]] = overdue.pk
 
 purged_for = WORLDS[0]
 call_command("purge_candidates", organization=purged_for["slug"], apply=True)
-names = dict(
-    _Candidate.objects.all_orgs()
-    .filter(pk__in=OVERDUE.values())
-    .values_list("pk", "first_name")
-)
+with across_organizations():
+    names = dict(
+        _Candidate.objects.all_orgs()
+        .filter(pk__in=OVERDUE.values())
+        .values_list("pk", "first_name")
+    )
 check(
     f"12b. purging {purged_for['name']} anonymised its own overdue candidate",
     names.get(OVERDUE[purged_for["slug"]]) == "Redacted",
@@ -1165,9 +1220,10 @@ for w in WORLDS[1:]:
 # hard-deleted.
 for w in WORLDS:
     other = next(o for o in WORLDS if o is not w)
-    foreign_admin_role = _Role.objects.all_orgs().get(
-        organization=other["organization"], code="admin"
-    )
+    with across_organizations():
+        foreign_admin_role = _Role.objects.all_orgs().get(
+            organization=other["organization"], code="admin"
+        )
     planted = _UserRole(user=w["worker"], role=foreign_admin_role)
     with acting_as(None, organization=other["organization"]):
         _UserRole.objects.bulk_create([planted])
@@ -1180,7 +1236,8 @@ for w in WORLDS:
             sorted(ctx.role_codes),
         )
     finally:
-        _UserRole.objects.all_orgs().filter(pk=planted.pk).hard_delete()
+        with across_organizations():
+            _UserRole.objects.all_orgs().filter(pk=planted.pk).hard_delete()
 
 # 12d. The audit trail re-read a row through the tenant manager before an
 # update. With nothing bound that raised, failing a save that carries its own
@@ -1188,20 +1245,26 @@ for w in WORLDS:
 # went UNAUDITED.
 for w in WORLDS:
     subject = w["rows"]["employee"]
-    with acting_as(None, organization=None):
+    # RELEASE 2: bound to the row's OWN organization rather than to nothing.
+    # An unbound update now matches no rows at all -- the database's
+    # fail-closed answer, and a stricter one than the manager gave. What this
+    # case is about is unchanged: the audit re-read must not impose a tenant
+    # question of its own on a row that already carries its organization.
+    with acting_as(None, organization=w["organization"]):
         subject.phone = f"98{secrets.randbelow(10**8):08d}"
         try:
             subject.save(update_fields=["phone", "updated_at"])
             saved, why = True, ""
         except Exception as exc:  # noqa: BLE001
             saved, why = False, f"{type(exc).__name__}: {exc}"
-    audited = _AuditLog.objects.filter(
-        entity_type="employees.Employee",
-        entity_id=str(subject.pk),
-        action=_AuditAction.UPDATE,
-    ).exists()
+        audited = _AuditLog.objects.filter(
+            entity_type="employees.Employee",
+            entity_id=str(subject.pk),
+            action=_AuditAction.UPDATE,
+        ).exists()
     check(
-        f"12d. an unbound update to {w['name']}'s employee is saved and audited",
+        f"12d. an update to {w['name']}'s employee is saved and audited "
+        f"without the re-read imposing a tenant question",
         saved and audited,
         why or "no audit row was written",
     )
@@ -1433,12 +1496,13 @@ w_("| Organization | Active employees | Headcount stored | Headcount served |")
 w_("|---|---|---|---|")
 for w2 in WORLDS:
     org = w2["organization"]
-    own = _Emp.objects.all_orgs().filter(organization=org, is_active=True).count()
-    stored = [
-        r for r in MetricSnapshot.objects.all_orgs().filter(
-            organization=org, metric_key=TREND
-        )
-    ]
+    with across_organizations():
+        own = _Emp.objects.all_orgs().filter(organization=org, is_active=True).count()
+        stored = [
+            r for r in MetricSnapshot.objects.all_orgs().filter(
+                organization=org, metric_key=TREND
+            )
+        ]
     latest = max(stored, key=lambda r: r.dimension["point"], default=None)
     response = CLIENTS[(w2["slug"], "admin")].get(f"/api/v1/bi/{TREND}/")
     served = (

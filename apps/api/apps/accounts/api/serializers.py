@@ -69,13 +69,27 @@ class TokenObtainSerializer(TokenObtainPairSerializer):
             # what this lookup is for. Two companies' employees sharing an
             # address is the same ambiguity as two in one company, and fails
             # the same way.
-            from apps.employees.models import Employee
+            #
+            # Release 2: the database confines this role to one organization,
+            # and here there is not one yet -- so this single lookup goes
+            # through the one named door, inside its own transaction, as
+            # system work rather than on anyone's authority. It reads two
+            # columns of the employee table and decides nothing; the password
+            # check below is unchanged and still has to pass.
+            from django.db import transaction
 
-            matches = list(
-                Employee.objects.all_orgs().filter(
-                    personal_email__iexact=email, is_active=True, user__isnull=False,
-                ).select_related("user")[:2]
-            )
+            from apps.employees.models import Employee
+            from core.access.platform_bypass import platform_bypass
+
+            with transaction.atomic(), platform_bypass(
+                reason="sign-in: resolve a personal email address to its login",
+                system=True,
+            ):
+                matches = list(
+                    Employee.objects.all_orgs().filter(
+                        personal_email__iexact=email, is_active=True, user__isnull=False,
+                    ).select_related("user")[:2]
+                )
             if len(matches) == 1:
                 user = matches[0].user
                 email = user.email  # authenticate against the canonical username
@@ -202,7 +216,7 @@ def _is_admin(user) -> bool:
 
     # Before sign-in nothing is bound, so `user.user_roles` would have no
     # organization to filter by. The membership says which one applies.
-    return role_grants(user).filter(role__code=RoleCode.ADMIN).exists()
+    return any(grant.role.code == RoleCode.ADMIN for grant in role_grants(user))
 
 
 def _audit_login(user, *, success: bool) -> None:
@@ -215,6 +229,24 @@ def _audit_login(user, *, success: bool) -> None:
     # it is resolved here, from the membership, or the organization's own audit
     # trail would silently lose every sign-in and failed sign-in against it.
     membership = _active_membership(user)
+
+    # And bound for the write, for the same reason. An audit row must belong
+    # to the bound organization or to none at all (`audit_append` in
+    # dbguard.0004), so stamping it with the membership's organization while
+    # nothing is bound is exactly the case the policy refuses. Binding here
+    # states the same fact the row already carries.
+    from core.middleware import _current_org, set_current_org_id
+
+    token = set_current_org_id(membership.organization_id if membership else None)
+    try:
+        _write_login_event(user, membership, success=success)
+    finally:
+        _current_org.reset(token)
+
+
+def _write_login_event(user, membership, *, success: bool) -> None:
+    from apps.audit.models import AuditAction, AuditLog
+    from core.middleware import get_request_id
 
     AuditLog.objects.create(
         organization=membership.organization if membership else None,
@@ -295,7 +327,7 @@ class MeSerializer(serializers.ModelSerializer):
     def get_roles(self, user) -> list[str]:
         from apps.organization.membership import role_grants
 
-        return list(role_grants(user).values_list("role__code", flat=True))
+        return [grant.role.code for grant in role_grants(user)]
 
     def get_employee_id(self, user):
         employee = getattr(user, "employee", None)

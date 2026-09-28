@@ -286,7 +286,11 @@ def test_a_deployment_with_no_plans_does_not_refuse(company):
     """
     from apps.platform.models import Subscription
 
-    Subscription.objects.filter(organization=company.organization).delete()
+    from tests.conftest import across_organizations
+
+    # Removing the customer's subscription is billing's doing, not theirs.
+    with across_organizations():
+        Subscription.objects.filter(organization=company.organization).delete()
     _fill(company, 200)
     assert _hire(company).employee.pk
 
@@ -306,14 +310,18 @@ def test_a_removed_employee_frees_their_seat(company):
 
     # Not the manager: deactivating them would make the backfill fail for a
     # hierarchy reason and quietly stop testing the seat rule.
-    leaver = (
-        org_scoped(Employee, company.organization)
-        .filter(is_active=True)
-        .exclude(pk=company.manager.pk)
-        .first()
-    )
-    leaver.is_active = False
-    leaver.save(update_fields=["is_active"])
+    from core.middleware import acting_as
+
+    with acting_as(None, organization=company.organization):
+        leaver = (
+            org_scoped(Employee, company.organization)
+            .filter(is_active=True)
+            .exclude(pk=company.manager.pk)
+            .first()
+        )
+        assert leaver is not None, "nobody to offboard, so the backfill proves nothing"
+        leaver.is_active = False
+        leaver.save(update_fields=["is_active"])
 
     assert _hire(company, local="backfill").employee.pk
 

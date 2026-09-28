@@ -288,8 +288,9 @@ def test_a_downgrade_deletes_nothing(plans):
 
     change_plan(result.organization, plan=plans["starter"])
 
-    run.refresh_from_db()
-    assert org_scoped(PayrollRun, result.organization).count() == 1
+    with acting_as(None, organization=result.organization):
+        run.refresh_from_db()
+        assert org_scoped(PayrollRun, result.organization).count() == 1
     assert run.period_year == 2025 and run.period_month == 6
 
 
@@ -373,14 +374,18 @@ def test_the_status_change_is_audited(plans):
         reason="Customer gave notice on 2026-09-01.",
     )
 
-    entry = (
-        AuditLog.objects.filter(
-            organization=result.organization, entity_type="platform.Subscription"
+    from tests.conftest import across_organizations
+
+    # The row belongs to the customer's trail; this test holds no organization.
+    with across_organizations():
+        entry = (
+            AuditLog.objects.filter(
+                organization=result.organization, entity_type="platform.Subscription"
+            )
+            .order_by("-occurred_at")
+            .first()
         )
-        .order_by("-occurred_at")
-        .first()
-    )
-    assert entry is not None
+    assert entry is not None, "the status change was not audited against the customer"
     assert entry.after["status"] == "cancelled"
     assert "notice" in entry.reason
 
@@ -393,10 +398,18 @@ def test_an_override_without_a_reason_is_refused_by_the_database(plans):
     """
     from django.db import IntegrityError, transaction
 
-    result = _provision(plan=plans["growth"])
-    subscription = Subscription.objects.get(organization=result.organization)
+    from tests.conftest import across_organizations
 
-    with pytest.raises(IntegrityError), transaction.atomic():
-        subscription.employee_limit_override = 400
-        subscription.override_reason = ""
-        subscription.save(update_fields=["employee_limit_override", "override_reason"])
+    result = _provision(plan=plans["growth"])
+    # A subscription is the platform's row about a customer: read and written
+    # as billing does, which is also the only way the constraint below is
+    # reachable at all.
+    with across_organizations():
+        subscription = Subscription.objects.get(organization=result.organization)
+
+        with pytest.raises(IntegrityError), transaction.atomic():
+            subscription.employee_limit_override = 400
+            subscription.override_reason = ""
+            subscription.save(
+                update_fields=["employee_limit_override", "override_reason"]
+            )

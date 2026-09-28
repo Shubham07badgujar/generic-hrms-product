@@ -1,0 +1,3 @@
+# The init script runs under /bin/sh inside a Linux container; a CRLF checkout
+# on Windows would make it fail on its first line.
+*.sh text eol=lf

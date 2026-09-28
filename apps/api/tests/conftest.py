@@ -3,8 +3,92 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 
 import pytest
+
+
+@contextmanager
+def across_organizations():
+    """
+    The god's-eye view, for a test's OWN verification.
+
+    A cross-tenant test needs two different things from the database: the
+    behaviour under test, which must be confined, and a ground truth to
+    measure it against -- "both rows really exist, so the absence above is the
+    predicate and not a failed write".
+
+    Until release 2 the ground truth was just `all_orgs()`, because the runtime
+    connected as the table owner and saw everything. It no longer does, and
+    that is the point: an unbound `all_orgs()` now returns nothing, so a
+    positive control written that way would quietly stop proving anything.
+
+    So a test that wants to see across organizations says so, through the same
+    named door the platform uses. Never wrap the behaviour under test in this
+    -- only the assertions about what is really there.
+    """
+    from django.db import transaction
+
+    from core.access.platform_bypass import platform_bypass
+
+    with transaction.atomic(), platform_bypass(
+        reason="test: read across organizations to verify isolation", system=True
+    ):
+        yield
+
+
+@pytest.fixture(scope="session")
+def django_db_setup(
+    request,
+    django_test_environment,
+    django_db_blocker,
+    django_db_use_migrations,
+    django_db_keepdb,
+    django_db_createdb,
+    django_db_modify_db_settings,
+):
+    """
+    Build the test database as the OWNER, then run the suite as the app role.
+
+    This replaces pytest-django's fixture of the same name, and it is what
+    makes the suite a test of the real runtime rather than a simulation of it.
+    Creating a database and migrating it needs ownership; serving requests
+    must NOT have it, or row-level security -- which never applies to a
+    table's owner -- would be switched off for every test in the suite.
+
+    So the credentials are swapped for exactly the two moments that need them
+    (create, and drop at the end), and everything in between connects as
+    `generic_hrms_app`, subject to the same policies and the same missing
+    privileges as production.
+
+    With no `DATABASE_OWNER_URL` configured, `as_owner()` is a no-op and this
+    behaves exactly like the stock fixture.
+    """
+    from django.test.utils import setup_databases, teardown_databases
+
+    from core.db_roles import as_owner
+
+    setup_databases_args = {}
+    if django_db_keepdb and not django_db_createdb:
+        setup_databases_args["keepdb"] = True
+
+    with as_owner(), django_db_blocker.unblock():
+        db_cfg = setup_databases(
+            verbosity=request.config.option.verbose,
+            interactive=False,
+            **setup_databases_args,
+        )
+
+    yield
+
+    if not django_db_keepdb:
+        with as_owner(), django_db_blocker.unblock():
+            try:
+                teardown_databases(db_cfg, verbosity=request.config.option.verbose)
+            except Exception as exc:  # noqa: BLE001
+                request.node.warn(
+                    pytest.PytestWarning(f"Error when trying to teardown test databases: {exc!r}")
+                )
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -122,8 +206,15 @@ def _platform_seed(django_db_setup, django_db_blocker):
     transaction for the same reason the roles do.
     """
     from apps.organization.models import Organization, OrgStatus
+    from core.middleware import acting_as
 
-    with django_db_blocker.unblock():
+    # Bound while creating it: the organization row itself is global, but the
+    # audit row the creation writes is stamped with the new organization, and
+    # under row-level security an audit INSERT must belong to the bound
+    # organization or to none. Provisioning proper crosses the same line
+    # through `platform_bypass`; a fixture can simply say which organization
+    # it is building.
+    with django_db_blocker.unblock(), acting_as(None, organization=SESSION_ORG_ID):
         Organization.objects.get_or_create(
             id=SESSION_ORG_ID,
             defaults={

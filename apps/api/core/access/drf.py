@@ -165,6 +165,47 @@ class PlatformOnlyMixin:
 
     platform_only = True
 
+    #: RELEASE 2. A platform endpoint reads ACROSS organizations by definition
+    #: -- the console's list, its headcounts, provisioning, the grant register
+    #: -- and the runtime role is confined to one. So a platform request runs
+    #: inside `platform_bypass` for its duration.
+    #:
+    #: Entered in `initial()`, which is AFTER authentication and the
+    #: platform-admin permission check, so an anonymous or tenant caller is
+    #: refused before anything is elevated. Held on an ExitStack owned by
+    #: `dispatch`, so it is unwound on every path including an unhandled
+    #: exception, and the transaction it needs rolls back with it.
+    #:
+    #: Set to False on a view that must stay confined.
+    platform_crosses_organizations = True
+
+    def dispatch(self, request, *args, **kwargs):
+        from contextlib import ExitStack
+
+        with ExitStack() as stack:
+            self._platform_stack = stack
+            try:
+                return super().dispatch(request, *args, **kwargs)
+            finally:
+                self._platform_stack = None
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        stack = getattr(self, "_platform_stack", None)
+        if stack is None or not self.platform_crosses_organizations:
+            return
+        from django.db import transaction
+
+        from .platform_bypass import platform_bypass
+
+        stack.enter_context(transaction.atomic())
+        stack.enter_context(
+            platform_bypass(
+                reason=f"platform console: {request.method} {request.path}",
+                principal=request.user,
+            )
+        )
+
 
 class PlatformAPIView(PlatformOnlyMixin, APIView):
     """Base for platform endpoints that are not CRUD."""

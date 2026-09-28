@@ -50,7 +50,9 @@ suppresses it for anyone who would rather their mail log stayed clean.
 
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import CommandError
+
+from core.access.platform_command import PlatformCommand
 from django.core.management import call_command
 from django.utils import timezone
 
@@ -63,7 +65,10 @@ from apps.organization.demo.profiles import PROFILE_ORDER
 RETAIL_TRIAL_DAYS = 3
 
 
-class Command(BaseCommand):
+class Command(PlatformCommand):
+    #: Deployment-level work: see core/access/platform_command.py.
+    platform_reason = "build or remove the demo estate"
+
     help = (
         "Provision the three demo customers (healthcare, technology, retail) "
         "through the platform provisioning service, each on a different plan."

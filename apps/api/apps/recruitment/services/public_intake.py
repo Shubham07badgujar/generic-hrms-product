@@ -101,12 +101,26 @@ def job_for_token(token: str) -> JobOpening:
     reveals nothing a holder of the link does not already have. Everything
     after this runs with the job's own organization bound.
     """
-    job = (
-        JobOpening.objects.all_orgs()
-        .select_related("department", "location", "workflow", "designation")
-        .filter(application_token=token, is_active=True)
-        .first()
-    )
+    #
+    # Release 2: the runtime role is confined by the database to the bound
+    # organization, and an anonymous caller has none -- so the resolution
+    # itself goes through the one named door, as system work. It resolves a
+    # token to a posting and nothing else; the caller still sees only what
+    # `public_job_summary` returns.
+    from django.db import transaction
+
+    from core.access.platform_bypass import platform_bypass
+
+    with transaction.atomic(), platform_bypass(
+        reason="public application link: resolve the token to its posting",
+        system=True,
+    ):
+        job = (
+            JobOpening.objects.all_orgs()
+            .select_related("department", "location", "workflow", "designation")
+            .filter(application_token=token, is_active=True)
+            .first()
+        )
     if job is None:
         from django.http import Http404
 

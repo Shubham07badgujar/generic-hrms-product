@@ -286,7 +286,41 @@ def resolve_context(user) -> AccessContext:
             DENY_ALL, organization_status=membership.organization.status
         )
     organization_id = membership.organization_id
-    plan_state = _plan_state(membership.organization_id)
+
+    # 1.6 BIND IT, FOR THE REST OF THIS FUNCTION.
+    #
+    #     Everything below reads tenant-owned tables -- roles, permissions,
+    #     overrides, the Employee record -- and from release 2 the runtime
+    #     connects as a role that row-level security APPLIES to. With no
+    #     organization bound in the database session those reads match no
+    #     rows, so a principal would resolve to "no roles" and the product
+    #     would deny everything. The membership above is what establishes the
+    #     organization, and this is the first point at which it is known.
+    #
+    #     Scoped, not published: the token is restored on the way out, because
+    #     `resolve_context` is also called ABOUT other people (a service asking
+    #     `get_context(someone_else)`), and that must not move the caller's own
+    #     tenant. Publishing for the request is `_bind`'s job, and it happens
+    #     on the request path only.
+    from core.middleware import _current_org, set_current_org_id
+
+    org_token = set_current_org_id(organization_id)
+    try:
+        return _resolve_within_organization(user, membership, organization_id)
+    finally:
+        _current_org.reset(org_token)
+
+
+def _resolve_within_organization(user, membership, organization_id) -> AccessContext:
+    """
+    The rest of `resolve_context`, with the organization bound.
+
+    Split out for that binding alone -- see step 1.6. The queries below still
+    name the organization explicitly; the binding is what lets the DATABASE
+    return their rows, and the explicit filter is what keeps the answer right
+    regardless.
+    """
+    plan_state = _plan_state(organization_id)
 
     from apps.accounts.models import RolePermission, UserPermissionOverride, UserRole
 

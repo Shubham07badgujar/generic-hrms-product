@@ -495,21 +495,33 @@ def check_role_invariants(app_configs, **kwargs):
     The database enforces this with a CheckConstraint; this surfaces it at
     check time with a readable message instead of an IntegrityError at runtime.
     """
-    from django.db import OperationalError, ProgrammingError
+    from django.db import OperationalError, ProgrammingError, transaction
 
     try:
         from apps.accounts.models import Role
 
-        bad = list(
-            # Every organization's roles, deliberately: this is a build-time
-            # integrity check with no organization to be bound to, and a bad
-            # role in ANY tenant is a configuration error worth failing on.
-            Role.objects.all_orgs().filter(is_read_only=True, can_manage_users=True).values_list(
-                "code", flat=True
+        from .platform_bypass import platform_bypass
+
+        # Every organization's roles, deliberately: this is a build-time
+        # integrity check with no organization to be bound to, and a bad
+        # role in ANY tenant is a configuration error worth failing on.
+        #
+        # RELEASE 2: "every organization" is unreachable for the runtime role,
+        # which the database confines to the bound one -- and with none bound
+        # it would see NOTHING and report success, which is the worst possible
+        # answer for an integrity check. So it asks as system work, through the
+        # one named door, and `check_role_invariants_actually_reads_roles`
+        # (access.E019) is the positive control that proves it saw rows.
+        with transaction.atomic(), platform_bypass(
+            reason="system check: read every organization's roles", system=True
+        ):
+            bad = list(
+                Role.objects.all_orgs()
+                .filter(is_read_only=True, can_manage_users=True)
+                .values_list("code", flat=True)
             )
-        )
     except (OperationalError, ProgrammingError, ImportError):
-        # Table not migrated yet — nothing to validate.
+        # Table not migrated yet -- nothing to validate.
         return []
 
     if not bad:
@@ -665,3 +677,145 @@ def unfiltered_managers(model) -> list[str]:
         if manager is not None and not isinstance(manager, TenantScopedManagerMixin):
             unfiltered.append(role)
     return unfiltered
+
+
+@register()
+def check_org_fks_are_enforced_by_the_database(app_configs, **kwargs):
+    """
+    Every organization-aware FK has a composite constraint in the database.
+
+    access.E018. A foreign key from one organization-owned table to another
+    can, at the ORM level, point a row at another organization's parent; the
+    application layer refuses that (tenant manager, scoped serializers), and
+    since apps/dbguard the database refuses it too, with a composite
+    `(fk, organization_id) REFERENCES target (id, organization_id)` constraint.
+
+    Those constraints were generated from the model registry and frozen in
+    `apps/dbguard/manifest.py` together with the migrations that create them.
+    This check compares the live registry with that manifest, so a model added
+    next year with a new organization-aware FK fails the build until its
+    author adds the migration and the manifest entry -- the database layer
+    cannot quietly fall behind the models.
+    """
+    from django.apps import apps as django_apps
+
+    from core.models import OrgOwnedModel, OrgOwnedTimestampedModel
+
+    try:
+        from apps.dbguard.manifest import ORG_FK_EDGES
+    except ImportError:
+        # Loud, not silent: a missing manifest would otherwise make this check
+        # pass while enforcing nothing.
+        return [
+            Error(
+                "apps.dbguard.manifest is missing, so organization-aware FKs are not "
+                "verified against the database constraints.",
+                hint="Restore apps/dbguard and its manifest.",
+                id="access.E018",
+            )
+        ]
+
+    def owned(model):
+        return issubclass(model, (OrgOwnedModel, OrgOwnedTimestampedModel)) and not model._meta.proxy
+
+    live = set()
+    for model in django_apps.get_models():
+        if not owned(model):
+            continue
+        for field in model._meta.concrete_fields:
+            if (
+                field.is_relation
+                and (field.many_to_one or field.one_to_one)
+                and field.related_model is not None
+                and owned(field.related_model)
+            ):
+                live.add((
+                    model._meta.db_table,
+                    field.column,
+                    field.related_model._meta.db_table,
+                    field.related_model._meta.pk.column,
+                ))
+
+    frozen = set(ORG_FK_EDGES)
+    errors = [
+        Error(
+            f"Organization-aware FK {table}.{column} -> {target} has no composite "
+            f"database constraint.",
+            hint=(
+                "Add a dbguard migration creating the (fk, organization_id) constraint "
+                "(and UNIQUE (id, organization_id) on the target if new), and add the "
+                "edge to apps/dbguard/manifest.py."
+            ),
+            id="access.E018",
+        )
+        for table, column, target, _pk in sorted(live - frozen)
+    ]
+    errors += [
+        Error(
+            f"apps/dbguard/manifest.py lists {table}.{column} -> {target}, which is no "
+            f"longer an organization-aware FK in the models.",
+            hint="Drop the constraint in a dbguard migration and remove the manifest entry.",
+            id="access.E018",
+        )
+        for table, column, target, _pk in sorted(frozen - live)
+    ]
+    return errors
+
+
+@register()
+def check_role_reads_are_not_silently_empty(app_configs, **kwargs):
+    """
+    The positive control for `check_role_invariants` (access.E019).
+
+    Release 2 introduces a failure mode that no amount of careful checking
+    catches on its own: the runtime role is confined by row-level security to
+    the bound organization, and a build-time check has none bound, so a query
+    that should inspect every organization's roles can return NOTHING and be
+    reported as "no problems found". A check that cannot fail is worse than no
+    check, because it is believed.
+
+    So this asks the question the other way round. If the deployment has
+    organizations but their roles are invisible at check time, the reading
+    itself is broken -- the bypass did not take, or the grants are wrong -- and
+    that is an error in its own right, whatever the roles happen to contain.
+    """
+    from django.db import OperationalError, ProgrammingError, transaction
+
+    try:
+        from apps.accounts.models import Role
+        from apps.organization.models import Organization
+
+        from .platform_bypass import PlatformBypassRefused, platform_bypass
+
+        with transaction.atomic(), platform_bypass(
+            reason="system check: can role invariants be read at all?", system=True
+        ):
+            organizations = Organization.objects.count()
+            roles = Role.objects.all_orgs().count()
+    except (OperationalError, ProgrammingError, ImportError):
+        # Not migrated yet -- nothing to read, and nothing to claim.
+        return []
+    except PlatformBypassRefused as refusal:
+        return [
+            Error(
+                f"The role-invariant check cannot read across organizations: {refusal}",
+                hint="Without it the check inspects nothing and passes vacuously.",
+                id="access.E019",
+            )
+        ]
+
+    if organizations and not roles:
+        return [
+            Error(
+                f"{organizations} organization(s) exist but no roles are visible at "
+                f"check time, so access.E002 inspected nothing and passed vacuously.",
+                hint=(
+                    "The runtime role is confined by row-level security and the check "
+                    "reads through platform_bypass. Verify the generic_hrms_platform "
+                    "role exists, that the runtime role is a member of it, and that "
+                    "dbguard.0006 granted SELECT on the role tables."
+                ),
+                id="access.E019",
+            )
+        ]
+    return []

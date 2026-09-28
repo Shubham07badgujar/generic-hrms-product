@@ -80,12 +80,24 @@ def create_admin(
     # ANY organization's active Admin closes bootstrap, deliberately and
     # explicitly: it is a one-time founding path, and once a deployment has an
     # administrator anywhere, further admins come from an authenticated flow.
-    if UserRole.objects.all_orgs().filter(
-        role__code=RoleCode.ADMIN,
-        role__is_active=True,
-        is_active=True,
-        user__is_active=True,
-    ).exists():
+    #
+    # Release 2: "anywhere" is the point, and a tenant-confined role cannot see
+    # anywhere. This is founding, deployment-wide, unauthenticated work with no
+    # organization to bind, so the question is asked as system work through the
+    # one named door. Asking it any narrower would let a second deployment-wide
+    # Admin be created, which is the one thing this guard exists to stop.
+    from core.access.platform_bypass import platform_bypass
+
+    with platform_bypass(
+        reason="bootstrap: has this deployment got an Admin already?", system=True
+    ):
+        an_admin_exists = UserRole.objects.all_orgs().filter(
+            role__code=RoleCode.ADMIN,
+            role__is_active=True,
+            is_active=True,
+            user__is_active=True,
+        ).exists()
+    if an_admin_exists:
         raise BootstrapError(
             "An active Admin already exists. Bootstrap is one-time; grant further "
             "admins through the normal user-management flow."
@@ -104,11 +116,15 @@ def create_admin(
     # organization was known, by code alone -- and role codes are unique only
     # per organization, so the founding Admin could be granted another
     # company's Admin role.
-    admin_role = (
-        Role.objects.all_orgs()
-        .filter(organization=organization, code=RoleCode.ADMIN, is_active=True)
-        .first()
-    )
+    #
+    # Bound while looking it up: the role belongs to the organization being
+    # founded, and from release 2 the database will not show it otherwise.
+    with acting_as(actor, organization=organization):
+        admin_role = (
+            Role.objects.all_orgs()
+            .filter(organization=organization, code=RoleCode.ADMIN, is_active=True)
+            .first()
+        )
     if admin_role is None:
         raise BootstrapError(
             "The Admin role does not exist. Run `manage.py seed_roles` first."

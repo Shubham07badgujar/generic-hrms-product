@@ -114,13 +114,21 @@ def _operators_grant(grant_id, operator):
     absent: approval was given to a named person, not to the platform.
     """
     from apps.platform.models import SupportGrant
+    from core.access.platform_bypass import platform_bypass
 
-    return (
-        SupportGrant.objects.all_orgs()
-        .select_related("organization")
-        .filter(pk=grant_id, requested_by=operator)
-        .first()
-    )
+    # Under row-level security the operator has no organization, so the grant
+    # row -- which lives in the CUSTOMER's organization -- is read through the
+    # one named door. Only this lookup crosses; the configuration reads that
+    # follow run under normal RLS, bound to the grant's own organization.
+    with transaction.atomic(), platform_bypass(
+        reason="support access: load the operator's own grant", principal=operator
+    ):
+        return (
+            SupportGrant.objects.all_orgs()
+            .select_related("organization")
+            .filter(pk=grant_id, requested_by=operator)
+            .first()
+        )
 
 
 def configuration_snapshot(grant_id, *, operator) -> dict:
@@ -142,7 +150,14 @@ def configuration_snapshot(grant_id, *, operator) -> dict:
 
     organization = grant.organization
     snapshot: dict[str, list[dict]] = {}
-    with acting_as(operator, organization=organization):
+    # Read as the CONFINED runtime role, bound to the grant's organization,
+    # even though this runs on a platform endpoint whose request is inside
+    # `platform_bypass`. Support Access is the one platform feature that must
+    # not see across customers, and this is what makes the DATABASE enforce
+    # that rather than the tenant manager alone.
+    from core.access.platform_bypass import as_runtime_role
+
+    with as_runtime_role(), acting_as(operator, organization=organization):
         for label in SUPPORT_VISIBLE:
             model = apps.get_model(label)
             columns = [

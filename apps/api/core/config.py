@@ -34,9 +34,28 @@ the customer's own credential, not ours.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from dataclasses import dataclass
 
 from django.conf import settings
+
+
+
+@contextmanager
+def _organization_bound(organization_id):
+    """
+    Bind one organization for the length of a read, then put back what was
+    there. Used by the org-configuration lookups above, which are given the
+    organization explicitly and are called from places that have none bound.
+    """
+    from core.middleware import _current_org, set_current_org_id
+
+    token = set_current_org_id(organization_id)
+    try:
+        yield
+    finally:
+        _current_org.reset(token)
 
 
 def _organization_id(organization):
@@ -114,9 +133,18 @@ def email_config(organization) -> EmailConfig:
         # needs `all_orgs()` to get past a predicate that would otherwise
         # refuse a resolver whose whole contract is that the CALLER names the
         # organization.
-        row = OrgEmailConfig.objects.filter(
-            organization_id=organization_id, is_active=True
-        ).first()
+        #
+        # Bound for the read. `OrgEmailConfig` is one of the tables release 2
+        # put row-level security on, and this resolver is called from mail
+        # paths that often have nothing in force -- a dispatcher's subtask, a
+        # command, provisioning's invitation. Unbound the row is invisible and
+        # every `pick()` below silently takes the DEPLOYMENT default, so the
+        # customer's mail would leave with the platform's identity instead of
+        # their own. Silent, and wrong in the one direction that matters.
+        with _organization_bound(organization_id):
+            row = OrgEmailConfig.objects.filter(
+                organization_id=organization_id, is_active=True
+            ).first()
 
     def pick(attr, default):
         value = getattr(row, attr, None) if row else None
@@ -197,11 +225,18 @@ def render_message(organization, key: str, context: dict) -> RenderedMessage:
     if organization_id is not None:
         from apps.organization.models import OrgEmailTemplate
 
-        row = (
-            OrgEmailTemplate.objects.all_orgs()
-            .filter(organization_id=organization_id, key=key, is_active=True)
-            .first()
-        )
+        # Bound for the read: this is called from mail-sending paths that run
+        # with nothing in force (a Celery task's fan-out, a management
+        # command), and from release 2 the database shows a confined role only
+        # the bound organization's rows. The organization is an argument here,
+        # so saying so costs nothing and removes the dependency on ambient
+        # state entirely.
+        with _organization_bound(organization_id):
+            row = (
+                OrgEmailTemplate.objects.all_orgs()
+                .filter(organization_id=organization_id, key=key, is_active=True)
+                .first()
+            )
 
     def shipped(suffix: str) -> str:
         return render_to_string(f"{key}{suffix}", context)
@@ -264,11 +299,12 @@ def attendance_config(organization) -> AttendanceConfig:
     row = None
     organization_id = _organization_id(organization)
     if organization_id is not None:
-        row = (
-            OrgAttendanceIntegration.objects.all_orgs()
-            .filter(organization_id=organization_id, is_active=True)
-            .first()
-        )
+        with _organization_bound(organization_id):
+            row = (
+                OrgAttendanceIntegration.objects.all_orgs()
+                .filter(organization_id=organization_id, is_active=True)
+                .first()
+            )
 
     def pick(attr, default):
         value = getattr(row, attr, None) if row else None

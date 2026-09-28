@@ -17,13 +17,18 @@ number of network-reachable ways to do that is zero.
 
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import CommandError
+
+from core.access.platform_command import PlatformCommand
 from django.db import transaction
 
 from apps.accounts.models import User
 
 
-class Command(BaseCommand):
+class Command(PlatformCommand):
+    #: Deployment-level work: see core/access/platform_command.py.
+    platform_reason = "grant or revoke a platform operator"
+
     help = "Create or promote a Platform Admin (the SaaS operator)."
 
     def add_arguments(self, parser):
