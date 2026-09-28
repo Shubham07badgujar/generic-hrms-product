@@ -49,6 +49,14 @@ COPY --chown=hrms:hrms . .
 RUN mkdir -p /var/lib/hrms/media /app/staticfiles \
     && chown -R hrms:hrms /var/lib/hrms /app/staticfiles
 
+# NOTE: `deploy/entrypoint.sh` is NOT in this repository, so this image does
+# not build as it stands. That was already true before the `deploy/` directory
+# was removed -- the entrypoint and the Caddyfile were hand-maintained on the
+# server, never committed here. Supported deployment is `render.yaml` plus
+# `docs/DEPLOY_ON_RENDER.md`, which uses the Python runtime and no image at
+# all. To revive this path, write an entrypoint that migrates as the OWNER
+# role (see render/release-api.sh -- `migrate` refuses under the application
+# role) and then execs the CMD below.
 COPY --chown=hrms:hrms deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 

@@ -45,8 +45,9 @@ by a platform administrator — not two deployments.
 apps/
   api/        Django 5 + DRF backend
   web/        React 18 + TypeScript (Vite) frontend
-deploy/       docker-compose stack (api, web, worker, beat, postgres, redis)
+dev/          Local Postgres for development (dedicated instance, port 5440)
 docs/         Architecture, design and operations documents
+render/       Render deployment: build, release and role-creation scripts
 scripts/      Dev and ops helper scripts
 ```
 
