@@ -1,0 +1,258 @@
+# Render blueprint for Generic HRMS.
+#
+# NOT a deployment. This file describes the services; you create them, in the
+# Render dashboard, from your own machine. Nothing here touches the live
+# hrms.drjoshis.in or the existing `deploy/` configuration, which belongs to a
+# different system.
+#
+# Read docs/DEPLOY_ON_RENDER.md before applying this. Three decisions in it are
+# not obvious and will bite if they are undone:
+#
+#   1. THE SPA PROXIES THE API. The frontend calls `/api/v1` as a relative
+#      path and the refresh cookie is SameSite=Strict, so the browser must see
+#      one origin. The static site rewrites /api/* to the API service. Point
+#      the SPA at a different hostname instead and people are signed out the
+#      moment their access token expires, with nothing in the logs.
+#
+#   2. UPLOADS NEED SOMEWHERE REAL TO LIVE. Render's filesystem is ephemeral.
+#      Without S3_BUCKET (or a mounted disk) every uploaded document, payslip
+#      PDF and letter disappears on the next deploy. The application warns
+#      about this at boot; it cannot prevent it.
+#
+#   3. MIGRATIONS RUN AS THE DATABASE OWNER. From release 2 the application
+#      connects as an unprivileged role and `manage.py migrate` refuses under
+#      it, deliberately. See the release script and the deploy document.
+#
+# Blueprint fields drift between Render versions. If a key below is rejected,
+# create that piece in the dashboard and copy the connection string into the
+# service's environment -- the application does not care how it was made.
+
+services:
+  # ---------------------------------------------------------------- the API
+  - type: web
+    name: hrms-api
+    runtime: python
+    plan: starter
+    rootDir: apps/api
+    buildCommand: ../../render/build-api.sh
+    # One worker per 512MB is the usual starting point; payslip and export
+    # generation are synchronous and memory-hungry, so raise the plan before
+    # raising the worker count.
+    startCommand: >-
+      gunicorn config.wsgi:application
+      --bind 0.0.0.0:$PORT
+      --workers 2
+      --threads 4
+      --timeout 120
+      --access-logfile -
+    healthCheckPath: /api/v1/health/
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.prod
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SECRET_KEY
+        generateValue: true
+      # The RUNTIME connection. Point this at the unprivileged role once you
+      # have created it (see render/sql/create_runtime_role.sql); until then it
+      # is the owner and row-level security does not apply, which the deploy
+      # document explains.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hrms-postgres
+          property: connectionString
+      # The OWNER connection, used by migrations only. Same database, and
+      # settings refuse to boot if the two disagree about host/port/name.
+      - key: DATABASE_OWNER_URL
+        fromDatabase:
+          name: hrms-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: hrms-redis
+          type: redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: hrms-redis
+          type: redis
+          property: connectionString
+      # A Fernet key, and NOT auto-generated on purpose: `generateValue` makes
+      # a random string, which is not a valid Fernet key, and the encrypted
+      # fields would fail at first use. Generate one and paste it:
+      #   python -c "from cryptography.fernet import Fernet; \
+      #              print(Fernet.generate_key().decode())"
+      # Back it up OUTSIDE the database. Losing it makes every encrypted
+      # column unreadable -- PAN, Aadhaar, bank accounts.
+      - key: FIELD_ENCRYPTION_KEY
+        sync: false
+      # Both must be set or production refuses to boot. Use the SPA's hostname
+      # for ALLOWED_HOSTS as well: requests reach the API through its rewrite.
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      # Render puts ONE proxy in front of the service. The default of 2 is
+      # tuned for the other deployment's Caddy+nginx pair; leaving it there
+      # makes DRF read the wrong client address, and the login throttle then
+      # counts every visitor as the same person.
+      - key: NUM_PROXIES
+        value: "1"
+      # Object storage for uploads. Strongly recommended -- see note 2 above.
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      # Mail. Without these, invitations and candidate mail are recorded and
+      # never sent.
+      - key: EMAIL_HOST
+        sync: false
+      - key: HR_EMAIL_HOST_USER
+        sync: false
+      - key: HR_EMAIL_HOST_PASSWORD
+        sync: false
+      - key: DEFAULT_FROM_EMAIL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+
+  # ------------------------------------------------- background work (Celery)
+  - type: worker
+    name: hrms-worker
+    runtime: python
+    plan: starter
+    rootDir: apps/api
+    buildCommand: ../../render/build-api.sh
+    startCommand: celery -A config worker --loglevel=info --concurrency=2
+    envVars:
+      # Pulled from the API service so there is ONE place to change them.
+      # Celery imports the same production settings, which refuse to load
+      # without ALLOWED_HOSTS and CORS_ALLOWED_ORIGINS -- a worker that skipped
+      # them would crash on boot rather than run unconfigured.
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.prod
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SECRET_KEY
+        fromService: {name: hrms-api, type: web, envVarKey: SECRET_KEY}
+      - key: DATABASE_URL
+        fromService: {name: hrms-api, type: web, envVarKey: DATABASE_URL}
+      - key: DATABASE_OWNER_URL
+        fromService: {name: hrms-api, type: web, envVarKey: DATABASE_OWNER_URL}
+      - key: REDIS_URL
+        fromService: {name: hrms-api, type: web, envVarKey: REDIS_URL}
+      - key: CELERY_BROKER_URL
+        fromService: {name: hrms-api, type: web, envVarKey: CELERY_BROKER_URL}
+      - key: FIELD_ENCRYPTION_KEY
+        fromService: {name: hrms-api, type: web, envVarKey: FIELD_ENCRYPTION_KEY}
+      - key: ALLOWED_HOSTS
+        fromService: {name: hrms-api, type: web, envVarKey: ALLOWED_HOSTS}
+      - key: CORS_ALLOWED_ORIGINS
+        fromService: {name: hrms-api, type: web, envVarKey: CORS_ALLOWED_ORIGINS}
+      - key: FRONTEND_URL
+        fromService: {name: hrms-api, type: web, envVarKey: FRONTEND_URL}
+      - key: S3_BUCKET
+        fromService: {name: hrms-api, type: web, envVarKey: S3_BUCKET}
+      - key: S3_REGION
+        fromService: {name: hrms-api, type: web, envVarKey: S3_REGION}
+      - key: S3_ENDPOINT
+        fromService: {name: hrms-api, type: web, envVarKey: S3_ENDPOINT}
+      - key: EMAIL_HOST
+        fromService: {name: hrms-api, type: web, envVarKey: EMAIL_HOST}
+      - key: HR_EMAIL_HOST_USER
+        fromService: {name: hrms-api, type: web, envVarKey: HR_EMAIL_HOST_USER}
+      - key: HR_EMAIL_HOST_PASSWORD
+        fromService: {name: hrms-api, type: web, envVarKey: HR_EMAIL_HOST_PASSWORD}
+      - key: DEFAULT_FROM_EMAIL
+        fromService: {name: hrms-api, type: web, envVarKey: DEFAULT_FROM_EMAIL}
+
+  # The scheduler. ONE instance only: two beats mean every periodic job runs
+  # twice, which for payroll reminders and accrual is not a harmless duplicate.
+  - type: worker
+    name: hrms-beat
+    runtime: python
+    plan: starter
+    rootDir: apps/api
+    buildCommand: ../../render/build-api.sh
+    startCommand: >-
+      celery -A config beat --loglevel=info
+      --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    envVars:
+      # Pulled from the API service so there is ONE place to change them.
+      # Celery imports the same production settings, which refuse to load
+      # without ALLOWED_HOSTS and CORS_ALLOWED_ORIGINS -- a worker that skipped
+      # them would crash on boot rather than run unconfigured.
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.prod
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SECRET_KEY
+        fromService: {name: hrms-api, type: web, envVarKey: SECRET_KEY}
+      - key: DATABASE_URL
+        fromService: {name: hrms-api, type: web, envVarKey: DATABASE_URL}
+      - key: DATABASE_OWNER_URL
+        fromService: {name: hrms-api, type: web, envVarKey: DATABASE_OWNER_URL}
+      - key: REDIS_URL
+        fromService: {name: hrms-api, type: web, envVarKey: REDIS_URL}
+      - key: CELERY_BROKER_URL
+        fromService: {name: hrms-api, type: web, envVarKey: CELERY_BROKER_URL}
+      - key: FIELD_ENCRYPTION_KEY
+        fromService: {name: hrms-api, type: web, envVarKey: FIELD_ENCRYPTION_KEY}
+      - key: ALLOWED_HOSTS
+        fromService: {name: hrms-api, type: web, envVarKey: ALLOWED_HOSTS}
+      - key: CORS_ALLOWED_ORIGINS
+        fromService: {name: hrms-api, type: web, envVarKey: CORS_ALLOWED_ORIGINS}
+      - key: FRONTEND_URL
+        fromService: {name: hrms-api, type: web, envVarKey: FRONTEND_URL}
+      - key: S3_BUCKET
+        fromService: {name: hrms-api, type: web, envVarKey: S3_BUCKET}
+      - key: S3_REGION
+        fromService: {name: hrms-api, type: web, envVarKey: S3_REGION}
+      - key: S3_ENDPOINT
+        fromService: {name: hrms-api, type: web, envVarKey: S3_ENDPOINT}
+      - key: EMAIL_HOST
+        fromService: {name: hrms-api, type: web, envVarKey: EMAIL_HOST}
+      - key: HR_EMAIL_HOST_USER
+        fromService: {name: hrms-api, type: web, envVarKey: HR_EMAIL_HOST_USER}
+      - key: HR_EMAIL_HOST_PASSWORD
+        fromService: {name: hrms-api, type: web, envVarKey: HR_EMAIL_HOST_PASSWORD}
+      - key: DEFAULT_FROM_EMAIL
+        fromService: {name: hrms-api, type: web, envVarKey: DEFAULT_FROM_EMAIL}
+
+  # ------------------------------------------------------------ the frontend
+  # A static site that also fronts the API, so the browser sees one origin.
+  - type: web
+    name: hrms-web
+    runtime: static
+    rootDir: apps/web
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      # The API, same-origin. Replace the host if you rename the service.
+      - type: rewrite
+        source: /api/*
+        destination: https://hrms-api.onrender.com/api/*
+      # SPA history fallback, last: anything not matched above is the app.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+  # ---------------------------------------------------------------- Redis
+  # Render has renamed this to "Key Value" in newer dashboards. If the key
+  # below is rejected, create a Key Value instance by hand and paste its URL
+  # into REDIS_URL and CELERY_BROKER_URL.
+  - type: redis
+    name: hrms-redis
+    plan: starter
+    maxmemoryPolicy: noeviction # Celery must not lose queued tasks
+    ipAllowList: [] # reachable only from inside Render
+
+databases:
+  - name: hrms-postgres
+    databaseName: hrms
+    plan: basic-256mb
+    postgresMajorVersion: "16"

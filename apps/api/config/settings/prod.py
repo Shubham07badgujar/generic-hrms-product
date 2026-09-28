@@ -45,9 +45,16 @@ X_FRAME_OPTIONS = "DENY"
 #
 # 2 = the number of proxies whose entries should be discarded from the right of
 # X-Forwarded-For, leaving the client that Caddy recorded.
+#
+# Configurable because the count is a fact about the HOST, not about this
+# application, and it is wrong to hard-code it for one. A platform that puts a
+# single router in front of the service wants 1; get it wrong in either
+# direction and DRF reads the wrong address, at which point the login throttle
+# either counts every visitor as one person or trusts a header the client can
+# set. Default 2, so the existing deployment is unchanged.
 REST_FRAMEWORK = {
     **REST_FRAMEWORK,  # noqa: F405
-    "NUM_PROXIES": 2,
+    "NUM_PROXIES": env.int("NUM_PROXIES", default=2),  # noqa: F405
 }
 
 # --- Storage --------------------------------------------------------------
